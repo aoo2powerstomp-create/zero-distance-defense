@@ -47,27 +47,68 @@ export class Player {
         const weaponData = this.weapons[this.currentWeapon];
         const level = weaponData.level;
         const atkSpeedLv = weaponData.atkSpeedLv;
+        const growth = CONSTANTS.WEAPON_GROWTH[this.currentWeapon];
 
         // 攻撃力: base * (scale ^ (lv-1))
         const damage = config.baseDamage * Math.pow(config.damageScale, level - 1);
         const speed = CONSTANTS.BULLET_SPEED * config.speedScale;
 
-        // 貫通数: PIERCE(LASER)はLv1=2, Lv10=6。それ以外は0
+        // 貫通数
         let pierce = config.pierceBase;
         if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.PIERCE) {
-            pierce = 2 + Math.floor((level - 1) * 4 / 9); // Lv1=2, Lv10=6
+            pierce = 2 + Math.floor((level - 1) * 4 / 9); // Lv1=2, Lv10=6相当
+            // LASER Lv11-30 でさらに微増
+            if (level > 10) pierce += Math.floor((level - 10) / 5);
+        } else if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.STANDARD) {
+            pierce = config.pierceBase + Math.floor(level / 3);
+            // RIFLE (STANDARD) Lv11-15 で貫通 +1
+            if (level >= 15) pierce += growth.PIERCE_EXTRA;
         } else {
             pierce = config.pierceBase + Math.floor(level / 3);
         }
 
-        // 連射速度（クールタイム）: base * (0.85 ^ (lv-1))
+        // 連射速度（クールタイム）
         const baseCooldown = config.baseCooldown || CONSTANTS.BULLET_COOLDOWN_MS;
         const cooldown = baseCooldown * Math.pow(0.85, atkSpeedLv - 1);
 
         // 寿命: base * scale
-        const lifetime = CONSTANTS.BULLET_LIFETIME_MS * (config.lifeScale || 1.0);
+        let lifeScale = config.lifeScale || 1.0;
+        if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.PIERCE && level > 10) {
+            const t = (level - 10) / 20;
+            lifeScale *= (1 + (growth.LIFE_MUL_MAX - 1) * t);
+        }
+        const lifetime = CONSTANTS.BULLET_LIFETIME_MS * lifeScale;
 
-        return { damage, speed, pierce, cooldown, lifetime };
+        // 特殊ステータス (Lv11-30)
+        let bulletWidth = 1.0;
+        let bulletHeight = 1.0;
+        let hitWidth = 1.0;
+        let shotAngle = 0.2;
+        let knockMul = config.knockMul || 1.0;
+
+        if (level > 10) {
+            const t = (level - 10) / 20; // 0 to 1
+
+            if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.SHOT) {
+                shotAngle = 0.2 + (growth.ANGLE_MAX - 0.2) * t;
+                bulletWidth = bulletHeight = 1 + (growth.SIZE_MUL_MAX - 1) * t;
+                hitWidth = 1 + (growth.HIT_MUL_MAX - 1) * t;
+                knockMul *= (1 + (growth.KNOCK_MUL_EXTRA - 1) * t);
+            } else if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.STANDARD) {
+                bulletWidth = 1 + (growth.WIDTH_MUL_MAX - 1) * t;
+                hitWidth = 1 + (growth.HIT_WIDTH_MAX - 1) * t;
+                // 見た目を細長くする
+                bulletHeight = 1.5;
+            } else if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.PIERCE) {
+                bulletWidth = 1 + (growth.WIDTH_MUL_MAX - 1) * t;
+                hitWidth = bulletWidth; // LASERは基本同一
+            }
+        }
+
+        return {
+            damage, speed, pierce, cooldown, lifetime,
+            bulletWidth, bulletHeight, hitWidth, shotAngle, knockMul
+        };
     }
 
     reverse() {

@@ -30,13 +30,24 @@ export class Enemy {
         this.isEvading = false;
         this.evasiveStartTime = 0;
         this.lastRetrackTime = Date.now();
+        this.stageSpeedMul = speedMul;
 
-        const speed = CONSTANTS.ENEMY_BASE_SPEED * speedMul;
+        // タイプ別の基本速度倍率
+        let typeSpeedMul = 1.0;
+        if (type === CONSTANTS.ENEMY_TYPES.ELITE) typeSpeedMul = 0.8;
+        else if (type === CONSTANTS.ENEMY_TYPES.ASSAULT) typeSpeedMul = 1.3;
+
+        this.baseSpeed = CONSTANTS.ENEMY_BASE_SPEED * speedMul * typeSpeedMul;
         this.baseAngle = Math.atan2(targetY - y, targetX - x);
-        this.vx = Math.cos(this.baseAngle) * speed;
-        this.vy = Math.sin(this.baseAngle) * speed;
-        this.currentSpeed = speed;
+        this.vx = Math.cos(this.baseAngle) * this.baseSpeed;
+        this.vy = Math.sin(this.baseAngle) * this.baseSpeed;
+        this.currentSpeed = this.baseSpeed;
 
+        this.movementType = CONSTANTS.ENEMY_MOVEMENT_TYPES.STRAIGHT;
+        this.movementPhase = Math.random() * Math.PI * 2;
+
+        this.renderX = x;
+        this.renderY = y;
         this.active = true;
 
         let eliteHpMul = 1.0;
@@ -88,12 +99,22 @@ export class Enemy {
 
     update(playerX, playerY, playerAngle, dt = 16.6) {
         const now = Date.now();
-        const speed = this.currentSpeed;
         const dtMod = dt / 16.6;
 
-        // 共通のリトラッキングロジック：中央を通り過ぎて離れていったら再帰還
+        // 1. 距離依存の速度減衰計算
         const dx = playerX - this.x;
         const dy = playerY - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        let speedRatio = 1.0;
+        if (dist < CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS) {
+            const t = Math.max(0, dist / CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS);
+            // 線形補間: 0.6 + (1.0 - 0.6) * t
+            speedRatio = CONSTANTS.ENEMY_MIN_SPEED_RATIO + (1.0 - CONSTANTS.ENEMY_MIN_SPEED_RATIO) * t;
+        }
+        this.currentSpeed = this.baseSpeed * speedRatio;
+
+        // 2. 共通のリトラッキングロジック：中央を通り過ぎて離れていったら再帰還
         const distSq = dx * dx + dy * dy;
         const currentAngle = Math.atan2(this.vy, this.vx);
         const targetAngle = Math.atan2(dy, dx);
@@ -112,14 +133,25 @@ export class Enemy {
             const turnSpeed = 0.05;
             if (Math.abs(angleDiff) > turnSpeed) {
                 const newAngle = currentAngle + (angleDiff > 0 ? turnSpeed : -turnSpeed);
-                this.vx = Math.cos(newAngle) * speed;
-                this.vy = Math.sin(newAngle) * speed;
+                this.vx = Math.cos(newAngle) * this.currentSpeed;
+                this.vy = Math.sin(newAngle) * this.currentSpeed;
             } else {
-                this.vx = Math.cos(targetAngle) * speed;
-                this.vy = Math.sin(targetAngle) * speed;
+                this.vx = Math.cos(targetAngle) * this.currentSpeed;
+                this.vy = Math.sin(targetAngle) * this.currentSpeed;
             }
             // baseAngle（ジグザグの基準軸）も現在の速度方向に同期させる
             this.baseAngle = Math.atan2(this.vy, this.vx);
+        } else {
+            // 旋回しない場合も、現在の距離に応じた currentSpeed を現在のベクトルに適用し直す
+            // INVADER の場合は radialVel を 80% に抑える
+            const speedMul = (this.movementType === CONSTANTS.ENEMY_MOVEMENT_TYPES.INVADER) ? 0.8 : 1.0;
+            const targetSpeed = this.currentSpeed * speedMul;
+
+            const vMag = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+            if (vMag > 0) {
+                this.vx = (this.vx / vMag) * targetSpeed;
+                this.vy = (this.vy / vMag) * targetSpeed;
+            }
         }
 
         // 移動の適用（通常移動 + ノックバック）
@@ -147,6 +179,19 @@ export class Enemy {
 
             this.renderX = this.x + ox;
             this.renderY = this.y + oy;
+        } else if (this.movementType === CONSTANTS.ENEMY_MOVEMENT_TYPES.INVADER) {
+            // Type Invader: インベーダー（接線スライド）
+            const elapsed = now - this.spawnTime;
+            const offset = Math.sin(elapsed * CONSTANTS.INVADER_STRAFE_FREQ + this.movementPhase) * CONSTANTS.INVADER_STRAFE_AMP;
+
+            // 進行方向（放射状）に対して垂直な方向へオフセットをかける
+            // 接近に伴い減衰させたい場合はここに dist 係数をかけても良いが、まずは固定
+            const perpAngle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
+            const ox = Math.cos(perpAngle) * offset;
+            const oy = Math.sin(perpAngle) * offset;
+
+            this.renderX = this.x + ox;
+            this.renderY = this.y + oy;
         } else if (this.type === CONSTANTS.ENEMY_TYPES.EVASIVE) {
             // Type C: 回避
             if (!this.isEvading) {
@@ -160,14 +205,14 @@ export class Enemy {
                     this.evasiveStartTime = now;
                     const dodgeDir = diff > 0 ? 1 : -1;
                     const newAngle = Math.atan2(this.vy, this.vx) + CONSTANTS.EVASIVE_ANGLE * dodgeDir;
-                    this.vx = Math.cos(newAngle) * speed;
-                    this.vy = Math.sin(newAngle) * speed;
+                    this.vx = Math.cos(newAngle) * this.currentSpeed;
+                    this.vy = Math.sin(newAngle) * this.currentSpeed;
                 }
             } else {
                 if (now - this.evasiveStartTime > CONSTANTS.EVASIVE_DURATION_MS) {
                     this.isEvading = false;
-                    this.vx = Math.cos(targetAngle) * speed;
-                    this.vy = Math.sin(targetAngle) * speed;
+                    this.vx = Math.cos(targetAngle) * this.currentSpeed;
+                    this.vy = Math.sin(targetAngle) * this.currentSpeed;
                 }
             }
             this.renderX = this.x;

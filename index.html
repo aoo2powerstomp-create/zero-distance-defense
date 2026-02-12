@@ -25,6 +25,15 @@
                 </div>
                 <div id="stage-info">STAGE 1</div>
             </div>
+            <!-- デバッグHUD -->
+            <div id="debug-hud" class="hidden">
+                <div class="debug-row"><span>Enemies:</span> <span id="db-enemies">0</span></div>
+                <div class="debug-row"><span>Sectors:</span> <span id="db-sectors">0</span></div>
+                <div class="debug-row"><span>Center:</span> <span id="db-center">-</span></div>
+                <div class="debug-row"><span>Queue:</span> <span id="db-queue">0</span></div>
+                <div class="debug-row"><span id="db-state" class="state-label">BURST</span></div>
+                <button id="btn-debug-gold" class="debug-btn-small">+10000 G</button>
+            </div>
         </div>
 
         <canvas id="game-canvas"></canvas>
@@ -54,6 +63,13 @@
                         <span class="up-slot-name">SPEED</span>
                         <span id="speed-up-lv" class="up-slot-lv">Lv.1</span>
                         <span id="cost-speed" class="up-slot-cost">80 G</span>
+                    </button>
+                    <!-- スキルボタン -->
+                    <button id="btn-pulse" class="skill-btn">
+                        <span class="skill-name">PULSE</span>
+                        <div class="skill-cd-bar">
+                            <div id="pulse-cd-fill"></div>
+                        </div>
                     </button>
                 </div>
             </div>

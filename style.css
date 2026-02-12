@@ -180,6 +180,55 @@ body {
     border-color: #333;
 }
 
+/* スキルボタン */
+.skill-btn {
+    flex: 0.8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 2px;
+    background: #200;
+    color: #fff;
+    border: 1px solid #f00;
+    border-radius: 8px;
+    cursor: pointer;
+    min-height: 58px;
+    position: relative;
+    overflow: hidden;
+}
+
+.skill-btn .skill-name {
+    font-size: 0.7rem;
+    font-weight: 900;
+    color: #ff4444;
+    margin-bottom: 4px;
+}
+
+.skill-cd-bar {
+    width: 80%;
+    height: 4px;
+    background: #400;
+    border-radius: 2px;
+}
+
+#pulse-cd-fill {
+    width: 0%;
+    height: 100%;
+    background: #ff0000;
+    transition: width 0.1s linear;
+}
+
+.skill-btn:active {
+    background: #400;
+}
+
+.skill-btn.disabled {
+    opacity: 0.5;
+    filter: grayscale(1);
+    cursor: default;
+}
+
 /* 共通オーバーレイ基盤 */
 .overlay-base {
     position: absolute;
@@ -581,4 +630,21 @@ body {
     background: #222 !important;
     border-color: #444 !important;
     pointer-events: none;
+}
+
+.debug-btn-small {
+    margin-top: 10px;
+    padding: 4px 8px;
+    background: #440;
+    color: #ffd700;
+    border: 1px solid #aa0;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-family: 'Orbitron', sans-serif;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.debug-btn-small:active {
+    background: #880;
 }
