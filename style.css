@@ -229,6 +229,63 @@ body {
     margin-bottom: 20px;
 }
 
+#stage-select-container {
+    margin-top: 30px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+}
+
+#stage-select-label {
+    font-size: 0.9rem;
+    color: rgba(0, 255, 255, 0.6);
+    letter-spacing: 2px;
+}
+
+#stage-select-list {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    max-width: 350px;
+    /* 60px * 5 + 10px * 4 = 340px */
+}
+
+.btn-stage {
+    width: 60px;
+    height: 60px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 8px;
+    color: #00ffff;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-stage:hover {
+    background: rgba(0, 255, 255, 0.2);
+    border-color: #00ffff;
+    transform: translateY(-2px);
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+}
+
+.btn-stage.boss {
+    border-color: #ff4444;
+    color: #ff4444;
+}
+
+.btn-stage.boss:hover {
+    background: rgba(255, 68, 68, 0.2);
+    border-color: #ff0000;
+    box-shadow: 0 0 15px rgba(255, 0, 0, 0.3);
+}
+
 #title-screen {
     background: radial-gradient(circle at center, rgba(0, 100, 100, 0.3) 0%, rgba(5, 5, 5, 0.95) 70%);
 }

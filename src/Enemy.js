@@ -38,7 +38,13 @@ export class Enemy {
         this.currentSpeed = speed;
 
         this.active = true;
-        this.hp = Math.round(1 * hpMul);
+
+        let eliteHpMul = 1.0;
+        if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
+            eliteHpMul = CONSTANTS.ELITE_HP_MUL;
+        }
+
+        this.hp = Math.round(1 * hpMul * eliteHpMul);
         this.maxHp = this.hp;
         this.lastContactTime = 0;
         this.knockVX = 0;
@@ -56,10 +62,12 @@ export class Enemy {
     }
 
     applyKnockback(vx, vy, power) {
-        // ボス耐性の適用
+        // ボス・エリート耐性の適用
         let actualPower = power;
         if (this.isBoss) {
             actualPower *= (1.0 - CONSTANTS.BOSS_KB_RESIST);
+        } else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+            actualPower *= (1.0 - CONSTANTS.ELITE_KB_RESIST);
         }
 
         // 弾の進行方向ベクトルを正規化してパワーを掛ける
@@ -184,13 +192,17 @@ export class Enemy {
 
     draw(ctx) {
         ctx.beginPath();
-        const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+        let size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+        if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+            size *= CONSTANTS.ELITE_SIZE_MUL;
+        }
         // 矩形の中央が実効座標になるように
         ctx.rect(this.renderX - size, this.renderY - size, size * 2, size * 2);
 
         // タイプ別に色を変える（デバッグ・確認用）
         if (this.isBoss) ctx.fillStyle = '#ff0000'; // ボスは真紅
-        else if (this.type === CONSTANTS.ENEMY_TYPES.ZIGZAG) ctx.fillStyle = '#ff00ff'; // 紫
+        else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) ctx.fillStyle = '#bb00ff'; // エリートは紫
+        else if (this.type === CONSTANTS.ENEMY_TYPES.ZIGZAG) ctx.fillStyle = '#ff00ff'; // 紫（ジグザグ）
         else if (this.type === CONSTANTS.ENEMY_TYPES.EVASIVE) ctx.fillStyle = '#ff8800'; // オレンジ
         else ctx.fillStyle = '#ff4444'; // 赤
 

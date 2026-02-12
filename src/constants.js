@@ -16,7 +16,7 @@ export const CONSTANTS = {
     BULLET_SPEED: 7,
     BULLET_LIFETIME_MS: 1500,
     BULLET_COOLDOWN_MS: 500, // 初期連射速度（遅め）
-    BULLET_SIZE: 5,
+    BULLET_SIZE: 2.5,
     BULLET_LIMIT: 60,
 
     // 敵設定
@@ -24,10 +24,15 @@ export const CONSTANTS = {
     ENEMY_BASE_SPEED: 1.5,
     ENEMY_DAMAGE_RATIO: 0.03, // 3%
     ENEMY_CONTACT_COOLDOWN_MS: 250,
-    ENEMY_LIMIT: 100,
+    ENEMY_LIMIT: 300,
     ENEMY_KNOCKBACK_POWER: 4.0,
     ENEMY_KNOCKBACK_DAMP: 0.9,
     ENEMY_KNOCKBACK_MAX: 15,
+
+    // エリート設定
+    ELITE_HP_MUL: 3,
+    ELITE_SIZE_MUL: 1.5,
+    ELITE_KB_RESIST: 0.8, // 80%軽減
 
     // ボス設定
     BOSS_HP_MUL: 12,
@@ -88,7 +93,8 @@ export const CONSTANTS = {
     ENEMY_TYPES: {
         NORMAL: 'A',
         ZIGZAG: 'B',
-        EVASIVE: 'C'
+        EVASIVE: 'C',
+        ELITE: 'D'
     },
     // ジグザグ設定
     ZIGZAG_AMP: 60,   // 振幅
@@ -100,11 +106,16 @@ export const CONSTANTS = {
 
     // ステージ定義
     STAGE_DATA: [
-        { hpMul: 1.0, speedMul: 1.0, spawnMul: 1.0, enemyCount: 20, spawnInterval: 1000 },
-        { hpMul: 1.25, speedMul: 1.1, spawnMul: 1.25, enemyCount: 30, spawnInterval: 800 },
-        { hpMul: 1.6, speedMul: 1.2, spawnMul: 1.55, enemyCount: 45, spawnInterval: 700 },
-        { hpMul: 2.05, speedMul: 1.33, spawnMul: 1.9, enemyCount: 60, spawnInterval: 600 },
-        { hpMul: 2.65, speedMul: 1.5, spawnMul: 2.3, enemyCount: 80, spawnInterval: 500 }
+        { hpMul: 1.0, speedMul: 0.9, spawnMul: 1.0, enemyCount: 40, spawnInterval: 800 }, // Gentle start
+        { hpMul: 1.2, speedMul: 1.0, spawnMul: 1.2, enemyCount: 70, spawnInterval: 600 },
+        { hpMul: 1.5, speedMul: 1.1, spawnMul: 1.4, enemyCount: 120, spawnInterval: 400 },
+        { hpMul: 1.8, speedMul: 1.25, spawnMul: 1.6, enemyCount: 200, spawnInterval: 200 },
+        { hpMul: 2.2, speedMul: 1.4, spawnMul: 1.8, enemyCount: 400, spawnInterval: 150 }, // BOSS
+        { hpMul: 2.8, speedMul: 1.5, spawnMul: 2.1, enemyCount: 500, spawnInterval: 80 },
+        { hpMul: 3.5, speedMul: 1.6, spawnMul: 2.4, enemyCount: 700, spawnInterval: 70 },
+        { hpMul: 4.5, speedMul: 1.7, spawnMul: 2.7, enemyCount: 900, spawnInterval: 60 },
+        { hpMul: 5.8, speedMul: 1.8, spawnMul: 3.0, enemyCount: 1200, spawnInterval: 50 },
+        { hpMul: 7.5, speedMul: 2.0, spawnMul: 3.5, enemyCount: 1800, spawnInterval: 40 }  // BOSS
     ],
 
     // アップグレード設定
@@ -135,4 +146,8 @@ export const CONSTANTS = {
     // 演出設定
     SHOW_DAMAGE_NUMBERS: true,
     DAMAGE_TEXT_LIMIT: 50,
+
+    // スポーン緩急設定
+    SPAWN_RHYTHM_CYCLE_MS: 12000, // 12秒周期で波を作る
+    SPAWN_RHYTHM_INTENSITY: 0.8,   // 振幅（±80%の変動）
 };

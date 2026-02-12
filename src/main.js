@@ -19,7 +19,7 @@ class Game {
 
         // オブジェクトプール
         this.bulletPool = new Pool(() => new Bullet(), 100);
-        this.enemyPool = new Pool(() => new Enemy(), 100);
+        this.enemyPool = new Pool(() => new Enemy(), 300);
         this.goldPool = new Pool(() => new Gold(), 100);
         this.damageTextPool = new Pool(() => new DamageText(), 50);
 
@@ -40,9 +40,11 @@ class Game {
         // 進行管理
         this.gameState = CONSTANTS.STATE.TITLE;
         this.spawnTimer = 0;
+        this.stageTime = 0; // ステージ内経過時間
         this.enemiesRemaining = 0; // そのウェーブでスポーンすべき残り数
 
         this.initUI();
+        this.generateStageButtons();
         this.lastTime = performance.now();
         requestAnimationFrame((t) => this.loop(t));
 
@@ -111,19 +113,29 @@ class Game {
             }
         });
 
-        // 回転操作リスナーの強化：windowリスナーにして枠外も追従、アスペクト比歪みにも対応
-        window.addEventListener('mousemove', (e) => {
-            const rect = this.canvas.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
+        // 回転操作リスナー：マウスとタッチの両方に対応
+        const handlePointerWrap = (e) => {
+            let clientX, clientY;
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
 
-            // 仮想空間上の座標へ逆写像（以前の「縦幅合わせ・横中央寄せ」を正確に再現）
-            const scale = this.canvas.height / CONSTANTS.TARGET_HEIGHT;
-            const offsetX = (this.canvas.width - CONSTANTS.TARGET_WIDTH * scale) / 2;
+                // ボタン類をクリックしたときはpreventDefaultしない（タップでのクリック操作を妨げない）
+                const target = e.target;
+                const isInteractive = target.tagName === 'BUTTON' || target.closest('button') || target.closest('.btn-stage');
 
-            this.player.targetX = (mouseX - offsetX) / scale;
-            this.player.targetY = mouseY / scale;
-        });
+                // タッチ操作時はスクロール等を防止
+                if (e.cancelable && !isInteractive) e.preventDefault();
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            this.handlePointer(clientX, clientY);
+        };
+
+        window.addEventListener('mousemove', handlePointerWrap);
+        window.addEventListener('touchstart', handlePointerWrap, { passive: false });
+        window.addEventListener('touchmove', handlePointerWrap, { passive: false });
 
         // リザルト等ボタン
         const btnNext = document.getElementById('btn-next');
@@ -134,6 +146,45 @@ class Game {
                 }
             });
         }
+    }
+
+    handlePointer(clientX, clientY) {
+        const rect = this.canvas.getBoundingClientRect();
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
+
+        // 仮想空間上の座標へ逆写像
+        const scale = this.canvas.height / CONSTANTS.TARGET_HEIGHT;
+        const offsetX = (this.canvas.width - CONSTANTS.TARGET_WIDTH * scale) / 2;
+
+        this.player.targetX = (mouseX - offsetX) / scale;
+        this.player.targetY = mouseY / scale;
+    }
+
+    generateStageButtons() {
+        const list = document.getElementById('stage-select-list');
+        if (!list) return;
+
+        CONSTANTS.STAGE_DATA.forEach((stage, index) => {
+            const btn = document.createElement('button');
+            btn.className = 'btn-stage';
+            const stageNum = index + 1;
+            btn.textContent = stageNum;
+
+            // ボスステージ（5の倍数）は赤いデザインに
+            if (stageNum % 5 === 0) {
+                btn.classList.add('boss');
+            }
+
+            btn.addEventListener('click', () => {
+                const titleScreen = document.getElementById('title-screen');
+                if (titleScreen) titleScreen.classList.add('hidden');
+                this.currentStage = index;
+                this.startCountdown();
+            });
+
+            list.appendChild(btn);
+        });
     }
 
     calculateCost(base, lv) {
@@ -152,6 +203,7 @@ class Game {
 
         this.enemiesRemaining = Math.round(stageData.enemyCount * stageData.spawnMul);
         this.spawnTimer = 0;
+        this.stageTime = 0;
         this.killCount = 0;
 
         if ((this.currentStage + 1) % 5 === 0) {
@@ -252,8 +304,14 @@ class Game {
         if (enemy) {
             let type = CONSTANTS.ENEMY_TYPES.NORMAL;
             const rand = Math.random();
-            if (rand < 0.15) type = CONSTANTS.ENEMY_TYPES.ZIGZAG;
-            else if (rand < 0.3) type = CONSTANTS.ENEMY_TYPES.EVASIVE;
+
+            if (rand < 0.1) {
+                type = CONSTANTS.ENEMY_TYPES.ELITE;
+            } else {
+                const typeRand = Math.random();
+                if (typeRand < 0.15) type = CONSTANTS.ENEMY_TYPES.ZIGZAG;
+                else if (typeRand < 0.3) type = CONSTANTS.ENEMY_TYPES.EVASIVE;
+            }
 
             enemy.init(x, y, this.player.x, this.player.y, type, stageData.hpMul, stageData.speedMul);
             this.enemies.push(enemy);
@@ -347,8 +405,14 @@ class Game {
 
         if (!isBossStage && this.enemiesRemaining > 0) {
             const stageData = CONSTANTS.STAGE_DATA[this.currentStage];
+            this.stageTime += dt;
             this.spawnTimer += dt;
-            if (this.spawnTimer >= stageData.spawnInterval) {
+
+            // スポーン強度の計算（サイン波による緩急）
+            const rhythm = Math.sin(this.stageTime * 2 * Math.PI / CONSTANTS.SPAWN_RHYTHM_CYCLE_MS);
+            const intensity = 1.0 + rhythm * CONSTANTS.SPAWN_RHYTHM_INTENSITY;
+
+            if (this.spawnTimer >= stageData.spawnInterval / intensity) {
                 this.spawnEnemy();
                 this.spawnTimer = 0;
                 this.enemiesRemaining--;
