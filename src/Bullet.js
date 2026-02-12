@@ -14,6 +14,7 @@ export class Bullet {
         this.widthMul = 1.0;
         this.heightMul = 1.0;
         this.hitWidthMul = 1.0;
+        this.hitEnemies = new Set(); // 衝突済みの敵を記録 (多段ヒット防止)
     }
 
     init(x, y, angle, speed, damage, pierce, lifetime, weaponType, extra = {}) {
@@ -33,6 +34,7 @@ export class Bullet {
         this.widthMul = extra.bulletWidth || 1.0;
         this.heightMul = extra.bulletHeight || 1.0;
         this.hitWidthMul = extra.hitWidth || 1.0;
+        this.hitEnemies.clear(); // 初期化時にクリア
     }
 
     update() {

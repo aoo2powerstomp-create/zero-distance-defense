@@ -229,7 +229,7 @@ body {
     cursor: default;
 }
 
-/* 共通オーバーレイ基盤 */
+/* 共通オーバ�Eレイ基盤 */
 .overlay-base {
     position: absolute;
     top: 0;
@@ -378,7 +378,7 @@ body {
     z-index: 100;
 }
 
-/* ボタン装飾 */
+/* ボタン裁E�� */
 .btn-primary {
     background: #00ffff;
     color: #000;
@@ -413,7 +413,7 @@ body {
     background: rgba(0, 255, 255, 0.1);
 }
 
-/* リザルト統計 */
+/* リザルト統訁E*/
 #result-stats {
     margin: 30px 0;
     padding: 20px;
@@ -476,7 +476,7 @@ body {
     }
 }
 
-/* カットイン演出 */
+/* カチE��イン演�E */
 #cut-in {
     background: transparent;
 }
@@ -526,11 +526,11 @@ body {
     z-index: 10;
 }
 
-/* アップグレードパネル（ボタンの上に浮くように配置） */
+/* アチE�Eグレードパネル�E��Eタンの上に浮くよぁE��配置�E�E*/
 #upgrade-panel {
     position: absolute;
     bottom: 140px;
-    /* コントロールエリアの少し上 */
+    /* コントロールエリアの少し丁E*/
     left: 50%;
     transform: translateX(-50%);
     width: 90%;
@@ -648,3 +648,4 @@ body {
 .debug-btn-small:active {
     background: #880;
 }
+.perf-overlay { position: absolute; top: 5px; left: 5px; background: rgba(0, 0, 0, 0.85); color: #0f0; font-family: " Courier New\, monospace; font-size: 11px; padding: 8px; border: 1px solid #0f0; pointer-events: none; z-index: 10000; line-height: 1.4; border-radius: 4px; box-shadow: 0 0 10px rgba(0, 255, 0, 0.2); } .perf-label { color: #aaa; } .perf-val { color: #0f0; font-weight: bold; } .perf-warn { color: #ff0; } .perf-crit { color: #f00; } .perf-title { border-bottom: 1px solid #0f0; margin-bottom: 4px; padding-bottom: 2px; font-weight: bold; color: #fff; font-size: 12px; }

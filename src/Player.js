@@ -15,13 +15,18 @@ export class Player {
         this.currentWeapon = CONSTANTS.WEAPON_TYPES.STANDARD;
         this.weapons = {
             standard: { unlocked: true, level: 1, atkSpeedLv: 1 },
-            shot: { unlocked: false, level: 1, atkSpeedLv: 1 },
-            pierce: { unlocked: false, level: 1, atkSpeedLv: 1 }
+            shot: { unlocked: true, level: 1, atkSpeedLv: 1 },
+            pierce: { unlocked: true, level: 1, atkSpeedLv: 1 }
         };
 
         // 半追随照準用のターゲット
         this.targetX = x;
         this.targetY = y;
+
+        // バリア即死システム
+        this.barrierCharges = CONSTANTS.BARRIER_MAX_CHARGES;
+        this.lastBarrierRegenTime = Date.now();
+        this.barrierKillConsumedThisFrame = false;
     }
 
     getWeaponConfig() {
@@ -63,16 +68,26 @@ export class Player {
             pierce = config.pierceBase + Math.floor(level / 3);
             // RIFLE (STANDARD) Lv11-15 で貫通 +1
             if (level >= 15) pierce += growth.PIERCE_EXTRA;
+        } else if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.SHOT) {
+            // SHOTGUN は貫通を抑える (Lv30で3回程度)
+            pierce = config.pierceBase + Math.floor(level / 10);
         } else {
             pierce = config.pierceBase + Math.floor(level / 3);
         }
 
         // 連射速度（クールタイム）
         const baseCooldown = config.baseCooldown || CONSTANTS.BULLET_COOLDOWN_MS;
-        const cooldown = baseCooldown * Math.pow(0.85, atkSpeedLv - 1);
+        const speedGrowth = CONSTANTS.ATK_SPEED_GROWTH_RATE || 0.85;
+        let cooldown = baseCooldown * Math.pow(speedGrowth, atkSpeedLv - 1);
 
         // 寿命: base * scale
         let lifeScale = config.lifeScale || 1.0;
+
+        // SHOTGUN はレベルに応じて射程が伸びる
+        if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.SHOT) {
+            lifeScale += (level - 1) * 0.01; // Lv30で +0.29。初期 0.2 -> 最大 0.49
+        }
+
         if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.PIERCE && level > 10) {
             const t = (level - 10) / 20;
             lifeScale *= (1 + (growth.LIFE_MUL_MAX - 1) * t);
@@ -102,8 +117,16 @@ export class Player {
             } else if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.PIERCE) {
                 bulletWidth = 1 + (growth.WIDTH_MUL_MAX - 1) * t;
                 hitWidth = bulletWidth; // LASERは基本同一
+                // レーザーのみ Lv11-30 で連射速度が最大2倍まで加速
+                if (growth.ATK_SPEED_MUL_MAX) {
+                    cooldown /= (1 + (growth.ATK_SPEED_MUL_MAX - 1) * t);
+                }
             }
         }
+
+        // 連射の下限ガード（物理的な連射上限）
+        const minInterval = config.minInterval || 50;
+        if (cooldown < minInterval) cooldown = minInterval;
 
         return {
             damage, speed, pierce, cooldown, lifetime,
