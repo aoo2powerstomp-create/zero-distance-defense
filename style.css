@@ -1,0 +1,527 @@
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #050505;
+    color: #fff;
+    font-family: 'Orbitron', 'Inter', sans-serif;
+    overflow: hidden;
+    touch-action: none;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+#game-container {
+    position: relative;
+    width: 100%;
+    max-width: 500px;
+    height: 100%;
+    max-height: 800px;
+    background-color: #222;
+    display: flex;
+    flex-direction: column;
+}
+
+#hud {
+    position: relative;
+    padding: 20px 15px;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
+    pointer-events: none;
+    z-index: 20;
+}
+
+.hud-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.hp-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-grow: 1;
+    margin-right: 20px;
+}
+
+.hp-bar-bg {
+    flex-grow: 1;
+    height: 20px;
+    background: #333;
+    border: 2px solid #555;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+#hp-bar-fill {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, #00ffff, #008888);
+    transition: width 0.2s;
+}
+
+#stage-info,
+#wave-info {
+    font-weight: bold;
+    font-size: 1.2rem;
+}
+
+#game-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    z-index: 1;
+}
+
+#controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    padding: 20px 15px 40px 15px;
+    background: rgba(20, 20, 20, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    border-top: 1px solid rgba(0, 255, 255, 0.2);
+    z-index: 10;
+}
+
+.gold-display {
+    font-size: 1.2rem;
+    color: #ffd700;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.controls-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.upgrade-group {
+    display: flex;
+    gap: 8px;
+}
+
+#weapon-upgrade-slots {
+    display: flex;
+    gap: 6px;
+    flex-grow: 1;
+}
+
+.weapon-up-btn,
+.upgrade-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 2px;
+    background: #111;
+    color: #fff;
+    border: 1px solid #444;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-height: 58px;
+}
+
+.weapon-up-btn .up-slot-name,
+.upgrade-btn .up-slot-name {
+    font-size: 0.7rem;
+    font-weight: 900;
+    color: #00ffff;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
+.weapon-up-btn .up-slot-lv,
+.upgrade-btn .up-slot-lv {
+    font-size: 0.7rem;
+    color: #fff;
+    margin-bottom: 2px;
+}
+
+.weapon-up-btn .up-slot-cost,
+.upgrade-btn .up-slot-cost {
+    font-size: 0.7rem;
+    color: #ffd700;
+    font-weight: bold;
+}
+
+.weapon-up-btn:active,
+.upgrade-btn:active {
+    background: #333;
+}
+
+.weapon-up-btn.active,
+.upgrade-btn.active {
+    border: 2px solid #00ffff;
+    background: rgba(0, 255, 255, 0.15);
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+}
+
+.weapon-up-btn.disabled,
+.upgrade-btn.disabled {
+    opacity: 0.6;
+    cursor: default;
+    filter: grayscale(0.5);
+    border-color: #333;
+}
+
+/* 共通オーバーレイ基盤 */
+.overlay-base {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(10, 10, 10, 0.9);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    z-index: 1000;
+}
+
+#overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+}
+
+.hidden {
+    display: none !important;
+}
+
+#overlay-content {
+    text-align: center;
+    padding: 40px;
+    border: 2px solid #00ffff;
+    background: rgba(20, 20, 20, 0.9);
+    border-radius: 20px;
+    box-shadow: 0 0 50px rgba(0, 255, 255, 0.2);
+    width: 80%;
+    max-width: 400px;
+}
+
+#overlay-title {
+    color: #00ffff;
+    font-size: 2.5rem;
+    margin-bottom: 20px;
+}
+
+#title-screen {
+    background: radial-gradient(circle at center, rgba(0, 100, 100, 0.3) 0%, rgba(5, 5, 5, 0.95) 70%);
+}
+
+#title-logo {
+    font-size: 4rem;
+    font-weight: 900;
+    color: #fff;
+    text-shadow: 0 0 20px #00ffff, 0 0 40px #00ffff;
+    letter-spacing: 15px;
+    margin-bottom: 5px;
+    animation: titleGlow 2s infinite alternate;
+}
+
+#title-sub {
+    color: #00ffff;
+    font-size: 1rem;
+    letter-spacing: 5px;
+    margin-bottom: 60px;
+}
+
+@keyframes titleGlow {
+    from {
+        text-shadow: 0 0 10px #00ffff;
+    }
+
+    to {
+        text-shadow: 0 0 30px #00ffff, 0 0 50px #00ffff;
+    }
+}
+
+#title-footer {
+    position: absolute;
+    bottom: 12px;
+    color: rgba(0, 255, 255, 0.6);
+    font-size: 0.75rem;
+    font-weight: bold;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.4);
+    pointer-events: none;
+    z-index: 100;
+}
+
+/* ボタン装飾 */
+.btn-primary {
+    background: #00ffff;
+    color: #000;
+    border: none;
+    padding: 15px 40px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    border-radius: 30px;
+    cursor: pointer;
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+    transition: all 0.2s;
+}
+
+.btn-primary:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 35px rgba(0, 255, 255, 0.8);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: #00ffff;
+    border: 1px solid #00ffff;
+    padding: 10px 25px;
+    font-size: 1rem;
+    border-radius: 20px;
+    margin-top: 15px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    background: rgba(0, 255, 255, 0.1);
+}
+
+/* リザルト統計 */
+#result-stats {
+    margin: 30px 0;
+    padding: 20px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    text-align: left;
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 1.1rem;
+    color: #fff;
+    border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+    padding-bottom: 5px;
+}
+
+.pointer-none {
+    pointer-events: none;
+}
+
+/* カウントダウン */
+#countdown-sub {
+    font-size: 1.2rem;
+    color: #00ffff;
+    letter-spacing: 4px;
+    margin-bottom: 10px;
+    opacity: 0.8;
+}
+
+#countdown-text {
+    font-size: 4rem;
+    font-weight: 900;
+    color: #fff;
+    text-shadow: 0 0 30px #00ffff;
+    transform: skewX(-15deg);
+    animation: countdownScale 1s infinite;
+}
+
+@keyframes countdownScale {
+    0% {
+        transform: scale(3);
+        opacity: 0;
+    }
+
+    20% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    80% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    100% {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+}
+
+/* カットイン演出 */
+#cut-in {
+    background: transparent;
+}
+
+#cut-in-text {
+    font-size: 2.2rem;
+    font-weight: 900;
+    color: #00ffff;
+    text-shadow: 0 0 20px #00ffff, 0 0 50px #00ffff;
+    white-space: nowrap;
+    transform: skewX(-20deg);
+    animation: cutInAnim 3s forwards;
+    letter-spacing: 4px;
+}
+
+@keyframes cutInAnim {
+    0% {
+        transform: translateX(-150%) skewX(-20deg);
+        opacity: 0;
+    }
+
+    15% {
+        transform: translateX(0) skewX(-20deg);
+        opacity: 1;
+    }
+
+    85% {
+        transform: translateX(0) skewX(-20deg);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translateX(150%) skewX(-20deg);
+        opacity: 0;
+    }
+}
+
+#controls {
+    padding: 15px;
+    background: rgba(20, 20, 20, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    border-top: 1px solid rgba(0, 255, 255, 0.2);
+    z-index: 10;
+}
+
+/* アップグレードパネル（ボタンの上に浮くように配置） */
+#upgrade-panel {
+    position: absolute;
+    bottom: 140px;
+    /* コントロールエリアの少し上 */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90%;
+    max-width: 400px;
+    background: rgba(20, 20, 20, 0.95);
+    border: 2px solid #00ffff;
+    border-radius: 12px;
+    z-index: 500;
+    box-shadow: 0 0 30px rgba(0, 255, 255, 0.4);
+    padding: 20px;
+    text-align: center;
+}
+
+.panel-inner h2 {
+    margin: 0 0 10px 0;
+    color: #00ffff;
+    font-size: 1.4rem;
+}
+
+#panel-weapon-selector {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.p-weapon-slot {
+    width: 44px;
+    height: 44px;
+    background: #333;
+    border: 2px solid #555;
+    border-radius: 6px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: 900;
+    color: #888;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.p-weapon-slot.active {
+    border-color: #00ffff;
+    color: #fff;
+    background: rgba(0, 255, 255, 0.2);
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+}
+
+.panel-stats {
+    display: flex;
+    justify-content: space-around;
+    background: #333;
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+}
+
+.cost-tag {
+    font-size: 1.6rem;
+    color: #ffd700;
+    font-weight: bold;
+    margin: 10px 0;
+}
+
+.panel-actions {
+    display: flex;
+    gap: 15px;
+}
+
+.panel-btn {
+    flex: 1;
+    padding: 12px;
+    font-size: 1.1rem;
+    font-weight: bold;
+    border: 2px solid #00ffff;
+    border-radius: 6px;
+    cursor: pointer;
+    background: #008888;
+    color: #fff;
+    transition: all 0.2s;
+}
+
+.panel-btn:active {
+    background: #00ffff;
+    color: #000;
+}
+
+.panel-btn.cancel {
+    background: #444;
+    border-color: #666;
+}
+
+.panel-btn.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: #222 !important;
+    border-color: #444 !important;
+    pointer-events: none;
+}

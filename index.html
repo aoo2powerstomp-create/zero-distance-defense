@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>零距離防衛 - ZERO DISTANCE DEFENSE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div id="game-container">
+        <div id="hud">
+            <div class="hud-top">
+                <div class="hp-container">
+                    <span>HP</span>
+                    <div class="hp-bar-bg">
+                        <div id="hp-bar-fill"></div>
+                    </div>
+                </div>
+                <div id="stage-info">STAGE 1</div>
+            </div>
+        </div>
+
+        <canvas id="game-canvas"></canvas>
+
+        <div id="controls">
+            <div class="controls-row">
+                <div class="gold-display">GOLD: <span id="gold-count">0</span></div>
+            </div>
+            <div class="upgrade-group">
+                <div id="weapon-upgrade-slots">
+                    <button class="weapon-up-btn" data-up-weapon="standard">
+                        <span class="up-slot-name">RIFLE</span>
+                        <span class="up-slot-lv">Lv.1</span>
+                        <span class="up-slot-cost">0 G</span>
+                    </button>
+                    <button class="weapon-up-btn" data-up-weapon="shot">
+                        <span class="up-slot-name">SHOTGUN</span>
+                        <span class="up-slot-lv">LOCK</span>
+                        <span class="up-slot-cost">500 G</span>
+                    </button>
+                    <button class="weapon-up-btn" data-up-weapon="pierce">
+                        <span class="up-slot-name">LASER</span>
+                        <span class="up-slot-lv">LOCK</span>
+                        <span class="up-slot-cost">1000 G</span>
+                    </button>
+                    <button id="btn-up-speed" class="upgrade-btn">
+                        <span class="up-slot-name">SPEED</span>
+                        <span id="speed-up-lv" class="up-slot-lv">Lv.1</span>
+                        <span id="cost-speed" class="up-slot-cost">80 G</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 演出用レイヤー -->
+    <div id="countdown" class="overlay-base hidden pointer-none">
+        <div id="countdown-sub">STAGE 1 - WAVE 1</div>
+        <div id="countdown-text">3</div>
+    </div>
+
+    <div id="cut-in" class="overlay-base hidden pointer-none">
+        <div id="cut-in-text">WAVE CLEAR</div>
+    </div>
+
+    <!-- タイトル画面 -->
+    <div id="title-screen" class="overlay-base">
+        <div id="title-logo">零距離防衛</div>
+        <div id="title-sub">ZERO DISTANCE DEFENSE</div>
+        <button id="btn-start" class="btn-primary">START MISSION</button>
+        <div id="title-footer">&copy; toxic out brain</div>
+    </div>
+
+    <!-- オーバーレイUI（リザルト、ポーズ、メッセージ用） -->
+    <div id="overlay" class="overlay-base hidden">
+        <div id="overlay-content">
+            <h1 id="overlay-title">WAVE CLEAR</h1>
+            <p id="overlay-msg">お疲れ様でした</p>
+
+            <div id="result-stats" class="hidden">
+                <div class="stat-row"><span>Eliminated:</span> <span id="stat-kills">0</span></div>
+                <div class="stat-row"><span>Gold Earned:</span> <span id="stat-gold">0</span></div>
+                <div class="stat-row"><span>Reached:</span> <span id="stat-stage">STAGE 1</span></div>
+            </div>
+
+            <button id="btn-next" class="btn-primary">NEXT</button>
+            <button id="btn-title" class="btn-secondary hidden">TITLE</button>
+        </div>
+    </div>
+    <script type="module" src="src/main.js"></script>
+    <script>
+        // エラーログの抑止（ユーザー要望）
+        window.addEventListener('error', function (e) {
+            // エラーをコンソールには出すが、アラートや目立つ表示はしない
+            console.warn('Recovered Error:', e.message);
+        });
+    </script>
+</body>
+
+</html>
