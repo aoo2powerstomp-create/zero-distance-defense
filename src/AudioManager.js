@@ -194,11 +194,13 @@ export class AudioManager {
             }
         });
 
-        // hit: 低音（着弾）
-        await create('hit', 0.1, (data, rate) => {
+        // hit: 敵への着弾音（低く重い「ボン」という音）
+        await create('hit', 0.15, (data, rate) => {
             for (let i = 0; i < data.length; i++) {
-                const env = Math.pow(1 - i / data.length, 2);
-                data[i] = Math.sin(i * 0.15) * 0.4 * env;
+                // 指数的な減衰 (Math.pow で急峻な減衰からなだらかな響きへ)
+                const env = Math.pow(1 - i / data.length, 2.5);
+                // 周波数を下げて「ボン」という低い響きを生成 (0.15 -> 0.08)
+                data[i] = Math.sin(i * 0.08) * 0.5 * env;
             }
         });
 

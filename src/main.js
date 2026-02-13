@@ -107,6 +107,18 @@ class Game {
             });
         }
 
+        // ステージセレクト表示のトグル
+        const btnToggleStage = document.getElementById('btn-toggle-stage-select');
+        const stageSelectList = document.getElementById('stage-select-list');
+        if (btnToggleStage && stageSelectList) {
+            btnToggleStage.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isHidden = stageSelectList.classList.toggle('hidden');
+                this.audio.play('menu_move');
+                btnToggleStage.textContent = isHidden ? 'STAGE SELECT' : 'CLOSE SELECT';
+            });
+        }
+
         // 武器選択ボタン
         document.querySelectorAll('.weapon-up-btn').forEach(btn => {
             btn.addEventListener('click', () => {
