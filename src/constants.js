@@ -36,7 +36,7 @@ export const CONSTANTS = {
     ELITE_KB_RESIST: 0.8, // 80%軽減
 
     // ボス設定
-    BOSS_HP_MUL: 12,
+    BOSS_HP_MUL: 60, // 12 -> 60 (5倍に強化)
     BOSS_SIZE_MUL: 10,
     BOSS_KB_RESIST: 0.7, // 70%軽減
     BOSS_SPEED_MUL: 0.6,
@@ -50,6 +50,15 @@ export const CONSTANTS = {
     ASSET_MAP: {
         PLAYER: './assets/player/player.png',
         BG_STAGE_01: './assets/bg/bg_stage_01.jpg',
+        BG_STAGE_02: './assets/bg/bg_stage_02.jpg',
+        BG_STAGE_03: './assets/bg/bg_stage_03.jpg',
+        BG_STAGE_04: './assets/bg/bg_stage_04.jpg',
+        BG_STAGE_05: './assets/bg/bg_stage_05.jpg',
+        BG_STAGE_06: './assets/bg/bg_stage_06.jpg',
+        BG_STAGE_07: './assets/bg/bg_stage_07.jpg',
+        BG_STAGE_08: './assets/bg/bg_stage_08.jpg',
+        BG_STAGE_09: './assets/bg/bg_stage_09.jpg',
+        BG_STAGE_10: './assets/bg/bg_stage_10.jpg',
         ENEMY_A: './assets/enemy/icon_enemy_nomal.png',   // NORMAL
         ENEMY_B: './assets/enemy/icon_enemy_zigzag.png',  // ZIGZAG
         ENEMY_C: './assets/enemy/icon_enemy_evasive.png', // EVASIVE
@@ -66,12 +75,13 @@ export const CONSTANTS = {
         ENEMY_BOSS_10: './assets/enemy/icon_enemy_boss_10.png',
 
         // アイテム
-        ITEM_HEAL: './assets/item_heal.png',
-        ITEM_FREEZE: './assets/item_freeze.png',
-        ITEM_BOMB: './assets/item_bomb.png',
-        ITEM_OVERDRIVE: './assets/item_overdrive.png',
-        ITEM_INVINCIBLE: './assets/item_invincible.png',
-        ITEM_NUKE: './assets/item_nuke.png',
+        ITEM_HEAL: './assets/item/item_heal.png',
+        ITEM_FREEZE: './assets/item/item_freeze.png',
+        ITEM_BOMB: './assets/item/item_bomb.png',
+        ITEM_OVERDRIVE: './assets/item/item_overdrive.png',
+        ITEM_INVINCIBLE: './assets/item/item_invincible.png',
+        ITEM_NUKE: './assets/item/item_nuke.png',
+        GOLD: './assets/item/item_coin.png',
     },
 
     // 武器タイプ
@@ -174,7 +184,7 @@ export const CONSTANTS = {
         standard: {
             name: 'RIFLE',
             unlockCost: 0,
-            baseDamage: 1.0,
+            baseDamage: 1.2,   // 強化 (1.0 -> 1.2)
             damageScale: 1.08, // 1.2 -> 1.08（インフレ抑制）
             pierceBase: 0,
             speedScale: 1.0,
@@ -187,7 +197,7 @@ export const CONSTANTS = {
         shot: {
             name: 'SHOTGUN',
             unlockCost: 0,
-            baseDamage: 0.65,
+            baseDamage: 0.78,  // 強化 (0.65 -> 0.78)
             damageScale: 1.06, // 1.15 -> 1.06
             pierceBase: 0,
             speedScale: 0.9,
@@ -195,12 +205,12 @@ export const CONSTANTS = {
             minInterval: 120,  // 連射上限（秒間最大8.3回）
             lifeScale: 0.2,    // 初期射程をさらに短縮 (0.4 -> 0.2)
             knockMul: 0.6,
-            desc: '3方向拡散射撃。密集処理に特化。'
+            desc: '3方向拡散射撃。密集処理に特化。命中時に微量回復。'
         },
         pierce: {
             name: 'LASER',
             unlockCost: 0,
-            baseDamage: 1.3,
+            baseDamage: 1.56,  // 強化 (1.3 -> 1.56)
             damageScale: 1.05, // 1.1 -> 1.05
             pierceBase: 2,
             speedScale: 1.2,
@@ -208,12 +218,12 @@ export const CONSTANTS = {
             minInterval: 75,   // 連射上限を緩和 (150 -> 75)
             lifeScale: 1.0,
             knockMul: 1.2,
-            desc: '超高速の貫通弾。高HPの敵に特化。'
+            desc: '超高速の貫通弾。高HPの敵に特化。命中時に微量回復。'
         }
     },
     ATK_SPEED_GROWTH_RATE: 0.96, // 0.85相当 -> 0.96（緩やかな成長）
     STANDARD_RECOVERY_ON_HIT: 0.002,
-    BOSS_DAMAGE_LIMIT_RATIO_PER_SEC: 0.2, // HPの20%/秒（安全装置）
+    BOSS_DAMAGE_LIMIT_RATIO_PER_SEC: 0.08, // HPの8%/秒（安全装置を強化: 最低約12.5秒かかる設計）
     BOSS_DAMAGE_LIMIT_MIN_DPS: 12.0,      // 最低保証DPS
 
     // 敵タイプ
@@ -360,11 +370,11 @@ export const CONSTANTS = {
         { hpMul: 1.3, speedMul: 1.05, spawnMul: 1.3, enemyCount: 100, spawnInterval: 700 }, // Stage 3
         { hpMul: 1.6, speedMul: 1.10, spawnMul: 1.5, enemyCount: 180, spawnInterval: 500 }, // Stage 4
         { hpMul: 2.0, speedMul: 1.15, spawnMul: 1.8, enemyCount: 350, spawnInterval: 300 }, // Stage 5
-        { hpMul: 2.8, speedMul: 1.26, spawnMul: 2.1, enemyCount: 500, spawnInterval: 80 },  // Stage 6
-        { hpMul: 3.5, speedMul: 1.30, spawnMul: 2.4, enemyCount: 700, spawnInterval: 70 },  // Stage 7
-        { hpMul: 4.5, speedMul: 1.35, spawnMul: 2.7, enemyCount: 900, spawnInterval: 60 },  // Stage 8
-        { hpMul: 5.8, speedMul: 1.39, spawnMul: 3.0, enemyCount: 1200, spawnInterval: 50 }, // Stage 9
-        { hpMul: 7.5, speedMul: 1.43, spawnMul: 3.5, enemyCount: 1800, spawnInterval: 40 }  // Stage 10
+        { hpMul: 2.4, speedMul: 1.26, spawnMul: 2.1, enemyCount: 400, spawnInterval: 240 }, // Stage 6 (再緩和: HP 2.8->2.4, Count 500->400, Int 180->240)
+        { hpMul: 3.0, speedMul: 1.30, spawnMul: 2.4, enemyCount: 550, spawnInterval: 200 }, // Stage 7 (再緩和: HP 3.5->3.0, Count 700->550, Int 150->200)
+        { hpMul: 3.8, speedMul: 1.35, spawnMul: 2.7, enemyCount: 750, spawnInterval: 160 }, // Stage 8 (再緩和: HP 4.5->3.8, Count 900->750, Int 120->160)
+        { hpMul: 4.8, speedMul: 1.39, spawnMul: 3.0, enemyCount: 1000, spawnInterval: 130 }, // Stage 9 (再緩和: HP 5.8->4.8, Count 1200->1000, Int 100->130)
+        { hpMul: 6.0, speedMul: 1.43, spawnMul: 3.5, enemyCount: 1500, spawnInterval: 100 }  // Stage 10 (再緩和: HP 7.5->6.0, Count 1800->1500, Int 80->100)
     ],
 
     // アップグレード設定
@@ -473,7 +483,8 @@ export const CONSTANTS = {
     SPAWN_DANGER_RADIUS: 180,          // 密集判定距離
     STAGE_2SECTOR_START: 6,            // 2セクタ開始ステージ
     SPAWN_MAX_SECTORS: 2,
-    SPAWN_SECTOR_MIN_SEP_DEG: 90,      // セクタ間の最低角度差
+    SPAWN_SECTOR_MIN_SEP_DEG: 80,      // セクタ間の最低角度差
+    SPAWN_SECTOR_MAX_SEP_DEG: 150,     // セクタ間の最大角度差（挟み撃ち防止）
     SPAWN_QUEUE_MAX: 999,
     SPAWN_RELEASE_PER_FRAME_MAX: 2,
     SPAWN_RELEASE_PER_SEC_MAX: 20,

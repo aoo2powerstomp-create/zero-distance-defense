@@ -6,8 +6,9 @@ import { CONSTANTS } from './constants.js';
 import { Effects } from './Effects.js';
 
 export class ItemManager {
-    constructor() {
+    constructor(game) {
         this.items = []; // {type, x, y, life, active}
+        this.game = game;
     }
 
     /**
@@ -124,7 +125,7 @@ export class ItemManager {
                 if (item.animTimer >= vfx.pickupSuctionMs) {
                     // 吸い込み完了 -> 効果発動 & 消去
                     item.active = false;
-                    if (this.gameRef) this.applyEffect(item, this.gameRef.player, this.gameRef);
+                    if (this.game) this.applyEffect(item, this.game.player, this.game);
                 } else {
                     const t = item.animTimer / vfx.pickupSuctionMs;
                     // Easy-In (加速)
@@ -202,10 +203,10 @@ export class ItemManager {
                 case CONSTANTS.ITEM_TYPES.NUKE: assetKey = 'ITEM_NUKE'; break;
             }
 
-            const asset = (this.gameRef && this.gameRef.assetLoader) ? this.gameRef.assetLoader.get(assetKey || '') : null;
+            const asset = (this.game && this.game.assetLoader) ? this.game.assetLoader.get(assetKey || '') : null;
 
             if (asset) {
-                const size = radius * 2.5; // 少し大きめに
+                const size = radius * 1.96; // 2.8 * 0.7 = 1.96
                 ctx.drawImage(asset, drawX - size / 2, drawY - size / 2, size, size);
             } else {
                 // 本体円 - 不透明度を少し下げて背景となじませつつ色を出す
@@ -215,31 +216,31 @@ export class ItemManager {
                 ctx.globalAlpha = 0.8; // 色を濃く出す
                 ctx.fill();
                 ctx.globalAlpha = item.visualAlpha; // 戻す
+
+                // 輪郭 - RAREなら金、通常は白
+                ctx.beginPath();
+                ctx.arc(drawX, drawY, radius, 0, Math.PI * 2);
+                ctx.strokeStyle = isRare ? '#ffd700' : '#ffffff';
+                ctx.lineWidth = isRare ? 3 : 2;
+                ctx.stroke();
+
+                // アイコン描画 (画像がない場合のみ)
+                ctx.font = `bold ${Math.floor(radius * 1.2)}px Orbitron`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = '#000000';
+                ctx.strokeText(visual.icon, drawX, drawY + radius * 0.1);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(visual.icon, drawX, drawY + radius * 0.1);
             }
 
             ctx.shadowBlur = 0; // リセット
 
-            // 輪郭 - RAREなら金、通常は白
-            ctx.beginPath();
-            ctx.arc(drawX, drawY, radius, 0, Math.PI * 2);
-            ctx.strokeStyle = isRare ? '#ffd700' : '#ffffff';
-            ctx.lineWidth = isRare ? 3 : 2;
-            ctx.stroke();
-
-            // アイコン描画
-            ctx.font = `bold ${Math.floor(radius * 1.2)}px Orbitron`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = '#000000';
-            ctx.strokeText(visual.icon, drawX, drawY + radius * 0.1);
-
-            ctx.fillStyle = '#ffffff';
-            ctx.fillText(visual.icon, drawX, drawY + radius * 0.1);
-
             // RAREテキスト
-            if (isRare && item.state !== 'pickup') {
+            if (isRare && item.state !== 'pickup' && !asset) { // 画像がない場合のみテキスト表示
                 ctx.font = 'bold 10px Orbitron';
                 ctx.fillStyle = '#ffd700';
                 ctx.fillText("RARE", drawX, drawY - radius - 5);
@@ -271,7 +272,8 @@ export class ItemManager {
                 if (isInstant) {
                     if (item.state !== 'pickup' && item.active) {
                         item.active = false;
-                        game.audio.play('item_pickup', { priority: 'high' });
+                        const soundKey = (item.type === CONSTANTS.ITEM_TYPES.HEAL) ? 'upgrade' : 'item_pickup';
+                        game.audio.play(soundKey, { priority: 'high' });
                         this.applyEffect(item, player, game);
                         return true;
                     }
@@ -283,11 +285,11 @@ export class ItemManager {
                     item.pickupTarget = player; // プレイヤーへ吸い込み
 
                     // 取得SE
-                    // RAREなら別の音があれば鳴らす（現状は同じ）
-                    game.audio.play('item_pickup', { priority: 'high' });
+                    const soundKey = (item.type === CONSTANTS.ITEM_TYPES.HEAL) ? 'upgrade' : 'item_pickup';
+                    game.audio.play(soundKey, { priority: 'high' });
 
                     // this.update 内で完了時に applyEffect されるように game 参照を保持
-                    this.gameRef = game;
+                    // (コンストラクタで渡された this.game を既に使用している)
 
                     return true;
                 }

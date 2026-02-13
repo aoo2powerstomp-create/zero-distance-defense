@@ -68,7 +68,7 @@ class Game {
 
         this.grid = new SpatialGrid(64, CONSTANTS.TARGET_WIDTH, CONSTANTS.TARGET_HEIGHT);
         this.optimizationFrameCount = 0;
-        this.itemManager = new ItemManager();
+        this.itemManager = new ItemManager(this);
         this.freezeTimer = 0;
         this.screenShakeTimer = 0;
         this.screenShakeIntensity = 0;
@@ -215,6 +215,19 @@ class Game {
             });
         }
 
+        // デバッグGOLDボタン
+        const btnDebugGold = document.getElementById('btn-debug-gold');
+        if (btnDebugGold) {
+            btnDebugGold.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.goldCount += 100000;
+                this.totalGoldEarned += 100000;
+                this.audio.play('money');
+                this.spawnDamageText(this.player.x, this.player.y - 20, "+100,000G", "#ffd700");
+                this.updateUI();
+            });
+        }
+
         // デバッグMAXボタン
         const btnDebugMax = document.getElementById('btn-debug-max');
         if (btnDebugMax) {
@@ -336,8 +349,8 @@ class Game {
         ctx.shadowBlur = 20;
         ctx.fillStyle = '#fff';
         ctx.textAlign = 'center';
-        ctx.font = 'bold 60px "Share Tech Mono", monospace';
-        ctx.fillText(`STAGE ${this.currentStage + 1} CLEAR`, cx, 150);
+        ctx.font = 'bold 36px "Syncopate", sans-serif'; // 50 -> 36: Syncopateは横に広いため
+        ctx.fillText(`STAGE ${this.currentStage + 1} CLEAR`, cx, 120);
         ctx.shadowBlur = 0;
 
         // RANK
@@ -353,61 +366,70 @@ class Game {
         ctx.fillStyle = rankColor;
         ctx.shadowColor = rankColor;
         ctx.shadowBlur = 30;
-        ctx.fillText(result.rank.padEnd(1, ' '), cx, 350); // 1文字なら中央、SSSならそのまま
+        ctx.fillText(result.rank.padEnd(1, ' '), cx, 300); // 1文字なら中央、SSSならそのまま
         ctx.shadowBlur = 0;
 
         // BEST record logic
         if (result.isBest) {
             ctx.fillStyle = '#ffed00';
-            ctx.font = 'bold 20px "Share Tech Mono", monospace';
-            ctx.fillText("- NEW RECORD -", cx, 400);
+            ctx.font = 'bold 20px "Syncopate", sans-serif';
+            ctx.fillText("- NEW RECORD -", cx, 350);
         }
 
         // Stats
-        ctx.fillStyle = '#ccc';
-        ctx.font = '24px "Share Tech Mono", monospace';
-        const startY = 460;
+        ctx.fillStyle = '#00ffff'; // 蛍光の緑/銀味のあるシアン
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = 10;
+        ctx.font = '16px "Syncopate", sans-serif';
+        const startY = 400;
         const lineHeight = 35;
 
         ctx.textAlign = 'right';
-        ctx.fillText("TIME:", cx - 20, startY);
-        ctx.fillText("DAMAGE:", cx - 20, startY + lineHeight);
-        ctx.fillText("ITEM:", cx - 20, startY + lineHeight * 2);
+        ctx.fillText("ELIMINATED:", cx - 40, startY);
+        ctx.fillText("GOLD EARNED:", cx - 40, startY + lineHeight);
+        ctx.fillText("TIME:", cx - 40, startY + lineHeight * 2);
+        ctx.fillText("DAMAGE:", cx - 40, startY + lineHeight * 3);
+        ctx.fillText("ITEM:", cx - 40, startY + lineHeight * 4);
 
         ctx.textAlign = 'left';
-        ctx.fillStyle = '#fff';
-        const timeStr = (result.time / 1000).toFixed(2) + "s";
-        ctx.fillText(timeStr, cx + 20, startY);
-        ctx.fillText(result.damage, cx + 20, startY + lineHeight);
-        ctx.fillText(result.item, cx + 20, startY + lineHeight * 2);
+        ctx.fillStyle = '#ffffff'; // 値は純白にして際立たせる
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = 20; // グローを強める
+        ctx.font = 'bold 22px "Share Tech Mono", monospace'; // 数字は見やすく太いフォントに
+
+        ctx.fillText(result.kills, cx + 40, startY);
+        ctx.fillText(result.gold, cx + 40, startY + lineHeight);
+        const timeStr = (result.time / 1000).toFixed(2) + "S";
+        ctx.fillText(timeStr, cx + 40, startY + lineHeight * 2);
+        ctx.fillText(result.damage, cx + 40, startY + lineHeight * 3);
+        ctx.fillText(result.item, cx + 40, startY + lineHeight * 4);
+        ctx.shadowBlur = 0;
 
         // Buttons
-        // NEXT / RETRY / TITLE
-        // NEXTは最終ステージ以外のみ
-        // const showNext = this.currentStage < CONSTANTS.STAGE_DATA.length - 1;
-        const btnY = 600;
+        const btnY = 620;
+        const btnOffset = 100; // 150 -> 100 (中央に寄せる)
 
-        // Buttons
-        // RETRY / TITLE (NEXTはもはや不要)
-        // const btnY = 600; // 重複削除
-
-        this.drawButton(ctx, cx - 150, btnY, "RETRY", '#ff44aa');
-        this.drawButton(ctx, cx + 150, btnY, "TITLE", '#888');
+        this.drawButton(ctx, cx - btnOffset, btnY, "RETRY", '#00ffff'); // ピンク(#ff44aa)からシアンへ
+        this.drawButton(ctx, cx + btnOffset, btnY, "TITLE", '#888');
     }
 
     drawButton(ctx, x, y, text, color) {
-        const w = 160;
-        const h = 50;
+        const w = 150; // 160 -> 150
+        const h = 46; // 50 -> 46
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
+
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 10;
         ctx.strokeRect(x - w / 2, y - h / 2, w, h);
 
         ctx.fillStyle = color;
-        ctx.font = 'bold 24px "Share Tech Mono", monospace';
+        ctx.font = 'bold 16px "Syncopate", sans-serif'; // 18 -> 16
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle'; // ボタン内垂直中央
+        ctx.textBaseline = 'middle';
         ctx.fillText(text, x, y);
-        ctx.textBaseline = 'alphabetic'; // 戻す
+        ctx.shadowBlur = 0;
+        ctx.textBaseline = 'alphabetic';
     }
 
     generateStageButtons() {
@@ -467,6 +489,7 @@ class Game {
         this.spawnTimer = 0;
         this.stageTime = 0;
         this.killCount = 0;
+        this.stageGoldEarned = 0;
 
         if ((this.currentStage + 1) % 5 === 0) {
             this.spawnBoss();
@@ -496,7 +519,11 @@ class Game {
             itemUsed: 0
         };
 
-        // デバッグHUDの表示（必要に応じて）
+        // リザルト等で隠れたUIを確実に再表示する
+        const hud = document.getElementById('hud');
+        if (hud) hud.classList.remove('hidden');
+        const controls = document.getElementById('controls');
+        if (controls) controls.classList.remove('hidden');
         const dbHud = document.getElementById('debug-hud');
         if (dbHud) dbHud.classList.remove('hidden');
 
@@ -545,7 +572,15 @@ class Game {
             }
         }
 
-        return { rank, score, time: durationMs, damage: stats.damageTaken, item: stats.itemUsed };
+        return {
+            rank,
+            score,
+            time: durationMs,
+            damage: stats.damageTaken,
+            item: stats.itemUsed,
+            kills: this.killCount,
+            gold: this.stageGoldEarned
+        };
     }
 
     saveStageRecord(stage, result) {
@@ -587,6 +622,8 @@ class Game {
         const sub = document.getElementById('countdown-sub');
 
         sub.textContent = `STAGE ${this.currentStage + 1}`;
+        sub.classList.remove('ani-slide-right');
+        text.classList.remove('ani-slide-left');
         overlay.classList.remove('hidden');
 
         let count = 3;
@@ -599,10 +636,17 @@ class Game {
             } else if (count === 0) {
                 this.audio.play('countdown_start');
                 text.textContent = "START!";
+
+                // スライド演出の適用
+                sub.classList.add('ani-slide-right');
+                text.classList.add('ani-slide-left');
+
                 count--;
                 setTimeout(process, 1000);
             } else {
                 overlay.classList.add('hidden');
+                sub.classList.remove('ani-slide-right');
+                text.classList.remove('ani-slide-left');
                 this.startWave();
             }
         };
@@ -709,6 +753,14 @@ class Game {
                 rankEl.style.color = color;
                 rankEl.style.textShadow = `0 0 10px ${color}`;
             }
+
+            // 新規: TIME, DAMAGE, ITEM の表示
+            const timeEl = document.getElementById('stat-time');
+            if (timeEl) timeEl.textContent = (result.time / 1000).toFixed(2) + "s";
+            const damageEl = document.getElementById('stat-damage');
+            if (damageEl) damageEl.textContent = result.damage;
+            const itemEl = document.getElementById('stat-item');
+            if (itemEl) itemEl.textContent = result.item;
         }
     }
 
@@ -1201,10 +1253,8 @@ class Game {
 
                     e.applyKnockback(b.vx, b.vy, knockPower);
 
-                    if (b.weaponType === CONSTANTS.WEAPON_TYPES.STANDARD) {
-                        const recoverAmount = CONSTANTS.PLAYER_MAX_HP * CONSTANTS.STANDARD_RECOVERY_ON_HIT;
-                        this.player.hp = Math.min(CONSTANTS.PLAYER_MAX_HP, this.player.hp + recoverAmount);
-                    }
+                    const recoverAmount = CONSTANTS.PLAYER_MAX_HP * CONSTANTS.STANDARD_RECOVERY_ON_HIT;
+                    this.player.hp = Math.min(CONSTANTS.PLAYER_MAX_HP, this.player.hp + recoverAmount);
 
                     if (e.hp <= 0 && e.active) {
                         e.destroy('bullet', this);
@@ -1286,8 +1336,10 @@ class Game {
             const distSq = dx * dx + dy * dy;
             const minDist = CONSTANTS.PLAYER_SIZE + CONSTANTS.GOLD_SIZE / 2;
             if (distSq < minDist * minDist) {
-                this.goldCount += 10;
-                this.totalGoldEarned += 10;
+                const val = (typeof g.value === 'number' && !isNaN(g.value)) ? g.value : 10;
+                this.goldCount = (this.goldCount || 0) + val;
+                this.totalGoldEarned = (this.totalGoldEarned || 0) + val;
+                this.stageGoldEarned = (this.stageGoldEarned || 0) + val;
                 this.audio.play('gold_collect', { variation: 0.1, priority: 'low' });
                 this.goldPool.release(this.golds.splice(k, 1)[0]);
             }
@@ -1429,14 +1481,11 @@ class Game {
     }
 
     addSecondSector() {
-        let newCenter = Math.random() * 360;
         const first = this.sectors[0].centerDeg;
-        // 90度以上の差をつける
-        let diff = Math.abs(newCenter - first);
-        if (diff > 180) diff = 360 - diff;
-        if (diff < CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG) {
-            newCenter = (first + 180) % 360; // とりあえず真逆に配置
-        }
+        // 挟み撃ち防止（150度以内）かつ重なり防止（80度以上）
+        const offset = CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG + Math.random() * (CONSTANTS.SPAWN_SECTOR_MAX_SEP_DEG - CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG);
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        const newCenter = (first + offset * dir + 360) % 360;
         this.sectors.push({ centerDeg: newCenter, timer: CONSTANTS.SPAWN_SECTOR_DURATION_MS });
     }
 
@@ -1450,9 +1499,19 @@ class Game {
             const other = this.sectors.find(x => x !== s);
             let diff = Math.abs(newCenter - other.centerDeg);
             if (diff > 180) diff = 360 - diff;
+
             if (diff < CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG) {
-                // 離す方向に調整
-                newCenter = (other.centerDeg + CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG + 360) % 360;
+                // 近すぎる場合、現在の移動方向を維持しつつ最低距離まで押し出す
+                const dir = (move >= 0) ? 1 : -1;
+                newCenter = (other.centerDeg + (CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG + 5) * dir + 360) % 360;
+            } else if (diff > CONSTANTS.SPAWN_SECTOR_MAX_SEP_DEG) {
+                // 離れすぎ（挟み撃ち）の場合、最大距離まで引き戻す
+                // otherに対してnewCenterがどちら側にいるか判定
+                let diffRaw = newCenter - other.centerDeg;
+                while (diffRaw > 180) diffRaw -= 360;
+                while (diffRaw < -180) diffRaw += 360;
+                const dir = (diffRaw >= 0) ? 1 : -1;
+                newCenter = (other.centerDeg + CONSTANTS.SPAWN_SECTOR_MAX_SEP_DEG * dir + 360) % 360;
             }
         }
         s.centerDeg = newCenter;
@@ -1617,6 +1676,16 @@ class Game {
         const dbState = document.getElementById('db-state');
         dbState.textContent = `${this.spawnPhase} (${pStr})`;
         dbState.classList.toggle('cool', this.spawnPhase === 'COOL');
+
+        // 武器DPSの表示
+        const dbWeapon = document.getElementById('db-weapon-dps');
+        if (dbWeapon && this.player) {
+            const stats = this.player.getWeaponStats();
+            const config = this.player.getWeaponConfig();
+            const level = this.player.weapons[this.player.currentWeapon].level;
+            const dps = (1000 / stats.cooldown) * stats.damage;
+            dbWeapon.textContent = `${config.name} Lv.${level} (DPS: ${dps.toFixed(1)})`;
+        }
     }
 
     draw() {
@@ -1642,7 +1711,11 @@ class Game {
         this.ctx.scale(scale, scale);
 
         // 背景画像の描画 (ワールド座標内で行うことで位置を同期)
-        const bgAsset = this.assetLoader.get('BG_STAGE_01');
+        // ステージ1-6の画像があればそれを使用し、なければStage1をフォールバックとして使用
+        const stageNumStr = (this.currentStage + 1).toString().padStart(2, '0');
+        let bgAsset = this.assetLoader.get(`BG_STAGE_${stageNumStr}`);
+        if (!bgAsset) bgAsset = this.assetLoader.get('BG_STAGE_01');
+
         if (bgAsset) {
             const targetW = CONSTANTS.TARGET_WIDTH;
             const targetH = CONSTANTS.TARGET_HEIGHT;
@@ -1674,7 +1747,8 @@ class Game {
         this.bullets.forEach(b => b.draw(this.ctx));
         this.enemies.forEach(e => e.draw(this.ctx));
         if (this.itemManager) this.itemManager.draw(this.ctx);
-        this.golds.forEach(g => g.draw(this.ctx));
+        const goldAsset = this.assetLoader.get('GOLD');
+        this.golds.forEach(g => g.draw(this.ctx, goldAsset));
         this.damageTexts.forEach(d => d.draw(this.ctx));
         Effects.draw(this.ctx);
         this.player.draw(this.ctx);
@@ -1695,12 +1769,12 @@ class Game {
         });
         Profiler.end('render');
 
-        this.ctx.restore();
-
         // リザルト画面の描画（オーバーレイ背後または単体で描画）
         if (this.gameState === CONSTANTS.STATE.RESULT) {
             this.drawResultScreen(this.ctx);
         }
+
+        this.ctx.restore();
     }
 
     loop(time) {

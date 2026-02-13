@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@400;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Syncopate:wght@400;700&family=Megrim&family=Audiowide&family=Inter:wght@400;700&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -16,7 +16,7 @@
 <body>
     <div id="game-container">
         <!-- Performance Overlay -->
-        <div id="perf-overlay" class="perf-overlay"></div>
+        <div id="perf-overlay" class="perf-overlay hidden"></div>
         <div id="hud">
             <div class="hud-top">
                 <div class="hp-container">
@@ -30,11 +30,12 @@
             <!-- デバッグHUD -->
             <div id="debug-hud" class="hidden">
                 <div class="debug-row"><span>Enemies:</span> <span id="db-enemies">0</span></div>
-                <div class="debug-row"><span>Sectors:</span> <span id="db-sectors">0</span></div>
-                <div class="debug-row"><span>Center:</span> <span id="db-center">-</span></div>
-                <div class="debug-row"><span>Queue:</span> <span id="db-queue">0</span></div>
-                <div class="debug-row"><span id="db-state" class="state-label">BURST</span></div>
-                <button id="btn-debug-gold" class="debug-btn-small">+10000 G</button>
+                <div class="debug-row hidden"><span>Sectors:</span> <span id="db-sectors">0</span></div>
+                <div class="debug-row hidden"><span>Center:</span> <span id="db-center">-</span></div>
+                <div class="debug-row hidden">Queue: <span id="db-queue">-</span></div>
+                <div class="debug-row">Weapon: <span id="db-weapon-dps">-</span></div>
+                <div class="debug-row hidden"><span id="db-state" class="state-label">BURST</span></div>
+                <button id="btn-debug-gold" class="debug-btn-small">+100000 G</button>
                 <button id="btn-debug-max" class="debug-btn-small">ALL MAX</button>
             </div>
         </div>
@@ -110,11 +111,14 @@
             <p id="overlay-msg">お疲れ様でした</p>
 
             <div id="result-stats" class="hidden">
-                <div class="stat-row"><span>Eliminated:</span> <span id="stat-kills">0</span></div>
-                <div class="stat-row"><span>Gold Earned:</span> <span id="stat-gold">0</span></div>
-                <div class="stat-row"><span>Reached:</span> <span id="stat-stage">STAGE 1</span></div>
+                <div class="stat-row"><span>ELIMINATED:</span> <span id="stat-kills">0</span></div>
+                <div class="stat-row"><span>GOLD EARNED:</span> <span id="stat-gold">0</span></div>
+                <div class="stat-row"><span>REACHED:</span> <span id="stat-stage">STAGE 1</span></div>
                 <div class="stat-row"><span>RANK:</span> <span id="stat-rank"
                         style="font-weight: bold; font-size: 1.4rem;">-</span></div>
+                <div class="stat-row"><span>TIME:</span> <span id="stat-time">0</span>s</div>
+                <div class="stat-row"><span>DAMAGE:</span> <span id="stat-damage">0</span></div>
+                <div class="stat-row"><span>ITEM:</span> <span id="stat-item">0</span></div>
             </div>
 
             <button id="btn-next" class="btn-primary">NEXT</button>

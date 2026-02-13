@@ -41,7 +41,12 @@ export class DamageText {
         ctx.save();
         ctx.globalAlpha = this.alpha;
         ctx.fillStyle = this.color;
-        ctx.font = 'bold 20px "Courier New", Courier, monospace';
+
+        // LEDグロー効果
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = this.color;
+
+        ctx.font = 'bold 20px "Audiowide", "Orbitron", sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText(this.text, this.x, this.y);
         ctx.restore();

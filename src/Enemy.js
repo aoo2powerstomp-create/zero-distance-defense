@@ -818,7 +818,25 @@ export class Enemy {
         // ゴールドのドロップ
         const gold = game.goldPool.get();
         if (gold) {
-            gold.init(this.renderX, this.renderY);
+            // ステージ倍率: 1.0 + (stage * 0.2)
+            const stageMult = 1.0 + (game.currentStage * 0.2);
+
+            // タイプ倍率
+            let typeMult = 1.0;
+            if (this.isBoss) {
+                typeMult = 10.0;
+            } else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                typeMult = 3.0;
+            } else if ([CONSTANTS.ENEMY_TYPES.SHIELDER, CONSTANTS.ENEMY_TYPES.GUARDIAN, CONSTANTS.ENEMY_TYPES.OBSERVER].includes(this.type)) {
+                typeMult = 2.0;
+            } else if ([CONSTANTS.ENEMY_TYPES.ASSAULT, CONSTANTS.ENEMY_TYPES.DASHER, CONSTANTS.ENEMY_TYPES.ORBITER, CONSTANTS.ENEMY_TYPES.SPLITTER].includes(this.type)) {
+                typeMult = 1.2;
+            }
+
+            let value = Math.floor(15 * stageMult * typeMult); // 1.5倍に増量 (10 -> 15)
+            if (!Number.isFinite(value)) value = 15; // セーフティガード
+
+            gold.init(this.renderX, this.renderY, value);
             game.golds.push(gold);
         }
 

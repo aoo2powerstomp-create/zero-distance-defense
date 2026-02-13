@@ -11,12 +11,15 @@ export class Gold {
         this.active = false;
         this.isAttracting = false;
         this.spawnTime = 0;
+        this.value = 10; // デフォルト値を10に設定
     }
 
-    init(x, y) {
+    init(x, y, value = 10) {
         this.x = x;
         this.y = y;
         this.z = 0;
+        // 数値でない、または有限数でない場合はデフォルトの10を使用
+        this.value = (typeof value === 'number' && Number.isFinite(value)) ? value : 10;
 
         // 初速をランダムに設定（弾ける演出）
         const angle = Math.random() * Math.PI * 2;
@@ -69,14 +72,18 @@ export class Gold {
         }
     }
 
-    draw(ctx) {
-        ctx.beginPath();
-        // Z(高さ)をY座標に反映して影と本体を分けるなどの演出も可能だが、最小構成のためYオフセットのみ
-        ctx.arc(this.x, this.y + this.z, CONSTANTS.GOLD_SIZE / 2, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffd700';
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+    draw(ctx, asset) {
+        if (asset) {
+            const size = CONSTANTS.GOLD_SIZE * 1.05; // 1.5 * 0.7 = 1.05
+            ctx.drawImage(asset, this.x - size / 2, this.y + this.z - size / 2, size, size);
+        } else {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y + this.z, CONSTANTS.GOLD_SIZE / 2, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffd700';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
     }
 }
