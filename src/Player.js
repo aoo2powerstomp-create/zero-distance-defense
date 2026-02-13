@@ -1,7 +1,8 @@
 import { CONSTANTS } from './constants.js';
 
 export class Player {
-    constructor(x, y) {
+    constructor(x, y, game) {
+        this.game = game;
         this.x = x;
         this.y = y;
         this.hp = CONSTANTS.PLAYER_MAX_HP;
@@ -27,6 +28,10 @@ export class Player {
         this.barrierCharges = CONSTANTS.BARRIER_MAX_CHARGES;
         this.lastBarrierRegenTime = Date.now();
         this.barrierKillConsumedThisFrame = false;
+
+        // レアアイテム効果用ステート
+        this.overdriveUntilMs = 0;
+        this.invincibleUntilMs = 0;
     }
 
     getWeaponConfig() {
@@ -55,7 +60,14 @@ export class Player {
         const growth = CONSTANTS.WEAPON_GROWTH[this.currentWeapon];
 
         // 攻撃力: base * (scale ^ (lv-1))
-        const damage = config.baseDamage * Math.pow(config.damageScale, level - 1);
+        let damage = config.baseDamage * Math.pow(config.damageScale, level - 1);
+
+        // OVERDRIVE補正
+        if (Date.now() < this.overdriveUntilMs) {
+            const def = CONSTANTS.ITEM_DEFS[CONSTANTS.ITEM_TYPES.OVERDRIVE];
+            if (def) damage *= def.damageMul;
+        }
+
         const speed = CONSTANTS.BULLET_SPEED * config.speedScale;
 
         // 貫通数
@@ -143,9 +155,17 @@ export class Player {
     }
 
     takeDamage(ratio) {
+        // INVINCIBLE中は無敵
+        if (Date.now() < this.invincibleUntilMs) return;
+
         const damage = CONSTANTS.PLAYER_MAX_HP * ratio;
         this.hp = Math.max(0, this.hp - damage);
         this.lastDamageTime = Date.now();
+
+        // 被弾カウント (Result用)
+        if (this.game) {
+            this.game.recordDamage();
+        }
     }
 
     update(dt) {
@@ -168,15 +188,17 @@ export class Player {
         }
 
         // 2. マウス/ポインタ位置への半追随補正
-        // 180度反対付近で振動（ハンチング）しないよう、1フレームの最大回転量を制限する
         const pullAmount = diff * CONSTANTS.PLAYER_FOLLOW_STRENGTH * (dt / 1000);
-        const maxPullPerFrame = 0.15; // 1フレームあたり約8.5度を上限に (60fps想定)
+        const maxPullPerFrame = 0.15;
         const clampedPull = Math.max(-maxPullPerFrame, Math.min(maxPullPerFrame, pullAmount));
 
         this.angle += clampedPull;
 
         // 角度の正規化
         this.angle = ((this.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+
+        // 描画用の角度計算: マウス方向を基準に、画像の下向き(+Y)が正面なので -90度
+        this.renderAngle = this.angle - Math.PI / 2;
 
         // 自動回復
         const now = Date.now();
@@ -191,30 +213,56 @@ export class Player {
 
         ctx.save();
         ctx.translate(this.x, this.y);
-        ctx.rotate(this.angle);
+        ctx.rotate(this.renderAngle || (this.angle - Math.PI / 2));
 
-        // 自機 (円と向きを示す線)
-        ctx.beginPath();
-        ctx.arc(0, 0, CONSTANTS.PLAYER_SIZE, 0, Math.PI * 2);
-        ctx.fillStyle = '#00ff88';
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        const asset = this.game.assetLoader ? this.game.assetLoader.get('PLAYER') : null;
 
-        // 正面インジケータ（▲マーク）
-        ctx.beginPath();
-        const offset = CONSTANTS.PLAYER_SIZE + 2;
-        ctx.moveTo(offset + 10, 0);   // 先端
-        ctx.lineTo(offset, -7);      // 後端左
-        ctx.lineTo(offset, 7);       // 後端右
-        ctx.closePath();
+        if (asset) {
+            // アセットがある場合：スプライト描画
+            // 縦横比を維持しながらサイズを調整 (ベースサイズ 1.2倍: 2.5 -> 3.0)
+            const baseSize = CONSTANTS.PLAYER_SIZE * 3.0;
+            const aspectRatio = asset.width / asset.height;
+            let drawW, drawH;
 
-        ctx.fillStyle = '#00ffff';
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+            if (aspectRatio >= 1) {
+                drawW = baseSize;
+                drawH = baseSize / aspectRatio;
+            } else {
+                drawW = baseSize * aspectRatio;
+                drawH = baseSize;
+            }
+
+            // 中心（コア）の位置が回転軸になるように微調整
+            // 画像内の〇の位置が少し上にあるため、描画位置を「下」にずらすことで
+            // 相対的に回転軸が「上」に来るように調整します。
+            const yOffset = drawH * 0.15; // 8% -> 15% に増やして軸をさらに上に。
+
+            // 中心を回転軸にして描画
+            ctx.drawImage(asset, -drawW / 2, -drawH / 2 + yOffset, drawW, drawH);
+        } else {
+            // 自機 (円と向きを示す線) - フォールバック
+            ctx.beginPath();
+            ctx.arc(0, 0, CONSTANTS.PLAYER_SIZE, 0, Math.PI * 2);
+            ctx.fillStyle = '#00ff88';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 正面インジケータ（▲マーク）
+            ctx.beginPath();
+            const offset = CONSTANTS.PLAYER_SIZE + 2;
+            ctx.moveTo(offset + 10, 0);   // 先端
+            ctx.lineTo(offset, -7);      // 後端左
+            ctx.lineTo(offset, 7);       // 後端右
+            ctx.closePath();
+
+            ctx.fillStyle = '#00ffff';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
 
         ctx.restore();
     }

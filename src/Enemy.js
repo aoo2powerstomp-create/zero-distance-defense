@@ -128,14 +128,28 @@ export class Enemy {
         this.nextSlotIndex = 0;
         this.didMarkThisHold = false;
         this.startY = y;
+        this.startY = y;
         this.isShielded = false; // オーラ保護状態のキャッシュ
         this.pulseOutlineTimer = 0; // パルスヒット時の発光用
+
+        // 進行方向への回転設定
+        const directionalTypes = [
+            CONSTANTS.ENEMY_TYPES.ASSAULT,
+            CONSTANTS.ENEMY_TYPES.DASHER,
+            CONSTANTS.ENEMY_TYPES.ELITE,
+            CONSTANTS.ENEMY_TYPES.EVASIVE,
+            CONSTANTS.ENEMY_TYPES.ORBITER,
+            CONSTANTS.ENEMY_TYPES.ZIGZAG
+        ];
+        this.hasDirection = directionalTypes.includes(this.type);
+        this.angle = 0;
     }
 
     initBoss(x, y, targetX, targetY, hpMul, onSummon) {
         // ボスは属性なし（または全属性耐性なしなどの特殊扱いも可だが、一旦SWARM固定）
         this.init(x, y, targetX, targetY, CONSTANTS.ENEMY_TYPES.NORMAL, hpMul * CONSTANTS.BOSS_HP_MUL, CONSTANTS.BOSS_SPEED_MUL, CONSTANTS.ENEMY_AFFINITIES.SWARM);
         this.isBoss = true;
+        this.radius = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL;
         this.onSummon = onSummon;
         this.lastSummonTime = Date.now();
     }
@@ -290,6 +304,16 @@ export class Enemy {
         // パルスアウトラインの更新
         if (this.pulseOutlineTimer > 0) {
             this.pulseOutlineTimer = Math.max(0, this.pulseOutlineTimer - dt);
+        }
+
+        // 進行方向の角度更新 (hasDirection が有効な場合のみ)
+        if (this.hasDirection) {
+            // 基本の向きを計算 (リクエスト要件: -Y方向が正面の画像を vx, vy に向ける)
+            const rawAngle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
+
+            // 8方向量子化 (45度刻み)
+            const step = Math.PI / 4;
+            this.angle = Math.round(rawAngle / step) * step;
         }
 
         // 移動の適用（通常移動は freezeMul の影響を受ける）
@@ -463,43 +487,109 @@ export class Enemy {
 
     draw(ctx) {
         ctx.save();
-        ctx.beginPath();
-        let size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
-        if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
-            size *= CONSTANTS.ELITE_SIZE_MUL;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) {
-            size *= CONSTANTS.SPLITTER_CHILD.sizeMul;
-        }
-        // 矩形の中央が実効座標になるように
-        ctx.rect(this.renderX - size, this.renderY - size, size * 2, size * 2);
+        ctx.translate(this.renderX, this.renderY);
 
-        // 属性カラーの適用（ボス以外）
+        // 進行方向への回転適用 (本体のみに適用するため save)
+        ctx.save();
+        if (this.hasDirection) {
+            ctx.rotate(this.angle);
+        }
+
+        let assetKey = null;
+        switch (this.type) {
+            case CONSTANTS.ENEMY_TYPES.NORMAL: assetKey = 'ENEMY_A'; break;
+            case CONSTANTS.ENEMY_TYPES.ZIGZAG: assetKey = 'ENEMY_B'; break;
+            case CONSTANTS.ENEMY_TYPES.EVASIVE: assetKey = 'ENEMY_C'; break;
+            case CONSTANTS.ENEMY_TYPES.ELITE: assetKey = 'ENEMY_D'; break;
+            case CONSTANTS.ENEMY_TYPES.ASSAULT: assetKey = 'ENEMY_E'; break;
+            case CONSTANTS.ENEMY_TYPES.SHIELDER: assetKey = 'ENEMY_F'; break;
+            case CONSTANTS.ENEMY_TYPES.GUARDIAN: assetKey = 'ENEMY_G'; break;
+            case CONSTANTS.ENEMY_TYPES.DASHER: assetKey = 'ENEMY_H'; break;
+            case CONSTANTS.ENEMY_TYPES.ORBITER: assetKey = 'ENEMY_I'; break;
+            case CONSTANTS.ENEMY_TYPES.SPLITTER: assetKey = 'ENEMY_J'; break;
+            case CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD: assetKey = 'ENEMY_K'; break;
+            case CONSTANTS.ENEMY_TYPES.OBSERVER: assetKey = 'ENEMY_L'; break;
+        }
         if (this.isBoss) {
-            ctx.fillStyle = '#ff0000'; // ボスは真紅
-        } else {
-            ctx.fillStyle = CONSTANTS.AFFINITY_COLORS[this.affinity] || '#ff4444';
+            const stageNum = (this.game) ? this.game.currentStage + 1 : 1;
+            assetKey = (stageNum <= 5) ? 'ENEMY_BOSS_5' : 'ENEMY_BOSS_10';
         }
 
-        ctx.fill();
+        const asset = (this.game && this.game.assetLoader) ? this.game.assetLoader.get(assetKey) : null;
 
-        // 通常の枠線またはパルスアウトライン
-        if (this.pulseOutlineTimer > 0) {
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 4; // パルス時は太く発光
-            ctx.setLineDash([]);
+        if (asset) {
+            // アセットがある場合：スプライト描画
+            const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL * 2.5 : CONSTANTS.ENEMY_SIZE * 2.5;
+            ctx.drawImage(asset, -size / 2, -size / 2, size, size);
+
+            // パルス時のアウトライン (画像の場合は矩形枠を表示)
+            if (this.pulseOutlineTimer > 0) {
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.rect(-size / 2, -size / 2, size, size);
+                ctx.stroke();
+            }
         } else {
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = this.isBoss ? 4 : 1;
+            // アセットがない場合：従来の図形描画
+            switch (this.type) {
+                case CONSTANTS.ENEMY_TYPES.NORMAL:
+                    this.drawShape(ctx, 3, '#ff0000'); // Triangle
+                    break;
+                case CONSTANTS.ENEMY_TYPES.ZIGZAG:
+                    this.drawShape(ctx, 4, '#ff00ff'); // Square
+                    break;
+                case CONSTANTS.ENEMY_TYPES.CHASER: // Pent
+                    this.drawShape(ctx, 5, '#ff8800');
+                    break;
+                case CONSTANTS.ENEMY_TYPES.SPEEDER: // Hex
+                    this.drawShape(ctx, 6, '#ffff00');
+                    break;
+                case CONSTANTS.ENEMY_TYPES.DASHER: // Star (5)
+                    this.drawStar(ctx, 5, '#00ffff');
+                    break;
+                case CONSTANTS.ENEMY_TYPES.TANK: // 8角形
+                    this.drawShape(ctx, 8, '#8800ff');
+                    // 重装甲感の追加
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.fillStyle = `rgba(255, 255, 255, ${this.flashTimer / 5})`;
+                    ctx.fill();
+                    break;
+                case CONSTANTS.ENEMY_TYPES.SHOOTER:
+                    this.drawShape(ctx, 3, '#00ff00'); // 仮定
+                    break;
+                case CONSTANTS.ENEMY_TYPES.HOMING:
+                    this.drawShape(ctx, 4, '#ff8888'); // 仮定
+                    break;
+                case CONSTANTS.ENEMY_TYPES.EXPLODER:
+                    this.drawShape(ctx, 6, '#ff0088'); // 仮定
+                    break;
+                case CONSTANTS.ENEMY_TYPES.ORBITER:
+                    this.drawShape(ctx, 4, '#00ffff'); // 仮定
+                    break;
+                case CONSTANTS.ENEMY_TYPES.SHIELDER:
+                case CONSTANTS.ENEMY_TYPES.GUARDIAN:
+                    // SHIELDER/GUARDIAN は特殊エフェクトが下に続くが、本体も描画
+                    this.drawShape(ctx, 6, '#00ffff');
+                    break;
+                default:
+                    this.drawShape(ctx, 3, '#ff0000');
+                    break;
+            }
         }
-        ctx.stroke();
 
         // シールダー・ガーディアンのバリア/弱点演出
         if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER || this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
+            const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
             if (this.barrierState === 'windup') {
                 // 予兆: 点滅
                 if (Math.floor(Date.now() / 50) % 2 === 0) {
                     ctx.strokeStyle = '#fff';
                     ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, size * 1.2, 0, Math.PI * 2); // 簡易的な点滅枠
                     ctx.stroke();
                 }
             } else if (this.barrierState === 'active') {
@@ -507,7 +597,7 @@ export class Enemy {
                 if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER) {
                     // オーラ型: 円形防壁
                     ctx.beginPath();
-                    ctx.arc(this.renderX, this.renderY, CONSTANTS.SHIELDER.auraRadius, 0, Math.PI * 2);
+                    ctx.arc(0, 0, CONSTANTS.SHIELDER.auraRadius, 0, Math.PI * 2);
                     ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
                     ctx.lineWidth = 2;
                     ctx.stroke();
@@ -516,101 +606,53 @@ export class Enemy {
 
                     // 足元のコア
                     ctx.beginPath();
-                    ctx.arc(this.renderX, this.renderY, size * 1.5, 0, Math.PI * 2);
-                    ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
-                    ctx.lineWidth = 4;
-                    ctx.stroke();
-                } else {
-                    // グローバル型
-                    ctx.beginPath();
-                    ctx.arc(this.renderX, this.renderY, size * 2, 0, Math.PI * 2);
-                    ctx.strokeStyle = 'rgba(255, 255, 0, 0.9)';
-                    ctx.lineWidth = 6;
-                    ctx.stroke();
+                    ctx.arc(0, 0, size * 1.5, 0, Math.PI * 2);
+                    // ボスは少し大きく脈動
+                    const pulseScale = 1 + Math.sin(Date.now() / 200) * 0.1;
+                    if (this.isBoss) ctx.scale(pulseScale, pulseScale);
                 }
-            } else if (this.barrierState === 'vulnerable') {
-                // 弱点露出
-                ctx.strokeStyle = '#ff8800';
-                ctx.lineWidth = 4;
-                ctx.stroke();
             }
         }
 
-        // DASHERの予兆演出
-        if (this.type === CONSTANTS.ENEMY_TYPES.DASHER && this.dashState === 'windup') {
-            if (Math.floor(Date.now() / 50) % 2 === 0) {
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 4;
-                ctx.stroke();
-            }
+        // バリア状態の描画 (Shielder/Guardian)
+        if (this.barrierState === 'active') {
+            this.drawBarrier(ctx);
         }
 
-        // OBSERVERの予兆・マーキング演出
-        if (this.type === CONSTANTS.ENEMY_TYPES.OBSERVER) {
-            if (this.obsState === 'hold') {
-                const config = CONSTANTS.OBSERVER;
-                const windupProgress = Math.min(1.0, this.obsTimer / config.markWindupMs);
-
-                // マーキング予兆の円
-                ctx.beginPath();
-                ctx.arc(this.renderX, this.renderY, size * (1.5 + windupProgress * 1.5), 0, Math.PI * 2);
-                ctx.strokeStyle = `rgba(255, 255, 255, ${0.4 * windupProgress})`;
-                ctx.setLineDash([5, 5]);
-                ctx.stroke();
-                ctx.setLineDash([]);
-
-                if (this.didMarkThisHold) {
-                    // マーキング済みの目印（少し明滅）
-                    if (Math.floor(Date.now() / 200) % 2 === 0) {
-                        ctx.strokeStyle = '#fff';
-                        ctx.lineWidth = 2;
-                        ctx.stroke();
-                    }
-                }
-            } else if (this.obsState === 'snap') {
-                // SNAP中の残像的な演出
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-                ctx.beginPath();
-                ctx.arc(this.renderX, this.renderY, size * 0.8, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        // バリア保護状態の視覚フィードバック
-        if (this.isAuraProtected && !this.isBoss && this.active) {
+        // パルスヒット時のアウトライン
+        if (this.pulseOutlineTimer > 0) {
+            ctx.strokeStyle = `rgba(255, 128, 0, ${this.pulseOutlineTimer / 200})`;
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(this.renderX, this.renderY, size * 1.3, 0, Math.PI * 2);
-
-            // 防御バフ（GUARDIAN等）がある場合は水色、マーキングのみならオレンジ
-            if (this.hasGuardBuff || (!this.hasMarkBuff && this.isAuraProtected)) {
-                ctx.strokeStyle = 'rgba(0, 255, 255, 0.6)';
-                ctx.fillStyle = 'rgba(0, 255, 255, 0.15)';
-            } else {
-                ctx.strokeStyle = 'rgba(255, 140, 0, 0.7)'; // オレンジ
-                ctx.fillStyle = 'rgba(255, 140, 0, 0.1)';
-            }
-            ctx.lineWidth = 2;
+            const r = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+            ctx.arc(0, 0, r + 5, 0, Math.PI * 2);
             ctx.stroke();
-            ctx.fill();
         }
 
-        // マーキング（速度アップ）の▲記号
-        if (this.hasMarkBuff && this.active && !this.isBoss) {
-            ctx.fillStyle = '#ffaa00';
-            ctx.font = `bold ${Math.floor(size * 0.9)}px Orbitron, sans-serif`;
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'bottom';
-            ctx.fillText('▲', this.renderX + size * 0.6, this.renderY - size * 0.6);
+        // 全体バフのエフェクト (Guardian/Observer)
+        if (this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN && this.barrierState === 'active') {
+            ctx.strokeStyle = `rgba(0, 255, 100, 0.3)`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(0, 0, CONSTANTS.GUARDIAN.buffRadius, 0, Math.PI * 2);
+            ctx.stroke();
         }
 
-        // 属性記号の描画
-        if (!this.isBoss) {
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.font = `bold ${Math.floor(size)}px Orbitron, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(this.affinity, this.renderX, this.renderY);
+        // 本体描画終了 (回転を解除)
+        ctx.restore();
+
+        // HPバー
+        // ボスは画面上部に別枠表示するので頭上には出さない
+        if (!this.isBoss && this.hp < this.maxHp) {
+            const barW = 40;
+            const barH = 4;
+            const yOff = -CONSTANTS.ENEMY_SIZE - 10;
+            ctx.fillStyle = '#444';
+            ctx.fillRect(-barW / 2, yOff, barW, barH);
+            ctx.fillStyle = '#f00';
+            ctx.fillRect(-barW / 2, yOff, barW * (this.hp / this.maxHp), barH);
         }
+
         ctx.restore();
     }
 
@@ -663,6 +705,55 @@ export class Enemy {
         }
         this.renderX = this.x;
         this.renderY = this.y;
+    }
+
+    drawShape(ctx, sides, color) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+        for (let i = 0; i < sides; i++) {
+            const angle = (i / sides) * Math.PI * 2 - Math.PI / 2;
+            const x = Math.cos(angle) * size;
+            const y = Math.sin(angle) * size;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+
+    drawStar(ctx, points, color) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        const outer = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+        const inner = outer * 0.5;
+        for (let i = 0; i < points * 2; i++) {
+            const angle = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+            const r = (i % 2 === 0) ? outer : inner;
+            const x = Math.cos(angle) * r;
+            const y = Math.sin(angle) * r;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+
+    drawBarrier(ctx) {
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const r = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL * 1.5 : CONSTANTS.ENEMY_SIZE * 1.5;
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.stroke();
     }
 
     takeDamage(amount, options = {}) {
@@ -745,7 +836,10 @@ export class Enemy {
         // }
 
         if (this.isBoss) {
-            game.stageClear();
+            // 衝突判定ループ内での急激な状態変化（配列クリア等）を避けるため、次フレームまで遅延させる
+            setTimeout(() => {
+                game.stageClear();
+            }, 0);
             return;
         }
 

@@ -10,10 +10,11 @@ import { Effects } from './Effects.js';
 import { Profiler } from './Profiler.js';
 import { SpatialGrid } from './SpatialGrid.js';
 import { ItemManager } from './ItemManager.js';
+import { AssetLoader } from './AssetLoader.js';
 
 class Game {
     constructor() {
-        console.log('Main.js FIX APPLIED: VERSION 2026-02-13-H');
+        console.log('Main.js FIX APPLIED: VERSION 2026-02-13-I');
         this.canvas = document.getElementById('game-canvas');
         this.ctx = this.canvas.getContext('2d');
 
@@ -21,11 +22,15 @@ class Game {
         this.resize();
         window.addEventListener('resize', () => this.resize());
 
-        this.player = new Player(CONSTANTS.TARGET_WIDTH / 2, CONSTANTS.TARGET_HEIGHT / 2);
+        this.player = new Player(CONSTANTS.TARGET_WIDTH / 2, CONSTANTS.TARGET_HEIGHT / 2, this);
 
         // オブジェクトプール
         this.bulletPool = new Pool(() => new Bullet(), 100);
-        this.enemyPool = new Pool(() => new Enemy(), 300);
+        this.enemyPool = new Pool(() => {
+            const e = new Enemy();
+            e.game = this;
+            return e;
+        }, 300);
         this.goldPool = new Pool(() => new Gold(), 100);
         this.damageTextPool = new Pool(() => new DamageText(), 50);
 
@@ -70,6 +75,11 @@ class Game {
 
         this.initUI();
         this.audio = new AudioManager();
+
+        // アセットローダー初期化とロード開始
+        this.assetLoader = new AssetLoader();
+        this.assetLoader.loadAll(CONSTANTS.ASSET_MAP);
+
         this.generateStageButtons();
         this.lastTime = performance.now();
         requestAnimationFrame((t) => this.loop(t));
@@ -248,8 +258,44 @@ class Game {
         const scale = this.canvas.height / CONSTANTS.TARGET_HEIGHT;
         const offsetX = (this.canvas.width - CONSTANTS.TARGET_WIDTH * scale) / 2;
 
+        // リザルト画面のクリック判定
+        if (this.gameState === CONSTANTS.STATE.RESULT && isAction && this.resultTimer > 1000) { // 1秒後から入力受付
+            const mouseX = clientX - rect.left;
+            const mouseY = clientY - rect.top;
+            const x = (mouseX - offsetX) / scale;
+            const y = mouseY / scale;
+
+            // ボタン定義 (drawResultScreenと合わせる)
+            const btnW = 160, btnH = 50;
+            const startY = 600;
+            const cX = CONSTANTS.TARGET_WIDTH / 2;
+
+            // Next
+            if (this.currentStage < CONSTANTS.STAGE_DATA.length - 1) {
+                if (Math.abs(x - cX) < btnW / 2 && Math.abs(y - startY) < btnH / 2) {
+                    this.audio.play('menu_select');
+                    this.startNextWave();
+                    return;
+                }
+            }
+
+            // Retry
+            if (Math.abs(x - (cX - 150)) < btnW / 2 && Math.abs(y - startY) < btnH / 2) {
+                this.audio.play('menu_select');
+                this.startCountdown(); // 同じステージを再開
+                return;
+            }
+
+            // Title
+            if (Math.abs(x - (cX + 150)) < btnW / 2 && Math.abs(y - startY) < btnH / 2) {
+                this.audio.play('menu_select');
+                location.reload();
+                return;
+            }
+        }
+
         // アイテム取得を試行 (クリック/タップ時のみ)
-        if (isAction) {
+        if (isAction && this.gameState === CONSTANTS.STATE.PLAYING) {
             const picked = this.itemManager.tryPickup(clientX, clientY, rect, scale, offsetX, this.player, this);
             if (picked) return; // アイテムを取った場合は移動/射撃を行わない
         }
@@ -260,6 +306,96 @@ class Game {
         // 仮想空間上の座標へ逆写像
         this.player.targetX = (mouseX - offsetX) / scale;
         this.player.targetY = mouseY / scale;
+    }
+
+    drawResultScreen(ctx) {
+        this.resultTimer = (this.resultTimer || 0) + 16.6; // dt概算
+
+        // 背景
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(0, 0, CONSTANTS.TARGET_WIDTH, CONSTANTS.TARGET_HEIGHT);
+
+        const cx = CONSTANTS.TARGET_WIDTH / 2;
+        const result = this.lastResult;
+        if (!result) return;
+
+        // STAGE CLEAR
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 60px "Share Tech Mono", monospace';
+        ctx.fillText(`STAGE ${this.currentStage + 1} CLEAR`, cx, 150);
+        ctx.shadowBlur = 0;
+
+        // RANK
+        ctx.font = 'bold 180px "Share Tech Mono", monospace';
+        let rankColor = '#fff';
+        if (result.rank === 'SSS') rankColor = '#ffed00'; // Gold
+        else if (result.rank.startsWith('S')) rankColor = '#ffaa00'; // Orange
+        else if (result.rank.startsWith('A')) rankColor = '#ff44aa'; // Pink
+        else if (result.rank === 'B') rankColor = '#4488ff'; // Blue
+        else if (result.rank === 'C') rankColor = '#44ff88'; // Green
+        else rankColor = '#888';
+
+        ctx.fillStyle = rankColor;
+        ctx.shadowColor = rankColor;
+        ctx.shadowBlur = 30;
+        ctx.fillText(result.rank.padEnd(1, ' '), cx, 350); // 1文字なら中央、SSSならそのまま
+        ctx.shadowBlur = 0;
+
+        // BEST record logic
+        if (result.isBest) {
+            ctx.fillStyle = '#ffed00';
+            ctx.font = 'bold 20px "Share Tech Mono", monospace';
+            ctx.fillText("- NEW RECORD -", cx, 400);
+        }
+
+        // Stats
+        ctx.fillStyle = '#ccc';
+        ctx.font = '24px "Share Tech Mono", monospace';
+        const startY = 460;
+        const lineHeight = 35;
+
+        ctx.textAlign = 'right';
+        ctx.fillText("TIME:", cx - 20, startY);
+        ctx.fillText("DAMAGE:", cx - 20, startY + lineHeight);
+        ctx.fillText("ITEM:", cx - 20, startY + lineHeight * 2);
+
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#fff';
+        const timeStr = (result.time / 1000).toFixed(2) + "s";
+        ctx.fillText(timeStr, cx + 20, startY);
+        ctx.fillText(result.damage, cx + 20, startY + lineHeight);
+        ctx.fillText(result.item, cx + 20, startY + lineHeight * 2);
+
+        // Buttons
+        // NEXT / RETRY / TITLE
+        // NEXTは最終ステージ以外のみ
+        // const showNext = this.currentStage < CONSTANTS.STAGE_DATA.length - 1;
+        const btnY = 600;
+
+        // Buttons
+        // RETRY / TITLE (NEXTはもはや不要)
+        // const btnY = 600; // 重複削除
+
+        this.drawButton(ctx, cx - 150, btnY, "RETRY", '#ff44aa');
+        this.drawButton(ctx, cx + 150, btnY, "TITLE", '#888');
+    }
+
+    drawButton(ctx, x, y, text, color) {
+        const w = 160;
+        const h = 50;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+
+        ctx.fillStyle = color;
+        ctx.font = 'bold 24px "Share Tech Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle'; // ボタン内垂直中央
+        ctx.fillText(text, x, y);
+        ctx.textBaseline = 'alphabetic'; // 戻す
     }
 
     generateStageButtons() {
@@ -324,7 +460,7 @@ class Game {
             this.spawnBoss();
         }
 
-        // 初期セクタの設定
+        // セクタの初期化
         this.sectors = [{
             centerDeg: Math.random() * 360,
             timer: CONSTANTS.SPAWN_SECTOR_DURATION_MS
@@ -335,13 +471,92 @@ class Game {
         this.currentSpawnBudget = CONSTANTS.SPAWN_BUDGET_PER_SEC;
         this.pulseCooldownTimer = 0;
         this.pulseEffects = [];
+        this.globalMarkTimer = 0; // マーキングもリセット
+        this.isClearing = false; // フラグ保護のリセット
 
         this.gameState = CONSTANTS.STATE.PLAYING;
+
+        // ランニングスタッツの初期化
+        this.runStats = {
+            startTime: Date.now(),
+            endTime: 0,
+            damageTaken: 0,
+            itemUsed: 0
+        };
+
         // デバッグHUDの表示（必要に応じて）
         const dbHud = document.getElementById('debug-hud');
         if (dbHud) dbHud.classList.remove('hidden');
 
         this.updateUI();
+    }
+
+    recordDamage() {
+        if (this.runStats) {
+            this.runStats.damageTaken++;
+        }
+    }
+
+    recordItemUse() {
+        if (this.runStats) {
+            this.runStats.itemUsed++;
+        }
+    }
+
+    calculateRank() {
+        const stats = this.runStats;
+        const stage = this.currentStage + 1; // 1-indexed
+
+        // タイム計測 (秒)
+        const durationMs = stats.endTime - stats.startTime;
+        const durationSec = durationMs / 1000;
+
+        // ターゲットタイム
+        const targetSec = CONSTANTS.STAGE_TARGET_TIME_SEC[stage] || CONSTANTS.DEFAULT_TARGET_TIME_SEC;
+        const overtimeSec = Math.max(0, durationSec - targetSec);
+
+        // スコア計算
+        let score = CONSTANTS.RANK_RULES.baseScore;
+        score -= CONSTANTS.RANK_RULES.penalty.hit * stats.damageTaken;
+        score -= CONSTANTS.RANK_RULES.penalty.item * stats.itemUsed;
+        score -= CONSTANTS.RANK_RULES.penalty.overtimePerSec * overtimeSec;
+
+        // 0-100にクランプ
+        score = Math.max(0, Math.min(100, Math.floor(score)));
+
+        // ランク判定
+        let rank = "F";
+        for (const r of CONSTANTS.RANK_RULES.thresholds) {
+            if (score >= r.minScore) {
+                rank = r.rank;
+                break;
+            }
+        }
+
+        return { rank, score, time: durationMs, damage: stats.damageTaken, item: stats.itemUsed };
+    }
+
+    saveStageRecord(stage, result) {
+        const key = `zerodist_stage_${stage}`;
+        const currentBest = JSON.parse(localStorage.getItem(key));
+
+        // ランクの強さ比較用インデックス (小さいほど強い)
+        const rankIndex = (r) => CONSTANTS.RANK_RULES.thresholds.findIndex(t => t.rank === r);
+        const currentRankIdx = currentBest ? rankIndex(currentBest.rank) : 999;
+        const newRankIdx = rankIndex(result.rank);
+
+        let isBest = false;
+        // ランクが高い、またはランク同じでスコアが高い、またはスコア同じでタイムが早いなら更新
+        if (!currentBest ||
+            newRankIdx < currentRankIdx ||
+            (newRankIdx === currentRankIdx && result.score > currentBest.score) ||
+            (newRankIdx === currentRankIdx && result.score === currentBest.score && result.time < currentBest.time)) {
+
+            localStorage.setItem(key, JSON.stringify(result));
+            isBest = true;
+        }
+
+        return { isBest, best: isBest ? result : currentBest };
     }
 
     startNextWave() {
@@ -383,12 +598,46 @@ class Game {
     }
 
     stageClear() {
-        this.gameState = CONSTANTS.STATE.WAVE_CLEAR_CUTIN;
+        if (this.isClearing) return;
+        this.isClearing = true;
+
+        // 安全策: runStats がない場合（途中更新など）の初期化
+        if (!this.runStats) {
+            this.runStats = {
+                startTime: Date.now() - 60000, // 仮: 1分前
+                endTime: Date.now(),
+                damageTaken: 0,
+                itemUsed: 0
+            };
+        }
+        this.runStats.endTime = Date.now();
+
         this.enemies.forEach(e => this.enemyPool.release(e));
         this.enemies = [];
-        this.showCutIn('STAGE CLEAR!', () => {
-            this.startNextWave();
-        });
+        this.bullets.forEach(b => this.bulletPool.release(b)); // 弾も消す
+        this.bullets = [];
+
+        const result = this.calculateRank();
+        const saved = this.saveStageRecord(this.currentStage + 1, result);
+        this.lastResult = { ...result, isBest: saved.isBest };
+
+        // 最終ステージクリア時のみリザルト画面へ
+        const isFinalStage = this.currentStage >= CONSTANTS.STAGE_DATA.length - 1;
+
+        if (isFinalStage) {
+            this.gameState = CONSTANTS.STATE.RESULT;
+            this.resultTimer = 0;
+            // HUDを一時的に隠してリザルトに集中させる
+            document.getElementById('hud').classList.add('hidden');
+            document.getElementById('controls').classList.add('hidden');
+        } else {
+            // 中間ステージはカットイン後に次へ
+            this.gameState = CONSTANTS.STATE.WAVE_CLEAR_CUTIN;
+            this.showCutIn(`STAGE ${this.currentStage + 1} CLEAR!`, () => {
+                this.isClearing = false;
+                this.startNextWave();
+            });
+        }
     }
 
     showCutIn(msg, callback) {
@@ -413,10 +662,41 @@ class Game {
 
         if (type === 'result') {
             this.gameState = CONSTANTS.STATE.RESULT;
+
+            // ランク計算を実行して lastResult に格納（ゲームオーバー時もランクを表示するため）
+            if (!this.runStats) {
+                this.runStats = {
+                    startTime: Date.now() - 60000,
+                    endTime: Date.now(),
+                    damageTaken: 0,
+                    itemUsed: 0
+                };
+            }
+            this.runStats.endTime = Date.now();
+            const result = this.calculateRank();
+            // ゲームオーバー時は記録保存しない（クリアではないため）が、表示用にlastResultは必要
+            // ただしハイスコア更新判定もしない
+            this.lastResult = { ...result, isBest: false };
+
             statsArea.classList.remove('hidden');
             document.getElementById('stat-kills').textContent = this.totalKills;
             document.getElementById('stat-gold').textContent = this.totalGoldEarned;
             document.getElementById('stat-stage').textContent = `STAGE ${this.currentStage + 1}`;
+
+            // ランク表示の更新
+            const rankEl = document.getElementById('stat-rank');
+            if (rankEl) {
+                rankEl.textContent = result.rank;
+                // ランクに応じた色設定
+                let color = '#fff';
+                if (result.rank === 'SSS') color = '#ffed00';
+                else if (result.rank.startsWith('S')) color = '#ffaa00';
+                else if (result.rank.startsWith('A')) color = '#ff44aa';
+                else if (result.rank === 'B') color = '#4488ff';
+                else if (result.rank === 'C') color = '#44ff88';
+                rankEl.style.color = color;
+                rankEl.style.textShadow = `0 0 10px ${color}`;
+            }
         }
     }
 
@@ -980,6 +1260,13 @@ class Game {
             }
         });
 
+        // ステージクリア判定 (ボスステージ以外)
+        // ボスステージはボス撃破時に stageClear が呼ばれるためここでは除外
+        const isBossStage = (this.currentStage + 1) % 5 === 0;
+        if (!isBossStage && this.enemiesRemaining <= 0 && this.spawnQueue <= 0 && this.enemies.length === 0) {
+            this.stageClear();
+        }
+
         for (let k = this.golds.length - 1; k >= 0; k--) {
             const g = this.golds[k];
             const dx = this.player.x - g.x;
@@ -1310,14 +1597,19 @@ class Game {
         document.getElementById('db-center').textContent = this.sectors.map(s => Math.round(s.centerDeg)).join(' / ');
         document.getElementById('db-queue').textContent = this.spawnQueue;
 
-        // Budget表示追加
+        // PhaseTimerの表示 (秒:ミリ秒)
+        const pSec = Math.floor(this.phaseTimer / 1000);
+        const pMs = Math.floor((this.phaseTimer % 1000) / 10);
+        const pStr = `${pSec}:${pMs.toString().padStart(2, '0')}`;
+
         const dbState = document.getElementById('db-state');
-        dbState.textContent = `${this.spawnPhase} (B:${Math.floor(this.currentSpawnBudget)})`;
+        dbState.textContent = `${this.spawnPhase} (${pStr})`;
         dbState.classList.toggle('cool', this.spawnPhase === 'COOL');
     }
 
     draw() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
         this.ctx.save();
 
         // 以前の挙動を再現：縦幅を基準にスケールを決め、横方向は中央寄せ（入り切らない分はクリップされる）
@@ -1336,6 +1628,30 @@ class Game {
         }
 
         this.ctx.scale(scale, scale);
+
+        // 背景画像の描画 (ワールド座標内で行うことで位置を同期)
+        const bgAsset = this.assetLoader.get('BG_STAGE_01');
+        if (bgAsset) {
+            const targetW = CONSTANTS.TARGET_WIDTH;
+            const targetH = CONSTANTS.TARGET_HEIGHT;
+            const iw = bgAsset.width;
+            const ih = bgAsset.height;
+
+            // contain方式 (アスペクト比を維持しつつ画面内に収め、余白を許容)
+            const bScale = Math.min(targetW / iw, targetH / ih);
+            const dw = iw * bScale;
+            const dh = ih * bScale;
+
+            // 背景の中央をプレイヤーのワールド座標（ワールドの中心）に合わせる
+            // これにより、炉心の位置がゲームの座標系と完全に一致するようになります
+            const px = (this.player) ? this.player.x : targetW / 2;
+            const py = (this.player) ? this.player.y : targetH / 2;
+
+            const dx = px - dw / 2;
+            const dy = py - dh / 2 + CONSTANTS.BG_Y_OFFSET;
+
+            this.ctx.drawImage(bgAsset, dx, dy, dw, dh);
+        }
 
         // 背景矩形（描画可能エリアの境界）
         this.ctx.strokeStyle = '#333';
@@ -1368,6 +1684,11 @@ class Game {
         Profiler.end('render');
 
         this.ctx.restore();
+
+        // リザルト画面の描画（オーバーレイ背後または単体で描画）
+        if (this.gameState === CONSTANTS.STATE.RESULT) {
+            this.drawResultScreen(this.ctx);
+        }
     }
 
     loop(time) {

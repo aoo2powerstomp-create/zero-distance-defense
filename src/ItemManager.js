@@ -26,9 +26,26 @@ export class ItemManager {
 
         if (Math.random() > chance) return;
 
-        // 種類をランダム決定
-        const types = Object.values(CONSTANTS.ITEM_TYPES);
-        const type = types[Math.floor(Math.random() * types.length)];
+        // レアリティ判定
+        const isRare = Math.random() < (CONSTANTS.ITEM_CONFIG.RARE_RATE || 0);
+        const table = isRare ? CONSTANTS.ITEM_TABLE.RARE : CONSTANTS.ITEM_TABLE.COMMON;
+
+        // 重み付け抽選
+        const totalWeight = table.reduce((sum, entry) => sum + entry.weight, 0);
+        let r = Math.random() * totalWeight;
+        let type = table[0].key; // default
+
+        for (const entry of table) {
+            r -= entry.weight;
+            if (r <= 0) {
+                type = entry.key; // 'heal', 'overdrive', etc.
+                break;
+            }
+        }
+
+        // 値の厳密なマッピング (定数定義の値を採用)
+        // CONSTANTS.ITEM_TYPES 内の値を検索して割り当てる (keyとvalueが一致している前提だが念のため)
+        // ここでは table.key がそのまま type になる
 
         // 空きスロットまたは新規
         let item = this.items.find(i => !i.active);
@@ -71,17 +88,6 @@ export class ItemManager {
                     // 着地リング
                     const visual = CONSTANTS.ITEM_VISUALS[item.type];
                     Effects.createRing(item.x, item.y, visual ? visual.color : '#fff');
-                    // 効果音 (再生頻度制限はGame側で行うのが理想だが、ここでは簡易的に確率で間引くか、AudioManagerの制限に頼る)
-                    // AudioManagerには同音制限があるため、ここでは直接呼ぶ
-                    // game参照がないため、drawやtryPickupのようにgameを受け取る設計ではない場合、
-                    // ItemManagerにgameを持たせるか、外部から呼ぶ必要がある。
-                    // 既存設計ではAudioはGame経由。
-                    // ここで音を鳴らすには Game.audio が必要。
-                    // update呼び出し元(main.js)で game.audio を渡すように修正が必要だが、
-                    // 今回は引数変更を避けるため、後述の main.js 側で渡すか、グローバル参照等は避ける。
-                    // 簡易的な解決: this.game参照を保持するか、引数で渡す。
-                    // main.js を見ると `this.itemManager.update(dt)` となっている。
-                    // update(dt, game) に変更する。
                 } else {
                     // バウンド (parabolic)
                     const t = item.animTimer / vfx.spawnPopMs;
@@ -157,6 +163,10 @@ export class ItemManager {
             // 視覚設定の取得
             const visual = visuals[item.type] || { color: '#fff', icon: '?' };
 
+            // レアリティ確認
+            const def = CONSTANTS.ITEM_DEFS[item.type];
+            const isRare = def && def.rarity === 'RARE';
+
             // 位置計算
             const drawX = item.x;
             const drawY = item.y + item.visualY;
@@ -172,29 +182,51 @@ export class ItemManager {
                 ctx.fill();
             }
 
-            // 本体グロー（外周発光） - 視認性優先で削除
-            // ctx.shadowBlur = 8;
-            // ctx.shadowColor = visual.color;
+            // レアエフェクト（背面グロー）
+            if (isRare) {
+                const pulse = (Math.sin(Date.now() / 150) + 1) * 0.5; // 高速点滅
+                ctx.shadowBlur = 15 + pulse * 10;
+                ctx.shadowColor = visual.color; // アイテム色で光らせる
+            } else {
+                ctx.shadowBlur = 0;
+            }
 
-            // 本体円 - 不透明度を少し下げて背景となじませつつ色を出す
+            // アセット描画
+            let assetKey = null;
+            switch (item.type) {
+                case CONSTANTS.ITEM_TYPES.HEAL: assetKey = 'ITEM_HEAL'; break;
+                case CONSTANTS.ITEM_TYPES.FREEZE: assetKey = 'ITEM_FREEZE'; break;
+                case CONSTANTS.ITEM_TYPES.BOMB: assetKey = 'ITEM_BOMB'; break;
+                case CONSTANTS.ITEM_TYPES.OVERDRIVE: assetKey = 'ITEM_OVERDRIVE'; break;
+                case CONSTANTS.ITEM_TYPES.INVINCIBLE: assetKey = 'ITEM_INVINCIBLE'; break;
+                case CONSTANTS.ITEM_TYPES.NUKE: assetKey = 'ITEM_NUKE'; break;
+            }
+
+            const asset = (this.gameRef && this.gameRef.assetLoader) ? this.gameRef.assetLoader.get(assetKey || '') : null;
+
+            if (asset) {
+                const size = radius * 2.5; // 少し大きめに
+                ctx.drawImage(asset, drawX - size / 2, drawY - size / 2, size, size);
+            } else {
+                // 本体円 - 不透明度を少し下げて背景となじませつつ色を出す
+                ctx.beginPath();
+                ctx.arc(drawX, drawY, radius, 0, Math.PI * 2);
+                ctx.fillStyle = visual.color;
+                ctx.globalAlpha = 0.8; // 色を濃く出す
+                ctx.fill();
+                ctx.globalAlpha = item.visualAlpha; // 戻す
+            }
+
+            ctx.shadowBlur = 0; // リセット
+
+            // 輪郭 - RAREなら金、通常は白
             ctx.beginPath();
             ctx.arc(drawX, drawY, radius, 0, Math.PI * 2);
-            ctx.fillStyle = visual.color;
-            ctx.globalAlpha = 0.8; // 色を濃く出す
-            ctx.fill();
-            ctx.globalAlpha = item.visualAlpha; // 戻す
-
-            ctx.shadowBlur = 0;
-
-            // 輪郭 - 白抜きでくっきりと
-            ctx.beginPath();
-            ctx.arc(drawX, drawY, radius, 0, Math.PI * 2);
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = isRare ? '#ffd700' : '#ffffff';
+            ctx.lineWidth = isRare ? 3 : 2;
             ctx.stroke();
 
-            // アイコン描画 - 白背景（発光）で見にくい可能性があるので、黒または濃い色で縁取りなどを検討
-            // ここではシンプルに白文字 + 黒縁取り
+            // アイコン描画
             ctx.font = `bold ${Math.floor(radius * 1.2)}px Orbitron`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -205,6 +237,13 @@ export class ItemManager {
 
             ctx.fillStyle = '#ffffff';
             ctx.fillText(visual.icon, drawX, drawY + radius * 0.1);
+
+            // RAREテキスト
+            if (isRare && item.state !== 'pickup') {
+                ctx.font = 'bold 10px Orbitron';
+                ctx.fillStyle = '#ffd700';
+                ctx.fillText("RARE", drawX, drawY - radius - 5);
+            }
         }
         ctx.restore();
     }
@@ -226,8 +265,10 @@ export class ItemManager {
 
             if (dist < CONSTANTS.ITEM_CONFIG.pickupRadius) {
                 // 即時発動ではなく、吸い込み演出へ移行
-                // ただし、BOMBは「取得したその場所で爆発」という要望のため、即時発動する
-                if (item.type === CONSTANTS.ITEM_TYPES.BOMB) {
+                // ただし、BOMB/NUKEは即時発動
+                const isInstant = item.type === CONSTANTS.ITEM_TYPES.BOMB || item.type === CONSTANTS.ITEM_TYPES.NUKE;
+
+                if (isInstant) {
                     if (item.state !== 'pickup' && item.active) {
                         item.active = false;
                         game.audio.play('item_pickup', { priority: 'high' });
@@ -242,10 +283,10 @@ export class ItemManager {
                     item.pickupTarget = player; // プレイヤーへ吸い込み
 
                     // 取得SE
+                    // RAREなら別の音があれば鳴らす（現状は同じ）
                     game.audio.play('item_pickup', { priority: 'high' });
 
                     // this.update 内で完了時に applyEffect されるように game 参照を保持
-                    // (一時的なハックだが、ItemManagerはGameのサブコンポーネントとして動作するため許容)
                     this.gameRef = game;
 
                     return true;
@@ -256,13 +297,19 @@ export class ItemManager {
     }
 
     applyEffect(item, player, game) {
-        // ポップエフェクト (Effects.js不要な簡易ポップをここで出すか、Effects使うか)
-        // ここではEffects.jsのcreateRingを流用しつつ、色を合わせる
+        // アイテム使用カウント (Result用)
+        if (game.recordItemUse) {
+            game.recordItemUse();
+        }
+
+        // ポップエフェクト
         const visual = CONSTANTS.ITEM_VISUALS[item.type];
         Effects.createRing(item.x, item.y, visual ? visual.color : '#fff');
-        // 追加スパークも欲しいなら Effects.createSmall(item.x, item.y) など
         Effects.spawnHitEffect(item.x, item.y, 1); // Smallエフェクト相当
+
         const config = CONSTANTS.ITEM_CONFIG;
+        const def = CONSTANTS.ITEM_DEFS[item.type]; // 定義参照
+
         switch (item.type) {
             case CONSTANTS.ITEM_TYPES.HEAL:
                 const heal = CONSTANTS.PLAYER_MAX_HP * config.healAmountRatio;
@@ -278,6 +325,37 @@ export class ItemManager {
             case CONSTANTS.ITEM_TYPES.BOMB:
                 this.triggerBomb(item.x, item.y, game);
                 game.spawnDamageText(item.x, item.y - 20, "BOOM!", "#ff4400");
+                break;
+
+            case CONSTANTS.ITEM_TYPES.OVERDRIVE:
+                // スタック（延長）処理
+                const now = Date.now();
+                const currentEnd = Math.max(now, player.overdriveUntilMs);
+                let newEnd = currentEnd + def.durationMs;
+                // 上限キャップ
+                if (newEnd > now + def.maxDurationMs) {
+                    newEnd = now + def.maxDurationMs;
+                }
+                player.overdriveUntilMs = newEnd;
+                game.spawnDamageText(player.x, player.y - 35, "OVERDRIVE!", visual.color);
+                break;
+
+            case CONSTANTS.ITEM_TYPES.INVINCIBLE:
+                // スタック（延長）処理
+                const nowI = Date.now();
+                const currentEndI = Math.max(nowI, player.invincibleUntilMs);
+                let newEndI = currentEndI + def.durationMs;
+                // 上限キャップ
+                if (newEndI > nowI + def.maxDurationMs) {
+                    newEndI = nowI + def.maxDurationMs;
+                }
+                player.invincibleUntilMs = newEndI;
+                game.spawnDamageText(player.x, player.y - 35, "INVINCIBLE!", visual.color);
+                break;
+
+            case CONSTANTS.ITEM_TYPES.NUKE:
+                this.triggerNuke(game);
+                game.spawnDamageText(player.x, player.y - 35, "NUKE!", visual.color);
                 break;
         }
     }
@@ -310,4 +388,35 @@ export class ItemManager {
         Effects.createExplosion(x, y, CONSTANTS.ITEM_CONFIG.bombRadius);
         game.audio.play('explosion');
     }
+
+    triggerNuke(game) {
+        // 全画面攻撃
+        // 支援タイプ（SHIELDER/GUARDIAN）、ボスは除外
+        let count = 0;
+
+        // 画面フラッシュ演出（仮に爆発エフェクトをプレイヤー中心に特大で出す）
+        Effects.createExplosion(game.player.x, game.player.y, 800);
+        game.audio.play('explosion'); // 重ねて再生
+
+        for (const e of game.enemies) {
+            if (!e.active) continue;
+
+            // 対象外チェック
+            if (e.isBoss || e.type === CONSTANTS.ENEMY_TYPES.SHIELDER || e.type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
+                continue;
+            }
+
+            if (e.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                // エリートはHP半減
+                e.hp *= 0.5;
+                game.spawnDamageText(e.x, e.y, "NUKE", "#aa00ff");
+            } else {
+                // 雑魚即死
+                e.destroy('nuke', game);
+                count++;
+            }
+        }
+        console.log(`NUKE activated: ${count} enemies destroyed.`);
+    }
 }
+

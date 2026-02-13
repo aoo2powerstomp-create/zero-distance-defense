@@ -2,6 +2,7 @@ export const CONSTANTS = {
     // 画面設定
     TARGET_WIDTH: 800,
     TARGET_HEIGHT: 800,
+    BG_Y_OFFSET: 53, // 背景画像の垂直位置微調整 (炉心と自機の重なり用)
 
     // プレイヤー設定
     PLAYER_MAX_HP: 100,
@@ -36,12 +37,42 @@ export const CONSTANTS = {
 
     // ボス設定
     BOSS_HP_MUL: 12,
-    BOSS_SIZE_MUL: 3,
+    BOSS_SIZE_MUL: 10,
     BOSS_KB_RESIST: 0.7, // 70%軽減
     BOSS_SPEED_MUL: 0.6,
     BOSS_SUMMON_INTERVAL_NORMAL_MS: 4000,
     BOSS_SUMMON_INTERVAL_ENRAGED_MS: 2000,
+    BOSS_SUMMON_INTERVAL_ENRAGED_MS: 2000,
     BOSS_SUMMON_COUNT: 3,
+
+    // 画像アセット定義 (キー: 相対パス)
+    // 実際にファイルが存在しない場合は既存の図形描画にフォールバックします
+    ASSET_MAP: {
+        PLAYER: './assets/player/player.png',
+        BG_STAGE_01: './assets/bg/bg_stage_01.jpg',
+        ENEMY_A: './assets/enemy/icon_enemy_nomal.png',   // NORMAL
+        ENEMY_B: './assets/enemy/icon_enemy_zigzag.png',  // ZIGZAG
+        ENEMY_C: './assets/enemy/icon_enemy_evasive.png', // EVASIVE
+        ENEMY_D: './assets/enemy/icon_enemy_elite.png',   // ELITE
+        ENEMY_E: './assets/enemy/icon_enemy_assault.png', // ASSAULT
+        ENEMY_F: './assets/enemy/icon_enemy_shielder.png',// SHIELDER
+        ENEMY_G: './assets/enemy/icon_enemy_guardian.png',// GUARDIAN
+        ENEMY_H: './assets/enemy/icon_enemy_dasher.png',  // DASHER
+        ENEMY_I: './assets/enemy/icon_enemy_orbiter.png', // ORBITER
+        ENEMY_J: './assets/enemy/icon_enemy_splitter.png',// SPLITTER
+        ENEMY_K: './assets/enemy/icon_enemy_splitter_child.png', // SPLITTER_CHILD
+        ENEMY_L: './assets/enemy/icon_enemy_observer.png',// OBSERVER
+        ENEMY_BOSS_5: './assets/enemy/icon_enemy_boss_5.png',
+        ENEMY_BOSS_10: './assets/enemy/icon_enemy_boss_10.png',
+
+        // アイテム
+        ITEM_HEAL: './assets/item_heal.png',
+        ITEM_FREEZE: './assets/item_freeze.png',
+        ITEM_BOMB: './assets/item_bomb.png',
+        ITEM_OVERDRIVE: './assets/item_overdrive.png',
+        ITEM_INVINCIBLE: './assets/item_invincible.png',
+        ITEM_NUKE: './assets/item_nuke.png',
+    },
 
     // 武器タイプ
     WEAPON_TYPES: {
@@ -52,9 +83,14 @@ export const CONSTANTS = {
 
     // アイテム設定
     ITEM_TYPES: {
+        // Common
         HEAL: 'heal',
         FREEZE: 'freeze',
-        BOMB: 'bomb'
+        BOMB: 'bomb',
+        // Rare
+        OVERDRIVE: 'overdrive',
+        INVINCIBLE: 'invincible',
+        NUKE: 'nuke'
     },
     ITEM_CONFIG: {
         dropChanceNormal: 0.03,
@@ -63,11 +99,51 @@ export const CONSTANTS = {
         lifetimeMs: 8000,
         pickupRadius: 36, // クリック判定 (24 -> 36: 押しやすさ重視)
 
+        RARE_RATE: 0.1, // 10%でRARE
+
         healAmountRatio: 0.2, // 20%回復
         freezeDurationMs: 2500,
         freezeSpeedMultiplier: 0.2,
         bombRadius: 180,
         bombEliteDamageRatio: 0.5 // エリートは50%削る
+    },
+
+    // ドロップ抽選テーブル (weighted random)
+    ITEM_TABLE: {
+        COMMON: [
+            { key: 'heal', weight: 50 },
+            { key: 'freeze', weight: 30 },
+            { key: 'bomb', weight: 20 }
+        ],
+        RARE: [
+            { key: 'overdrive', weight: 45 },
+            { key: 'invincible', weight: 35 },
+            { key: 'nuke', weight: 20 }
+        ]
+    },
+
+    // アイテム定義 (メタデータ)
+    ITEM_DEFS: {
+        heal: { rarity: 'COMMON' },
+        freeze: { rarity: 'COMMON' },
+        bomb: { rarity: 'COMMON' },
+
+        overdrive: {
+            rarity: 'RARE',
+            durationMs: 10000,
+            damageMul: 1.5,
+            stack: 'extend',
+            maxDurationMs: 20000
+        },
+        invincible: {
+            rarity: 'RARE',
+            durationMs: 2000,
+            stack: 'extend',
+            maxDurationMs: 4000
+        },
+        nuke: {
+            rarity: 'RARE'
+        }
     },
 
     // アイテム演出設定
@@ -87,7 +163,11 @@ export const CONSTANTS = {
     ITEM_VISUALS: {
         heal: { color: '#00ff88', icon: '+' },
         freeze: { color: '#00ccff', icon: '❄' },
-        bomb: { color: '#ff4400', icon: 'B' }
+        bomb: { color: '#ff4400', icon: 'B' },
+
+        overdrive: { color: '#ff0055', icon: '⚡' }, // Red/Pink
+        invincible: { color: '#ffd700', icon: '★' }, // Gold
+        nuke: { color: '#aa00ff', icon: '☢' } // Purple
     },
 
     WEAPON_CONFIG: {
@@ -425,5 +505,41 @@ export const CONSTANTS = {
     BARRIER_SAFE_RADIUS: 180,           // バリアが安全に展開できる距離
     BARRIER_INSTANT_KILL_TYPES: ['A', 'B', 'C', 'E'], // 即死対象: NORMAL, ZIGZAG, EVASIVE, ASSAULT
     BARRIER_MAX_CHARGES: 3,             // バリア即死の最大ストック数
-    BARRIER_REGEN_MS: 1500              // ストックの回復時間
+    BARRIER_REGEN_MS: 1500,             // ストックの回復時間
+
+    // ランク評価システム
+    RANK_RULES: {
+        baseScore: 100,
+        penalty: {
+            hit: 8,              // 被弾1回あたり減点
+            item: 5,             // アイテム使用1回あたり減点
+            overtimePerSec: 0.2  // 目標時間超過1秒あたり減点
+        },
+        thresholds: [
+            { rank: "SSS", minScore: 97 },
+            { rank: "SS", minScore: 92 },
+            { rank: "S", minScore: 86 },
+            { rank: "A+", minScore: 78 },
+            { rank: "A-", minScore: 70 },
+            { rank: "A", minScore: 62 },
+            { rank: "B", minScore: 52 },
+            { rank: "C", minScore: 42 },
+            { rank: "D", minScore: 30 },
+            { rank: "F", minScore: 0 }
+        ]
+    },
+
+    STAGE_TARGET_TIME_SEC: {
+        1: 60,
+        2: 70,
+        3: 80,
+        4: 90,
+        5: 100,
+        6: 120, // Stage 6以降は敵数が多いので長めに
+        7: 130,
+        8: 140,
+        9: 150,
+        10: 180
+    },
+    DEFAULT_TARGET_TIME_SEC: 90
 };
