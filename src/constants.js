@@ -37,8 +37,8 @@ export const CONSTANTS = {
 
     // ボス設定
     BOSS_HP_MUL: 60, // 12 -> 60 (5倍に強化)
-    BOSS_SIZE_MUL: 10,
-    BOSS_KB_RESIST: 0.7, // 70%軽減
+    BOSS_SIZE_MUL: 6, // 10 -> 6 (当たり判定縮小)
+    BOSS_KB_RESIST: 1.0, // 100%軽減 (ノックバック無効)
     BOSS_SPEED_MUL: 0.6,
     BOSS_SUMMON_INTERVAL_NORMAL_MS: 4000,
     BOSS_SUMMON_INTERVAL_ENRAGED_MS: 2000,
@@ -236,6 +236,27 @@ export const CONSTANTS = {
     BOSS_DAMAGE_LIMIT_RATIO_PER_SEC: 0.08, // HPの8%/秒（安全装置を強化: 最低約12.5秒かかる設計）
     BOSS_DAMAGE_LIMIT_MIN_DPS: 12.0,      // 最低保証DPS
 
+    // 敵のドロップ獲得金額 (ここが undefined だとエラーになる)
+    ENEMY_GOLD: {
+        A: 10,  // NORMAL
+        B: 15,  // ZIGZAG
+        C: 20,  // EVASIVE
+        D: 100, // ELITE (強敵は多め)
+        E: 15,  // ASSAULT
+        F: 30,  // SHIELDER
+        G: 150, // GUARDIAN (準ボス級)
+        H: 20,  // DASHER
+        I: 25,  // ORBITER
+        J: 30,  // SPLITTER
+        K: 5,   // SPLITTER_CHILD (少なめ)
+        L: 40,  // OBSERVER
+        M: 20,  // FLANKER
+        N: 30,  // BARRIER_PAIR
+        O: 15,  // TRICKSTER
+        P: 25,  // ATTRACTOR
+        Q: 40   // REFLECTOR
+    },
+
     // 敵タイプ
     ENEMY_TYPES: {
         NORMAL: 'A',
@@ -255,6 +276,86 @@ export const CONSTANTS = {
         TRICKSTER: 'O',      // 翻弄小型 (Yellow)
         ATTRACTOR: 'P',      // 密集誘導体 (Green)
         REFLECTOR: 'Q'        // 反射殻 (Red)
+    },
+
+    // 敵の役割分類 (SpawnDirector用)
+    ENEMY_ROLES: {
+        A: 'CORE',      // NORMAL
+        B: 'CORE',      // ZIGZAG
+        E: 'CORE',      // ASSAULT
+        F: 'CORE',      // SHIELDER
+        I: 'CORE',      // ORBITER
+
+        C: 'HARASSER',  // EVASIVE
+        H: 'HARASSER',  // DASHER
+        J: 'HARASSER',  // SPLITTER
+        K: 'HARASSER',  // SPLITTER_CHILD
+        M: 'HARASSER',  // TRICKSTER (FLANKER was used as M in previous snippet but let's check constants map)
+        N: 'HARASSER',  // FLANKER (Wait, let's verify map indices from file view)
+
+        // Correction based on file view:
+        // FLANKER: 'M', BARRIER_PAIR: 'N', TRICKSTER: 'O', ATTRACTOR: 'P', REFLECTOR: 'Q'
+        // So:
+        M: 'HARASSER',  // FLANKER
+        O: 'HARASSER',  // TRICKSTER
+
+        N: 'CONTROLLER',// BARRIER_PAIR
+        G: 'CONTROLLER',// GUARDIAN
+
+        P: 'DIRECTOR',  // ATTRACTOR
+        L: 'DIRECTOR',  // OBSERVER
+
+        D: 'ELITE',     // ELITE
+        Q: 'ELITE'      // REFLECTOR
+    },
+
+    // 役割ごとの同時出現上限 (厳格化)
+    ROLE_LIMITS: {
+        CORE: 999,      // 基本兵は制限なし (ENEMY_LIMITが全体キャップ)
+        HARASSER: 3,    // 翻弄枠 (5 -> 3)
+        CONTROLLER: 1,  // 制圧枠 (組数: BARRIER_PAIR=1, GUARDIAN=1)
+        DIRECTOR: 1,    // 指揮枠 (OBSERVER/ATTRACTOR 合計1)
+        ELITE: 2        // 強敵枠 (2体まで)
+    },
+
+    // 個別タイプの同時出現上限 (理不尽回避)
+    TYPE_LIMITS: {
+        SHIELDER: 1,    // 最重要: 同時1体まで
+        ORBITER: 2,     // 視認負荷対策
+        DASHER: 2,      // 瞬殺防止
+        SPLITTER: 2,    // 増殖事故防止
+        GUARDIAN: 1,
+        BARRIER_PAIR: 1, // ペア単位
+        OBSERVER: 1
+    },
+
+    // スポーンクールダウン (秒) - 連発防止
+    SPAWN_COOLDOWNS: {
+        SHIELDER: 20,
+        GUARDIAN: 40,
+        BARRIER_PAIR: 25,
+        OBSERVER: 25,
+        DASHER: 10,
+        ATTRACTOR: 15
+    },
+
+    // スポーン予算コスト (Budget)
+    SPAWN_COSTS: {
+        CORE: 0,
+        HARASSER: 1,  // EVASIVE, DASHER, SPLITTER, FLANKER, TRICKSTER
+        DIRECTOR: 2,  // OBSERVER, ATTRACTOR
+        CONTROLLER: 3,// BARRIER_PAIR, GUARDIAN
+        ELITE: 2,     // ELITE, REFLECTOR
+        SHIELDER: 2   // 特別扱い
+    },
+
+    // ステージ別予算補充量 (15秒毎)
+    STAGE_BUDGET_REFILL: {
+        1: 1, 2: 1,
+        3: 2, 4: 2,
+        5: 3, 6: 3,
+        7: 4, 8: 4,
+        9: 5, 10: 5
     },
 
     // 新敵タイプ設定
@@ -304,16 +405,60 @@ export const CONSTANTS = {
     },
 
     ENEMY_FORMATION_TYPES: {
-        SINGLE: 'single',
-        LINEAR: 'linear',     // 直列
-        PARALLEL: 'parallel', // 並列
-        V_SHAPE: 'v_shape'    // V字
+        LINEAR: 'LINEAR',
+        PARALLEL: 'PARALLEL', // PINCER
+        V_SHAPE: 'V_SHAPE',
+        CIRCLE: 'CIRCLE',
+        GRID: 'GRID',
+        STREAM: 'STREAM',
+        CROSS: 'CROSS',
+        RANDOM_BURST: 'RANDOM_BURST'
     },
     ENEMY_MOVEMENT_TYPES: {
-        STRAIGHT: 'straight',
-        INVADER: 'invader'
+        DIRECT: 'DIRECT',       // 直線追尾 (NORMAL)
+        ZIGZAG: 'ZIGZAG',       // Sine波 (ZIGZAG, SPLITTER)
+        ASSAULT: 'ASSAULT',     // 旋回制限付き追尾 (EVASIVE)
+        ORBIT: 'ORBIT',         // 周回 (ORBITER)
+        FLANK: 'FLANK',         // 背後狙い (FLANKER)
+        TRICKSTER: 'TRICKSTER', // S字 (TRICKSTER)
+        DASH: 'DASH',           // 回避->突進 (DASHER)
+        HOVER: 'HOVER',         // ゆっくり追尾 (SHIELDER, ELITE)
+        REFLECT: 'REFLECT',      // 横移動混じり (REFLECTOR)
+        AVOID: 'AVOID'          // 照準回避 (BARRIER_PAIR)
     },
-    ENEMY_SPEED_ADJUST_RADIUS: 260, // 減速開始距離
+
+    // 敵ごとの基本移動設定
+    ENEMY_SPECS: {
+        // A
+        NORMAL: { mode: 'DIRECT', turnRate: 0 }, // 0=無限
+        // B
+        ZIGZAG: { mode: 'ZIGZAG', freq: 0.005, amp: 80 },
+        // C (Old EVASIVE -> ASSAULT)
+        EVASIVE: { mode: 'ASSAULT', turnRate: 0.08 }, // 旋回制限
+        // D
+        ELITE: { mode: 'HOVER', turnRate: 0.04 },
+        // E (Splitter)
+        SPLITTER: { mode: 'ZIGZAG', freq: 0.008, amp: 60 },
+        // F
+        SHIELDER: { mode: 'HOVER', turnRate: 0.03 },
+        // H
+        DASHER: { mode: 'DASH' },
+        // I
+        ORBITER: { mode: 'ORBIT', radius: 250 },
+        // J/K Splitter Child
+        SPLITTER_CHILD: { mode: 'ZIGZAG', freq: 0.01, amp: 40 },
+        // M
+        FLANKER: { mode: 'FLANK', turnRate: 0.06 },
+        // O
+        TRICKSTER: { mode: 'TRICKSTER' },
+        // Q
+        REFLECTOR: { mode: 'REFLECT' },
+        GUARDIAN: { mode: 'HOVER', turnRate: 0.02 },
+        BARRIER_PAIR: { mode: 'AVOID', orbitRadius: 240, turnRate: 0.05 },
+        OBSERVER: { mode: 'HOVER', turnRate: 0.05 },
+        ATTRACTOR: { mode: 'HOVER', turnRate: 0.03 }
+    },
+
     ENEMY_MIN_SPEED_RATIO: 0.6,     // 最至近での速度比率 (40%減)
 
     // インベーダー(Type Invader)設定

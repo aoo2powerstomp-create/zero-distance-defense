@@ -16,7 +16,6 @@ export class AssetLoader {
         this.totalCount = keys.length;
         if (this.totalCount === 0) return;
 
-        console.log(`[AssetLoader] Start loading ${this.totalCount} assets...`);
 
         keys.forEach(key => {
             const img = new Image();
@@ -26,13 +25,12 @@ export class AssetLoader {
             img.onload = () => {
                 this.assets.set(key, img);
                 this.loadedCount++;
-                console.log(`[AssetLoader] Loaded: ${key} (${this.loadedCount}/${this.totalCount})`);
+                // console.log(`[AssetLoader] Loaded: ${key} (${this.loadedCount}/${this.totalCount})`);
             };
 
             // ロード失敗時
             img.onerror = () => {
-                console.warn(`[AssetLoader] Failed to load: ${key} (${assetMap[key]})`);
-                // 失敗した場合は Map に登録しない -> get() で null が返り、フォールバック描画になる
+                // Failed to load: fallback is handled in get() returning null
             };
         });
     }

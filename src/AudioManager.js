@@ -48,7 +48,7 @@ export class AudioManager {
         await this.generateDemoSounds();
 
         this.isInitialized = true;
-        console.log("AudioManager initialized and demo sounds generated.");
+        // console.log("AudioManager initialized and demo sounds generated.");
     }
 
     setSfxVolume(val) {

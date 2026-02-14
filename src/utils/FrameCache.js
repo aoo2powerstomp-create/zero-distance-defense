@@ -10,6 +10,14 @@ export class FrameCache {
             hasObserver: false,
             hasMark: false
         };
+        this.roleCounts = {
+            CORE: 0,
+            HARASSER: 0,
+            CONTROLLER: 0,
+            DIRECTOR: 0,
+            ELITE: 0
+        };
+        this.typeCounts = {}; // ID -> count
     }
 
     update(enemies, globalMarkTimer) {
@@ -20,6 +28,14 @@ export class FrameCache {
         this.buffFlags.hasGuardian = false;
         this.buffFlags.hasObserver = false;
 
+        // Reset Role Counts
+        this.roleCounts.CORE = 0;
+        this.roleCounts.HARASSER = 0;
+        this.roleCounts.CONTROLLER = 0;
+        this.roleCounts.DIRECTOR = 0;
+        this.roleCounts.ELITE = 0;
+        this.typeCounts = {};
+
         const barrierPairMap = new Map();
 
         for (let i = 0; i < enemies.length; i++) {
@@ -28,6 +44,16 @@ export class FrameCache {
 
             this.enemiesAlive.push(e);
             if (e.isBoss) this.activeBosses.push(e);
+
+            // Count Roles
+            const role = CONSTANTS.ENEMY_ROLES[e.type] || 'CORE';
+            if (this.roleCounts[role] !== undefined) {
+                this.roleCounts[role]++;
+            }
+
+            // Count Types
+            if (!this.typeCounts[e.type]) this.typeCounts[e.type] = 0;
+            this.typeCounts[e.type]++;
 
             if (e.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && e.partner && e.partner.active) {
                 // Ensure reciprocal link

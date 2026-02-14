@@ -39,7 +39,7 @@ body {
     height: 100%;
     background: #000;
     z-index: 2000;
-    opacity: 0;
+    opacity: 1;
     pointer-events: none;
 }
 

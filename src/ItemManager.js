@@ -418,7 +418,7 @@ export class ItemManager {
                 count++;
             }
         }
-        console.log(`NUKE activated: ${count} enemies destroyed.`);
+        // NUKE Effect
     }
 }
 

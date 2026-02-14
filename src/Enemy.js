@@ -1,10 +1,11 @@
 import { CONSTANTS } from './constants.js';
 import { Effects } from './Effects.js';
+import { DEBUG_ENABLED } from './utils/env.js';
 
 export class Enemy {
     static nextId = 0;
     constructor() {
-        this.id = Enemy.nextId++;
+        this.id = -1; // Assigned only at spawn
         this.x = 0;
         this.y = 0;
         this.vx = 0;
@@ -33,11 +34,26 @@ export class Enemy {
         this.barrierState = 'idle'; // 'idle', 'windup', 'active', 'vulnerable'
         this.barrierTimer = 0;
         this.orbitAngle = 0;
+        this.killed = false;
+        this.age = 0;
+        this.movementPhase = 0;
+        this.repulsionForce = { x: 0, y: 0 };
+        this.destroyReason = null;
+        this.oobFrames = 0; // Screen-space OOB counter
     }
 
     init(x, y, targetX, targetY, type = CONSTANTS.ENEMY_TYPES.NORMAL, hpMul = 1.0, speedMul = 1.0, affinity = CONSTANTS.ENEMY_AFFINITIES.SWARM) {
+        // NaN Guard
+        if (isNaN(x)) x = 400;
+        if (isNaN(y)) y = -50;
+        if (isNaN(targetX)) targetX = 400;
+        if (isNaN(targetY)) targetY = 400;
+
         this.x = x;
         this.y = y;
+        this.renderX = x;
+        this.renderY = y;
+        this.renderAngle = 0;
         this.type = type;
         this.affinity = affinity;
         this.partner = null; // Stale partner reset
@@ -46,47 +62,56 @@ export class Enemy {
         this.evasiveStartTime = 0;
         this.lastRetrackTime = Date.now();
         this.stageSpeedMul = speedMul;
+        this.angle = Math.atan2(targetY - y, targetX - x);
+        this.killed = false;
+        this.active = true;
+        this.age = 0;
+        this.movementPhase = Math.random() * Math.PI * 2;
+        this.repulsionForce = { x: 0, y: 0 };
+        this.vx = 0;
+        this.vy = 0;
+        this.destroyReason = null;
+        this.oobFrames = 0;
 
         // タイプ別の基本速度倍率
         let typeSpeedMul = 1.0;
-        if (type === CONSTANTS.ENEMY_TYPES.ELITE) typeSpeedMul = 0.8;
-        else if (type === CONSTANTS.ENEMY_TYPES.ASSAULT) typeSpeedMul = 1.3;
-        else if (type === CONSTANTS.ENEMY_TYPES.SHIELDER) typeSpeedMul = 1.0;
-        else if (type === CONSTANTS.ENEMY_TYPES.GUARDIAN) typeSpeedMul = 1.0;
-        else if (type === CONSTANTS.ENEMY_TYPES.DASHER) typeSpeedMul = 1.0;
-        else if (type === CONSTANTS.ENEMY_TYPES.ORBITER) typeSpeedMul = 1.0;
-        else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER) typeSpeedMul = 1.0;
-        else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) typeSpeedMul = CONSTANTS.SPLITTER_CHILD.speedMultiplier;
-        else if (type === CONSTANTS.ENEMY_TYPES.FLANKER) typeSpeedMul = CONSTANTS.FLANKER.speedMul;
+        if (type === CONSTANTS.ENEMY_TYPES.ZIGZAG) typeSpeedMul = 1.2;
+        else if (type === CONSTANTS.ENEMY_TYPES.EVASIVE) typeSpeedMul = 1.4;
         else if (type === CONSTANTS.ENEMY_TYPES.TRICKSTER) typeSpeedMul = 1.3;
+        else if (type === CONSTANTS.ENEMY_TYPES.ORBITER) typeSpeedMul = 2.5;
+        else if (type === CONSTANTS.ENEMY_TYPES.SHIELDER) typeSpeedMul = 2.0;
+        else if (type === CONSTANTS.ENEMY_TYPES.GUARDIAN) typeSpeedMul = 1.5;
+        else if (type === CONSTANTS.ENEMY_TYPES.FLANKER) typeSpeedMul = 1.4;
+        else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER) typeSpeedMul = 1.2;
+        else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) typeSpeedMul = 1.5;
+        else if (type === CONSTANTS.ENEMY_TYPES.DASHER) typeSpeedMul = 1.2;
+        else if (type === CONSTANTS.ENEMY_TYPES.REFLECTOR) typeSpeedMul = 1.0;
+
 
         this.baseSpeed = CONSTANTS.ENEMY_BASE_SPEED * speedMul * typeSpeedMul;
-        this.baseAngle = Math.atan2(targetY - y, targetX - x);
+        // 移動設定の初期化
+        this.configureMovement(type);
 
-        // FLANKER の初期角度補正
-        if (type === CONSTANTS.ENEMY_TYPES.FLANKER) {
+        // 初期角度の設定
+        this.angle = Math.atan2(targetY - y, targetX - x); // 実際の移動方向
+        this.vx = Math.cos(this.angle) * this.baseSpeed;
+        this.vy = Math.sin(this.angle) * this.baseSpeed;
+
+        // FLANKER の初期角度補正 (出現時から少し横を向く)
+        if (this.movementMode === 'FLANK') {
             this.flankSide = Math.random() < 0.5 ? 1 : -1;
-        }
-
-        // シールダー・ガーディアン・オービターの初期角度設定
-        if (type === CONSTANTS.ENEMY_TYPES.SHIELDER || type === CONSTANTS.ENEMY_TYPES.GUARDIAN || type === CONSTANTS.ENEMY_TYPES.ORBITER) {
-            const config = type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER :
-                (type === CONSTANTS.ENEMY_TYPES.ORBITER ? CONSTANTS.ORBITER : CONSTANTS.GUARDIAN);
-            this.orbitAngle = Math.atan2(y - targetY, x - targetX);
-            this.barrierState = 'idle';
-            this.barrierTimer = Math.random() * (config.barrierCooldownMs || 0);
+            this.angle += (Math.PI / 4) * this.flankSide;
+            this.vx = Math.cos(this.angle) * this.baseSpeed;
+            this.vy = Math.sin(this.angle) * this.baseSpeed;
         }
 
         // DASHERの初期化
-        if (type === CONSTANTS.ENEMY_TYPES.DASHER) {
+        if (this.movementMode === 'DASH') {
             this.dashState = 'normal';
-            this.dashTimer = Math.random() * CONSTANTS.DASHER.dashCooldownMs;
+            this.dashTimer = Math.random() * (CONSTANTS.DASHER.dashCooldownMs || 2000);
         }
-        this.vx = Math.cos(this.baseAngle) * this.baseSpeed;
-        this.vy = Math.sin(this.baseAngle) * this.baseSpeed;
-        this.currentSpeed = this.baseSpeed;
 
-        this.movementType = CONSTANTS.ENEMY_MOVEMENT_TYPES.STRAIGHT;
+        this.currentSpeed = this.baseSpeed;
         this.movementPhase = Math.random() * Math.PI * 2;
 
         this.renderX = x;
@@ -140,7 +165,8 @@ export class Enemy {
         this.slotIndex = 0;
         this.nextSlotIndex = 0;
         this.didMarkThisHold = false;
-        this.startY = y;
+
+        this.startX = x;
         this.startY = y;
         this.isShielded = false; // オーラ保護状態のキャッシュ
         this.pulseOutlineTimer = 0; // パルスヒット時の発光用
@@ -152,7 +178,20 @@ export class Enemy {
             CONSTANTS.ENEMY_TYPES.ELITE,
             CONSTANTS.ENEMY_TYPES.EVASIVE,
             CONSTANTS.ENEMY_TYPES.ORBITER,
-            CONSTANTS.ENEMY_TYPES.ZIGZAG
+            CONSTANTS.ENEMY_TYPES.ZIGZAG,
+            CONSTANTS.ENEMY_TYPES.FLANKER,
+            CONSTANTS.ENEMY_TYPES.TRICKSTER,
+            CONSTANTS.ENEMY_TYPES.SPLITTER,
+            CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD,
+            CONSTANTS.ENEMY_TYPES.REFLECTOR,
+            CONSTANTS.ENEMY_TYPES.DASHER,
+            CONSTANTS.ENEMY_TYPES.SHIELDER,
+            CONSTANTS.ENEMY_TYPES.GUARDIAN,
+            CONSTANTS.ENEMY_TYPES.OBSERVER,
+            CONSTANTS.ENEMY_TYPES.ATTRACTOR,
+            CONSTANTS.ENEMY_TYPES.BARRIER_PAIR,
+            CONSTANTS.ENEMY_TYPES.ASSAULT,
+            CONSTANTS.ENEMY_TYPES.NORMAL
         ];
         this.hasDirection = directionalTypes.includes(this.type);
         this.angle = 0;
@@ -168,11 +207,15 @@ export class Enemy {
     }
 
     applyKnockback(vx, vy, power) {
-        // ボス・エリート耐性の適用
+        // NaN Guard
+        if (isNaN(vx) || isNaN(vy) || isNaN(power)) return;
+
+        // ボスは完全不動
+        if (this.isBoss) return;
+
+        // エリート耐性の適用
         let actualPower = power;
-        if (this.isBoss) {
-            actualPower *= (1.0 - CONSTANTS.BOSS_KB_RESIST);
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+        if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
             actualPower *= (1.0 - CONSTANTS.ELITE_KB_RESIST);
         }
 
@@ -183,7 +226,7 @@ export class Enemy {
 
         // 弾の進行方向ベクトルを正規化してパワーを掛ける
         const mag = Math.sqrt(vx * vx + vy * vy);
-        if (mag > 0) {
+        if (mag > 0.001) { // Safety epsilon
             this.knockVX += (vx / mag) * actualPower;
             this.knockVY += (vy / mag) * actualPower;
 
@@ -197,446 +240,426 @@ export class Enemy {
         }
     }
 
+    configureMovement(type) {
+        // デフォルト設定
+        this.movementMode = 'DIRECT';
+        this.turnRate = 0; // 0 = 無制限 (Instant Turn)
+        this.orbitRadius = 0;
+
+        switch (type) {
+            case CONSTANTS.ENEMY_TYPES.NORMAL:
+                this.movementMode = 'DIRECT';
+                break;
+            case CONSTANTS.ENEMY_TYPES.ZIGZAG:
+            case 'ZIGZAG':
+            case 'SPLITTER':
+            case 'SPLITTER_CHILD':
+                this.movementMode = 'ZIGZAG';
+                this.zigzagFreq = (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) ? 0.006 : 0.003;
+                this.zigzagAmp = (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) ? 30 : (type === CONSTANTS.ENEMY_TYPES.SPLITTER ? 40 : 50);
+                break;
+            case CONSTANTS.ENEMY_TYPES.EVASIVE: // User: ASSAULT
+            case CONSTANTS.ENEMY_TYPES.ASSAULT:
+                this.movementMode = 'ASSAULT';
+                this.turnRate = 0.08;
+                break;
+            case CONSTANTS.ENEMY_TYPES.SHIELDER:
+            case CONSTANTS.ENEMY_TYPES.GUARDIAN:
+            case CONSTANTS.ENEMY_TYPES.ELITE:
+            case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
+            case CONSTANTS.ENEMY_TYPES.OBSERVER:
+                this.movementMode = 'HOVER';
+                this.turnRate = (type === CONSTANTS.ENEMY_TYPES.OBSERVER) ? 0.05 : 0.03;
+                this.orbitRadius = (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) ? 300 : 180;
+
+                // シールダー系初期化
+                if (type === CONSTANTS.ENEMY_TYPES.SHIELDER || type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
+                    const config = type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER : CONSTANTS.GUARDIAN;
+                    this.barrierState = 'idle';
+                    this.barrierTimer = Math.random() * (config.barrierCooldownMs || 0);
+                    this.orbitAngle = Math.random() * Math.PI * 2;
+                }
+                break;
+            case CONSTANTS.ENEMY_TYPES.ORBITER:
+                this.movementMode = 'ORBIT';
+                this.orbitRadius = 250;
+                this.orbitAngle = Math.random() * Math.PI * 2;
+                break;
+            case CONSTANTS.ENEMY_TYPES.DASHER:
+                this.movementMode = 'DASH';
+                break;
+            case CONSTANTS.ENEMY_TYPES.FLANKER:
+                this.movementMode = 'FLANK';
+                this.turnRate = 0.06;
+                this.orbitRadius = 220;
+                break;
+            case CONSTANTS.ENEMY_TYPES.TRICKSTER:
+                this.movementMode = 'TRICKSTER';
+                break;
+            case CONSTANTS.ENEMY_TYPES.REFLECTOR:
+                this.movementMode = 'REFLECT';
+                this.orbitRadius = 200;
+                break;
+            case CONSTANTS.ENEMY_TYPES.BARRIER_PAIR:
+                this.movementMode = 'AVOID';
+                this.orbitRadius = 240;
+                this.turnRate = 0.05;
+                break;
+            default:
+                this.movementMode = 'DIRECT';
+                break;
+        }
+    }
+
     update(playerX, playerY, playerAngle, dt = 16.6, options = {}) {
+        // 数値安定化ガード (NaN / Infinity 対策: 削除せず画面内に復帰させる)
+        if (!Number.isFinite(this.x) || !Number.isFinite(this.y)) {
+            const width = CONSTANTS.TARGET_WIDTH || 800;
+            const height = CONSTANTS.TARGET_HEIGHT || 800;
+            this.x = Math.min(Math.max(this.x || 0, 0), width);
+            this.y = Math.min(Math.max(this.y || 0, 0), height);
+            this.vx = 0;
+            this.vy = 0;
+            if (DEBUG_ENABLED) console.warn(`[FIX] Enemy ${this.id} pos/vel recovered from NaN/Inf`);
+        }
+
         const now = Date.now();
         const dtMod = dt / 16.6;
+        this.age += dt / 1000; // 秒単位で加算
+
+        // Safety check for inputs
+        if (isNaN(playerX)) playerX = 400; // Default to center if NaN
+        if (isNaN(playerY)) playerY = 400;
+        if (isNaN(playerAngle)) playerAngle = 0;
+
+        // Self-preservation from NaN (Corrupt state recovery)
+        if (isNaN(this.x) || isNaN(this.y)) {
+            console.warn('--- CRITICAL: Enemy NaN Detected ---', {
+                id: this.id,
+                type: this.type,
+                mode: this.movementMode,
+                pos: { x: this.x, y: this.y },
+                vel: { vx: this.vx, vy: this.vy },
+                knock: { kvx: this.knockVX, kvy: this.knockVY }
+            });
+            this.x = Math.random() < 0.5 ? -50 : 850;
+            this.y = Math.random() < 0.5 ? -50 : 850;
+            this.vx = 0;
+            this.vy = 0;
+            this.knockVX = 0;
+            this.knockVY = 0;
+        }
+        if (isNaN(this.vx) || isNaN(this.vy)) {
+            this.vx = 0;
+            this.vy = 0;
+        }
+        // Critical Fix: Reset knockback if NaN to prevent loop
+        if (isNaN(this.knockVX) || isNaN(this.knockVY)) {
+            this.knockVX = 0;
+            this.knockVY = 0;
+        }
+        if (isNaN(this.angle)) this.angle = 0;
 
         // アイテム効果 (FREEZE) によるスロウ
         const freezeMul = options.isFrozen ? (CONSTANTS.ITEM_CONFIG.freezeSpeedMultiplier || 0.2) : 1.0;
         const effectiveDtMod = dtMod * freezeMul;
 
+        // OBSERVER 特殊処理 (移動はHOVERモードで統合するが、ノックバック処理等は共通)
         if (this.type === CONSTANTS.ENEMY_TYPES.OBSERVER) {
-            this.updateObserver(playerX, playerY, dt); // ここは dt をそのまま渡す（SNAP速度維持）
-            this.x += this.knockVX * effectiveDtMod;
-            this.y += this.knockVY * effectiveDtMod;
-            const damp = Math.pow(CONSTANTS.ENEMY_KNOCKBACK_DAMP, dtMod);
-            this.knockVX *= damp;
-            this.knockVY *= damp;
-            return;
+            this.updateObserver(playerX, playerY, dt);
         }
 
-        // 1. 距離依存の速度減衰計算
+        // 1. 速度計算 (距離減衰 & バフ)
         const dx = playerX - this.x;
         const dy = playerY - this.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-
-        let speedRatio = 1.0;
-        if (dist < CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS) {
-            const t = Math.max(0, dist / CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS);
-            // 線形補間: 0.6 + (1.0 - 0.6) * t
-            speedRatio = CONSTANTS.ENEMY_MIN_SPEED_RATIO + (1.0 - CONSTANTS.ENEMY_MIN_SPEED_RATIO) * t;
-        }
-        this.currentSpeed = this.baseSpeed * speedRatio;
-
-        // 全体バフフラグの保持（描画用）
-        this.hasGuardBuff = options.globalGuardBuffActive || false;
-        this.hasMarkBuff = options.globalMarkActive || false;
-
-        // 全体バフによる速度強化（多重禁止: 強い方を優先）
-        if (this.hasGuardBuff) {
-            this.currentSpeed *= (CONSTANTS.GUARDIAN.globalBuffSpeedMultiplier || 1.2);
-        } else if (this.hasMarkBuff) {
-            this.currentSpeed *= (CONSTANTS.OBSERVER.globalBuffSpeedMul || 1.1);
-        }
-
-        // 2. 共通のリトラッキングロジック
-        let skipCommonLogic = false;
         const distSq = dx * dx + dy * dy;
-        const currentAngle = Math.atan2(this.vy, this.vx);
-        const targetAngle = Math.atan2(dy, dx);
 
-        // --- DASHER 状態更新 ---
-        if (this.type === CONSTANTS.ENEMY_TYPES.DASHER) {
-            const config = CONSTANTS.DASHER;
-            this.dashTimer += dt;
-            if (this.dashState === 'normal' && this.dashTimer >= config.dashCooldownMs) {
-                this.dashState = 'windup';
-                this.dashTimer = 0;
-                this.vx = 0; this.vy = 0;
-            } else if (this.dashState === 'windup' && this.dashTimer >= config.windupMs) {
-                this.dashState = 'dash';
-                this.dashTimer = 0;
-                // 突進方向を決定
-                this.vx = Math.cos(targetAngle);
-                this.vy = Math.sin(targetAngle);
-            } else if (this.dashState === 'dash' && this.dashTimer >= config.dashDurationMs) {
-                this.dashState = 'normal';
-                this.dashTimer = 0;
-            }
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.TRICKSTER) {
-            skipCommonLogic = true;
-            const config = CONSTANTS.TRICKSTER;
-            const elapsed = now - this.spawnTime;
-            const offset = Math.sin(elapsed * config.zigzagFreq) * config.zigzagAmp;
+        this.updateSpeed(dist, options);
 
-            // 進行方向に対して垂直な方向へオフセットをかける
-            const perpAngle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
-            const ox = Math.cos(perpAngle) * offset;
-            const oy = Math.sin(perpAngle) * offset;
+        // 2. 移動ロジック (Movement Mode Switch)
+        this.updateMovement(dtMod, playerX, playerY, dist, now, playerAngle);
 
-            const baseVX = Math.cos(targetAngle) * this.currentSpeed;
-            const baseVY = Math.sin(targetAngle) * this.currentSpeed;
-
-            // vx, vy は次の位置計算に使われる
-            this.vx = baseVX;
-            this.vy = baseVY;
-            this.renderX = this.x + ox;
-            this.renderY = this.y + oy;
-        }
-
-        // 現在の進行方向とターゲットへの方向の差
-        let angleToUse = targetAngle;
-        if (this.type === CONSTANTS.ENEMY_TYPES.FLANKER) {
-            // プレイヤーの背後に回り込むためのターゲット角度調整
-            // flankSide (1 or -1) に応じて左右どちらかから回り込む
-            const offset = (Math.PI / 2) * this.flankSide;
-            angleToUse = targetAngle + offset;
-        }
-
-        let angleDiff = angleToUse - currentAngle;
-        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-
-        const dot = this.vx * dx + this.vy * dy;
-
-        // 旋回・速度計算の分岐
-        let targetSpeed = this.currentSpeed;
-
-        // タイプ別の旋回目標角度と速度の調整
-        if (this.type === CONSTANTS.ENEMY_TYPES.FLANKER) {
-            const config = CONSTANTS.FLANKER;
-            // プレイヤーの背後から回り込む：角度補正（距離に応じて緩める）
-            const backAngle = playerAngle + Math.PI;
-            const targetX = playerX + Math.cos(backAngle) * config.backDist;
-            const targetY = playerY + Math.sin(backAngle) * config.backDist;
-            angleToUse = Math.atan2(targetY - this.y, targetX - this.x);
-
-            // 半径維持 (回り込みつつ接近しすぎない)
-            if (dist < config.orbitRadius) targetSpeed = -this.currentSpeed * 0.3;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
-            const config = CONSTANTS.REFLECTOR;
-            if (dist < config.orbitRadius - 20) targetSpeed = -this.currentSpeed * 0.5;
-            else if (dist < config.orbitRadius + 20) targetSpeed = 0;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
-            const config = CONSTANTS.ATTRACTOR;
-            if (dist < config.orbitRadius - 30) targetSpeed = -this.currentSpeed * 0.5;
-            else if (dist < config.orbitRadius + 30) targetSpeed = 0;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR) {
-            const config = CONSTANTS.BARRIER_PAIR;
-            if (this.partner && this.partner.active) {
-                // ペア生存中：距離維持
-                if (dist < config.orbitRadius - 20) targetSpeed = -this.currentSpeed * 0.5;
-                else if (dist < config.orbitRadius + 20) targetSpeed = 0;
-
-                // パートナーとの距離維持 (広がりを確保)
-                const pdx = this.partner.x - this.x;
-                const pdy = this.partner.y - this.y;
-                const pDistSq = pdx * pdx + pdy * pdy;
-                if (pDistSq < config.minDist * config.minDist && pDistSq > 0) {
-                    // 近すぎる：斥力
-                    const pDist = Math.sqrt(pDistSq);
-                    this.vx -= (pdx / pDist) * this.currentSpeed * 0.5;
-                    this.vy -= (pdy / pDist) * this.currentSpeed * 0.5;
-                } else if (pDistSq > config.maxDist * config.maxDist) {
-                    // 離れすぎ：引力
-                    const pDist = Math.sqrt(pDistSq);
-                    this.vx += (pdx / pDist) * this.currentSpeed * 0.3;
-                    this.vy += (pdy / pDist) * this.currentSpeed * 0.3;
-                }
-            } else {
-                // 相方がいない：自棄になって突撃
-                targetSpeed = this.currentSpeed * 1.5;
-                // 一直線だと避けられやすいので少し揺らす
-                this.movementPhase += 0.05;
-                const wiggle = Math.sin(this.movementPhase * 5) * 0.5;
-                const chargeAngle = Math.atan2(dy, dx) + wiggle;
-                this.vx = Math.cos(chargeAngle) * targetSpeed;
-                this.vy = Math.sin(chargeAngle) * targetSpeed;
-                skipCommonLogic = true;
-            }
-        }
-
-        if (this.type === CONSTANTS.ENEMY_TYPES.DASHER) {
-            if (this.dashState === 'windup') {
-                targetSpeed = 0;
-                skipCommonLogic = true;
-            } else if (this.dashState === 'dash') {
-                targetSpeed = this.baseSpeed * CONSTANTS.DASHER.dashSpeedMultiplier;
-                skipCommonLogic = true;
-            }
-        } else if (this.isEvading) {
-            skipCommonLogic = true;
-        }
-
-        if (this.isBoss && dist > 0) {
-            if (dist < CONSTANTS.BOSS_RETREAT_DISTANCE) {
-                targetSpeed = -this.currentSpeed * 0.5;
-            } else if (dist < CONSTANTS.BOSS_STOP_DISTANCE) {
-                targetSpeed = 0;
-            }
-        }
-
-        if (!skipCommonLogic && dot < 0 && distSq > 50 * 50) {
-            const turnSpeed = 0.05;
-            if (Math.abs(angleDiff) > turnSpeed) {
-                const newAngle = currentAngle + (angleDiff > 0 ? turnSpeed : -turnSpeed);
-                this.vx = Math.cos(newAngle) * targetSpeed;
-                this.vy = Math.sin(newAngle) * targetSpeed;
-            } else {
-                this.vx = Math.cos(angleToUse) * targetSpeed;
-                this.vy = Math.sin(angleToUse) * targetSpeed;
-            }
-            this.baseAngle = Math.atan2(this.vy, this.vx);
-        } else {
-            const speedMul = (this.movementType === CONSTANTS.ENEMY_MOVEMENT_TYPES.INVADER) ? 0.8 : 1.0;
-            const finalTargetSpeed = targetSpeed * speedMul;
-
-            const vMag = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-            if (vMag > 0) {
-                this.vx = (this.vx / vMag) * finalTargetSpeed;
-                this.vy = (this.vy / vMag) * finalTargetSpeed;
-            }
-        }
-
-        // EVASIVE の回避クールタイム更新
-        if (this.evasionTimer > 0) this.evasionTimer -= dt;
-
-        // パルスアウトラインの更新
-        if (this.pulseOutlineTimer > 0) {
-            this.pulseOutlineTimer = Math.max(0, this.pulseOutlineTimer - dt);
-        }
-
-        // 進行方向の角度更新 (hasDirection が有効な場合のみ)
-        if (this.hasDirection) {
-            // 基本の向きを計算 (リクエスト要件: -Y方向が正面の画像を vx, vy に向ける)
-            const rawAngle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
-
-            // 8方向量子化 (45度刻み)
-            const step = Math.PI / 4;
-            this.angle = Math.round(rawAngle / step) * step;
-        }
-
-        // 移動の適用（通常移動は freezeMul の影響を受ける）
+        // 3. 共通物理演算 (ノックバック & 位置更新)
         this.x += (this.vx * freezeMul + this.knockVX) * dtMod;
         this.y += (this.vy * freezeMul + this.knockVY) * dtMod;
 
-        // ノックバックの減衰
+        // ノックバック減衰
         const damp = Math.pow(CONSTANTS.ENEMY_KNOCKBACK_DAMP, dtMod);
         this.knockVX *= damp;
         this.knockVY *= damp;
-
         if (Math.abs(this.knockVX) < 0.05) this.knockVX = 0;
         if (Math.abs(this.knockVY) < 0.05) this.knockVY = 0;
 
-        // タイプ別の特殊挙動と描画座標の決定
-        if (this.type === CONSTANTS.ENEMY_TYPES.ZIGZAG || this.type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) {
-            // Type B or Splitter Child: ジグザグ
-            const elapsed = now - this.spawnTime;
-            const offset = Math.sin(elapsed * CONSTANTS.ZIGZAG_FREQ) * CONSTANTS.ZIGZAG_AMP;
+        // タイマー更新
+        if (this.evasionTimer > 0) this.evasionTimer -= dt;
+        if (this.pulseOutlineTimer > 0) this.pulseOutlineTimer = Math.max(0, this.pulseOutlineTimer - dt);
 
-            // 進行方向に対して常に垂直な方向へオフセットをかける
-            const perpAngle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
-            const ox = Math.cos(perpAngle) * offset;
-            const oy = Math.sin(perpAngle) * offset;
-
-            this.renderX = this.x + ox;
-            this.renderY = this.y + oy;
-        } else if (this.movementType === CONSTANTS.ENEMY_MOVEMENT_TYPES.INVADER) {
-            // Type Invader: インベーダー（接線スライド）
-            const elapsed = now - this.spawnTime;
-            const offset = Math.sin(elapsed * CONSTANTS.INVADER_STRAFE_FREQ + this.movementPhase) * CONSTANTS.INVADER_STRAFE_AMP;
-
-            // 進行方向（放射状）に対して垂直な方向へオフセットをかける
-            // 接近に伴い減衰させたい場合はここに dist 係数をかけても良いが、まずは固定
-            const perpAngle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
-            const ox = Math.cos(perpAngle) * offset;
-            const oy = Math.sin(perpAngle) * offset;
-
-            this.renderX = this.x + ox;
-            this.renderY = this.y + oy;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.EVASIVE) {
-            // Type C: 回避
-            const totalRemaining = options.totalRemaining || 999;
-            const onlyEvasiveLeft = options.onlyEvasiveLeft || false;
-            const isLastStand = totalRemaining <= 2 || onlyEvasiveLeft;
-
-            if (isLastStand) {
-                this.isEvading = false;
-                this.evadeTime = 0;
-                this.evasionTimer = 0; // クールダウンもリセット
-
-                // 強制的にプレイヤーへ向ける
-                const dx = playerX - this.x;
-                const dy = playerY - this.y;
-                const targetAngle = Math.atan2(dy, dx);
-                this.vx = Math.cos(targetAngle) * this.currentSpeed;
-                this.vy = Math.sin(targetAngle) * this.currentSpeed;
-                this.baseAngle = targetAngle;
-            } else if (this.evasionTimer <= 0) {
-                const evadeThreshold = 80;
-                const playerToEnemyX = this.x - playerX;
-                const playerToEnemyY = this.y - playerY;
-                const mouseToEnemyX = playerX + Math.cos(playerAngle) * 200 - this.x;
-                const mouseToEnemyY = playerY + Math.sin(playerAngle) * 200 - this.y;
-                const mouseToEnemyDist = Math.sqrt(mouseToEnemyX * mouseToEnemyX + mouseToEnemyY * mouseToEnemyY);
-
-                if (mouseToEnemyDist < evadeThreshold) {
-                    this.isEvading = true;
-                    this.evasionTimer = CONSTANTS.EVASIVE_COOLDOWN_MS;
-                    const perpX = -Math.sin(playerAngle);
-                    const perpY = Math.cos(playerAngle);
-                    const side = (playerToEnemyX * perpX + playerToEnemyY * perpY) > 0 ? 1 : -1;
-                    const evadeDirX = perpX * side;
-                    const evadeDirY = perpY * side;
-                    this.vx = evadeDirX * this.currentSpeed * 2.5;
-                    this.vy = evadeDirY * this.currentSpeed * 2.5;
-                    this.evadeTime = 15;
-                }
-            }
-            if (this.evadeTime > 0) {
-                this.evadeTime--;
-                if (this.evadeTime <= 0) this.isEvading = false;
-            }
-            this.renderX = this.x;
-            this.renderY = this.y;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
-            // ATTRACTOR: 周囲の敵を引き寄せる
-            // 負荷軽減：3フレームに1回のみ計算
-            if (this.game.optimizationFrameCount % 3 === 0) {
-                const config = CONSTANTS.ATTRACTOR;
-                const candidates = this.game.grid.queryCircle(this.x, this.y, config.pullRadius);
-
-                // さらに負荷軽減：最大20体までに制限
-                const limit = Math.min(candidates.length, 20);
-                for (let i = 0; i < limit; i++) {
-                    const other = candidates[i];
-                    if (other === this || !other.active) continue;
-
-                    const adx = this.x - other.x;
-                    const ady = this.y - other.y;
-                    const adistSq = adx * adx + ady * ady;
-
-                    if (adistSq > 0) {
-                        const adist = Math.sqrt(adistSq);
-                        const force = (1 - adist / config.pullRadius) * config.pullForce;
-                        other.x += (adx / adist) * force * dtMod;
-                        other.y += (ady / adist) * force * dtMod;
-                    }
-                }
-            }
-            this.renderX = this.x;
-            this.renderY = this.y;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR) {
-            // BARRIER_PAIR: パートナーが存在する場合、離れすぎないようにする（ペアの維持）
-            // 具体的な追随ロジックは共通の旋回に任せるが、ペアとしての座標整合性は main.js のスポーン時に配慮
-            this.renderX = this.x;
-            this.renderY = this.y;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
-            // REFLECTOR: 基本は通常移動だが、正面からの弾を反射する属性を持つ
-            this.renderX = this.x;
-            this.renderY = this.y;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER || this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
-            // ...Existing SHIELDER/GUARDIAN logic...
-            // シールダー/ガーディアンの特殊行動
-            const config = this.type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER : CONSTANTS.GUARDIAN;
-
-            // 1. 状態管理（バリアサイクル）
-            this.barrierTimer += dt;
-            if (this.barrierState === 'idle' && this.barrierTimer >= config.barrierCooldownMs) {
-                this.barrierState = 'windup';
-                this.barrierTimer = 0;
-            } else if (this.barrierState === 'windup' && this.barrierTimer >= config.barrierWindupMs) {
-                this.barrierState = 'active';
-                this.barrierTimer = 0;
-            } else if (this.barrierState === 'active' && this.barrierTimer >= config.barrierDurationMs) {
-                this.barrierState = 'vulnerable';
-                this.barrierTimer = 0;
-            } else if (this.barrierState === 'vulnerable' && this.barrierTimer >= config.vulnerableMs) {
-                this.barrierState = 'idle';
-                this.barrierTimer = 0;
-            }
-
-            // 2. 移動ロジック（旋回 + 距離維持）
-            // 弱点露出中は速度低下
-            let moveSpeed = this.baseSpeed;
-            if (this.barrierState === 'vulnerable') {
-                moveSpeed *= config.speedMultiplierWhileVulnerable;
-            }
-
-            // 円運動（orbit）
-            this.orbitAngle += config.orbitAngularSpeed * dtMod;
-
-            // 目標座標の計算（ orbitRadius を維持しつつ、現在の orbitAngle の位置へ）
-            let targetDist = config.orbitRadius;
-            let speedBoost = 1.0;
-
-            if (dist < config.orbitRadiusMin) {
-                // 近すぎる -> 離れる
-                targetDist = config.orbitRadiusMax;
-                speedBoost = config.retreatBoost;
-            } else if (dist > config.orbitRadiusMax) {
-                // 遠すぎる -> 近づく
-                targetDist = config.orbitRadiusMin;
-                speedBoost = config.approachBoost;
-            }
-
-            const targetOrbitX = playerX + Math.cos(this.orbitAngle) * targetDist;
-            const targetOrbitY = playerY + Math.sin(this.orbitAngle) * targetDist;
-
-            // 目標点へ向かうベクトル
-            const odx = targetOrbitX - this.x;
-            const ody = targetOrbitY - this.y;
-            const oDist = Math.sqrt(odx * odx + ody * ody);
-
-            if (oDist > 0) {
-                this.vx = (odx / oDist) * moveSpeed * speedBoost;
-                this.vy = (ody / oDist) * moveSpeed * speedBoost;
-            }
-
-            this.renderX = this.x;
-            this.renderY = this.y;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.DASHER) {
-            // 行動更新は上流で完了済み
-            this.renderX = this.x;
-            this.renderY = this.y;
-        } else if (this.type === CONSTANTS.ENEMY_TYPES.ORBITER) {
-            // Type ORBITER: 旋回（SHIELDERの移動ロジック流用）
-            const config = CONSTANTS.ORBITER;
-            this.orbitAngle += config.orbitAngularSpeed * dtMod;
-
-            let targetDist = config.orbitRadius;
-            if (dist < config.orbitRadiusMin) targetDist = config.orbitRadiusMax;
-            else if (dist > config.orbitRadiusMax) targetDist = config.orbitRadiusMin;
-
-            const tx = playerX + Math.cos(this.orbitAngle) * targetDist;
-            const ty = playerY + Math.sin(this.orbitAngle) * targetDist;
-            const odx = tx - this.x;
-            const ody = ty - this.y;
-            const oDist = Math.sqrt(odx * odx + ody * ody);
-
-            if (oDist > 0) {
-                this.vx = (odx / oDist) * this.currentSpeed;
-                this.vy = (ody / oDist) * this.currentSpeed;
-            }
-            this.renderX = this.x;
-            this.renderY = this.y;
-        } else {
-            // Type A: Normal / SPLITTER等
-            this.renderX = this.x;
-            this.renderY = this.y;
-        }
-
-        // ボスの召喚ロジック
+        // ボス召喚
         if (this.isBoss && this.onSummon) {
             const hpPercent = this.hp / this.maxHp;
             const interval = hpPercent <= 0.5 ? CONSTANTS.BOSS_SUMMON_INTERVAL_ENRAGED_MS : CONSTANTS.BOSS_SUMMON_INTERVAL_NORMAL_MS;
-
             if (now - this.lastSummonTime > interval) {
                 this.onSummon(this.x, this.y);
                 this.lastSummonTime = now;
             }
         }
+
+        // 画面外チェック (main.js 側で統一管理するため不要)
+        // this.checkBounds();
     }
+
+    updateSpeed(dist, options) {
+        let speedRatio = 1.0;
+        // 至近距離での減速
+        if (dist < CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS) {
+            const t = Math.max(0, dist / CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS);
+            speedRatio = CONSTANTS.ENEMY_MIN_SPEED_RATIO + (1.0 - CONSTANTS.ENEMY_MIN_SPEED_RATIO) * t;
+        }
+        this.currentSpeed = this.baseSpeed * speedRatio;
+
+        // バフ適用
+        this.hasGuardBuff = options.globalGuardBuffActive || false;
+        this.hasMarkBuff = options.globalMarkActive || false;
+        if (this.hasGuardBuff) this.currentSpeed *= (CONSTANTS.GUARDIAN.globalBuffSpeedMultiplier || 1.2);
+        else if (this.hasMarkBuff) this.currentSpeed *= (CONSTANTS.OBSERVER.globalBuffSpeedMul || 1.1);
+
+        // シールダー/ガーディアン弱い時
+        if ((this.type === CONSTANTS.ENEMY_TYPES.SHIELDER || this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN) && this.barrierState === 'vulnerable') {
+            this.currentSpeed *= 0.5;
+        }
+    }
+
+    updateMovement(dtMod, px, py, dist, now, playerAngle) {
+        // 描画座標リセット (Render offset reset)
+        this.renderX = this.x;
+        this.renderY = this.y;
+
+        const targetAngle = Math.atan2(py - this.y, px - this.x);
+
+        switch (this.movementMode) {
+            case 'DIRECT':
+                // 直線追尾: 常にプレイヤー方向へ
+                // ボスの場合、一定距離で停止して召喚を行う (距離維持)
+                if (this.isBoss && dist < (CONSTANTS.BOSS_STOP_DISTANCE || 280)) {
+                    this.vx = 0;
+                    this.vy = 0;
+                    this.angle = targetAngle;
+
+                    // 待機モーション (Sway): 浮遊感の演出
+                    const now = Date.now();
+                    const swayX = Math.cos(now * 0.001) * 20;
+                    const swayY = Math.sin(now * 0.0013) * 10;
+                    this.renderX = this.x + swayX;
+                    this.renderY = this.y + swayY;
+                    return; // coordinate updates handled here
+                } else {
+                    this.vx = Math.cos(targetAngle) * this.currentSpeed;
+                    this.vy = Math.sin(targetAngle) * this.currentSpeed;
+                    this.angle = targetAngle;
+                }
+                break;
+
+            case 'ASSAULT':
+                // 旋回制限付き追尾: 急旋回禁止
+                this.turnTowards(targetAngle, this.turnRate * dtMod);
+                this.vx = Math.cos(this.angle) * this.currentSpeed;
+                this.vy = Math.sin(this.angle) * this.currentSpeed;
+                break;
+
+            case 'ZIGZAG':
+                // 物理的な揺動 (SSOT: 描画と当たり判定の一致)
+                this.angle = targetAngle;
+
+                const elapsedZ = now - this.spawnTime;
+                const freqZ = this.zigzagFreq || 0.005;
+                const ampZ = this.zigzagAmp || 80;
+
+                // 揺動速度 (v = A * omega * cos(omega * t))
+                // pixels per frame (16.6ms) ベース
+                const oscVelZ = ampZ * freqZ * Math.cos(elapsedZ * freqZ) * 16.6;
+
+                const perpZ = this.angle + Math.PI / 2;
+                this.vx = Math.cos(this.angle) * this.currentSpeed + Math.cos(perpZ) * oscVelZ;
+                this.vy = Math.sin(this.angle) * this.currentSpeed + Math.sin(perpZ) * oscVelZ;
+                break;
+
+            case 'HOVER':
+            case 'ORBIT':
+                // 周回・維持挙動
+                this.orbitAngle += (this.type === CONSTANTS.ENEMY_TYPES.ORBITER ? 0.02 : 0.01) * dtMod;
+
+                let targetDist = this.orbitRadius || 200;
+                // 距離維持補正
+                if (dist < targetDist - 50) targetDist += 50; // 近すぎたら離れる目標
+                if (dist > targetDist + 50) targetDist -= 50; // 遠すぎたら近づく目標
+
+                const tx = px + Math.cos(this.orbitAngle) * targetDist;
+                const ty = py + Math.sin(this.orbitAngle) * targetDist;
+
+                const hoverAngle = Math.atan2(ty - this.y, tx - this.x);
+                this.turnTowards(hoverAngle, (this.turnRate || 0.03) * dtMod);
+
+                this.vx = Math.cos(this.angle) * this.currentSpeed;
+                this.vy = Math.sin(this.angle) * this.currentSpeed;
+                break;
+
+            case 'FLANK':
+                // 背後に回り込む (Spiral Inward logic)
+                // ターゲット：プレイヤーの背後 (backDist離れた位置)
+                const flankConfig = CONSTANTS.FLANKER || {};
+                const backDist = flankConfig.backDist || 180;
+
+                // プレイヤーの向きを取得 (Player classがないため、Playerの移動情報が必要だが、
+                // ここでは簡易的に「プレイヤーから見て現在位置の反対側」ではなく、
+                // 「プレイヤーの現在進行方向の逆」や「ランダムな背後」などが理想。
+                // 引数の playerAngle (マウス方向) を利用する。
+                const pRotation = playerAngle; // Mouse direction
+                const targetsBackAngle = pRotation + Math.PI;
+
+                // 目標地点
+                const txFlank = px + Math.cos(targetsBackAngle) * backDist;
+                const tyFlank = py + Math.sin(targetsBackAngle) * backDist;
+
+                const angleToFlank = Math.atan2(tyFlank - this.y, txFlank - this.x);
+
+                // 旋回制限付きで目標へ
+                this.turnTowards(angleToFlank, (this.turnRate || 0.06) * dtMod);
+
+                // 速度適用
+                let flankSpeed = this.currentSpeed;
+                // 目標に近づきすぎたら減速
+                const dFlank = Math.sqrt(Math.pow(txFlank - this.x, 2) + Math.pow(tyFlank - this.y, 2));
+                if (dFlank < 50) flankSpeed *= 0.5;
+
+                this.vx = Math.cos(this.angle) * flankSpeed;
+                this.vy = Math.sin(this.angle) * flankSpeed;
+                break;
+
+            case 'DASH':
+                // DASHER Logic
+                if (this.dashState === 'dash') {
+                    // 直進
+                    // 突進中は angle 更新しない
+                    this.vx = Math.cos(this.angle) * this.currentSpeed * (CONSTANTS.DASHER.dashSpeedMultiplier || 3.0);
+                    this.vy = Math.sin(this.angle) * this.currentSpeed * (CONSTANTS.DASHER.dashSpeedMultiplier || 3.0);
+                } else {
+                    // 回避/様子見 (-PI/2 or +PI/2 slide)
+                    // 常に横滑り
+                    const slideTarget = targetAngle + Math.PI / 2;
+                    this.turnTowards(slideTarget, 0.1 * dtMod);
+                    this.vx = Math.cos(this.angle) * this.currentSpeed * 0.5;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed * 0.5;
+                }
+                break;
+
+            case 'AVOID':
+                // 照準回避 (BARRIER_PAIR)
+                // ペアがいない場合は自棄になって突っ込む (ASSAULTへ移行)
+                if (!this.partner || !this.partner.active) {
+                    this.movementMode = 'ASSAULT';
+                    this.turnRate = 0.2; // Aggressive turn
+                    this.currentSpeed *= 1.5; // Speed up
+                    // Fallthrough to next frame's ASSAULT logic
+                    break;
+                }
+
+                // 安定化: IDの大小で左右を分担する
+                // プレイヤーの照準に対して、片方は +65度、片方は -65度 の位置をキープしようとする
+                const isLeader = this.id < this.partner.id;
+                const formationSide = isLeader ? 1 : -1;
+
+                // 目標とする角度 (Player aiming angle + side offset)
+                // 65度くらい開けば、間のバリアが正面を塞ぐ形になる
+                let targetFormationAngle = playerAngle + (formationSide * (Math.PI / 180 * 65));
+
+                // 現在の角度
+                const currentAngleToSelf = Math.atan2(this.y - py, this.x - px);
+
+                // 距離メンテナンス (つかず離れず)
+                let targetDist2 = this.orbitRadius || 240; // Rename variable to avoid conflict if any
+                // 基本は orbitRadius を維持だが、近すぎると下がる
+                if (dist < targetDist2 - 30) targetDist2 += 30;
+                if (dist > targetDist2 + 30) targetDist2 -= 30;
+
+                // Move towards formation target
+                // 目標地点
+                const tx2 = px + Math.cos(targetFormationAngle) * targetDist2;
+                const ty2 = py + Math.sin(targetFormationAngle) * targetDist2;
+
+                const approachAngle2 = Math.atan2(ty2 - this.y, tx2 - this.x);
+
+                // 旋回
+                this.turnTowards(approachAngle2, (this.turnRate || 0.05) * dtMod);
+
+                this.vx = Math.cos(this.angle) * this.currentSpeed;
+                this.vy = Math.sin(this.angle) * this.currentSpeed;
+                break;
+
+            case 'REFLECT':
+                // 正面を向きつつ横移動 (Strafe)
+                // 常にPlayerを向く
+                this.angle = targetAngle;
+
+                // 横移動
+                const strafePhase = now * 0.002;
+                const strafeDir = Math.sin(strafePhase) > 0 ? 1 : -1;
+                const strafeAngle = targetAngle + (Math.PI / 2) * strafeDir;
+
+                this.vx = Math.cos(strafeAngle) * this.currentSpeed * 0.5; // 少し遅く
+                this.vy = Math.sin(strafeAngle) * this.currentSpeed * 0.5;
+
+                // 距離が遠ければ近づく成分も足す
+                if (dist > (this.orbitRadius || 200)) {
+                    this.vx += Math.cos(targetAngle) * this.currentSpeed * 0.5;
+                    this.vy += Math.sin(targetAngle) * this.currentSpeed * 0.5;
+                }
+                break;
+
+            case 'TRICKSTER':
+                // 不規則
+                this.movementPhase += (Math.random() - 0.5) * 0.2 * dtMod;
+                const trickAngle = targetAngle + Math.sin(this.movementPhase) * 1.0;
+                this.turnTowards(trickAngle, 0.1 * dtMod);
+                this.vx = Math.cos(this.angle) * this.currentSpeed;
+                this.vy = Math.sin(this.angle) * this.currentSpeed;
+                break;
+
+            default:
+                // Fallback DIRECT
+                this.vx = Math.cos(targetAngle) * this.currentSpeed;
+                this.vy = Math.sin(targetAngle) * this.currentSpeed;
+                this.angle = targetAngle;
+                break;
+        }
+
+        // 基本Angle更新 (描画用)
+        // this.angle は updateMovement 内で更新済み
+        // hasDirection系の敵はこれが描画角度になる
+    }
+
+    turnTowards(targetAngle, rate) {
+        if (rate <= 0) {
+            this.angle = targetAngle;
+            return;
+        }
+        let diff = targetAngle - this.angle;
+        // Normalize -PI to PI
+        while (diff <= -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+
+        if (Math.abs(diff) < rate) {
+            this.angle = targetAngle;
+        } else {
+            this.angle += (diff > 0) ? rate : -rate;
+        }
+    }
+
+    // checkBounds() { ... } // 廃止: main.js でスクリーン座標判定を行う
+
+
+
+
 
     draw(ctx) {
         ctx.save();
@@ -645,7 +668,8 @@ export class Enemy {
         // 進行方向への回転適用 (本体のみに適用するため save)
         ctx.save();
         if (this.hasDirection) {
-            ctx.rotate(this.angle);
+            // スプライトは元々-Y方向(上)を向いていると仮定し、進行方向(this.angle)に向けるために+90度補正
+            ctx.rotate(this.angle + Math.PI / 2);
         }
 
         let assetKey = null;
@@ -708,26 +732,7 @@ export class Enemy {
             ctx.drawImage(asset, -size / 2, -size / 2, size, size);
             ctx.filter = "none";
 
-            // BARRIER_PAIR のバリア線描画 (ペアの両方が生きている場合)
-            if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner && this.partner.active &&
-                this.partner.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner.partner === this) {
-                // ペアのうち片方だけが描画を担当するようにする (重複描画防止)
-                if (this.id < this.partner.id) {
-                    ctx.save();
-                    // translate後の座標系なので、パートナーへの相対座標で線を引く
-                    ctx.strokeStyle = "rgba(0, 255, 255, 0.4)";
-                    ctx.lineWidth = CONSTANTS.BARRIER_PAIR.barrierWidth;
-                    ctx.setLineDash([10, 5]);
-                    ctx.shadowBlur = 10;
-                    ctx.shadowColor = "#00ffff";
-
-                    ctx.beginPath();
-                    ctx.moveTo(0, 0);
-                    ctx.lineTo(this.partner.x - this.x, this.partner.y - this.y);
-                    ctx.stroke();
-                    ctx.restore();
-                }
-            }
+            // (Barrier Line removed from here to follow rotation-free context below)
 
             // REFLECTOR の金縁風エフェクト
             if (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
@@ -858,6 +863,24 @@ export class Enemy {
 
         // 本体描画終了 (回転を解除)
         ctx.restore();
+
+        // BARRIER_PAIR のバリア線描画 (非回転コンテキストで実行: ワールド座標同期)
+        if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner && this.partner.active &&
+            this.partner.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner.partner === this) {
+            if (this.id < this.partner.id) {
+                ctx.save();
+                ctx.strokeStyle = "rgba(0, 255, 255, 0.6)"; // 透明度アップ
+                ctx.lineWidth = CONSTANTS.BARRIER_PAIR.barrierWidth || 6;
+                ctx.setLineDash([12, 6]); // よりはっきりした破線
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = "#00ffff";
+                ctx.beginPath();
+                ctx.moveTo(0, 0); // translating to (this.renderX, this.renderY)
+                ctx.lineTo(this.partner.x - this.x, this.partner.y - this.y);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
 
         // HPバー
         // ボスは画面上部に別枠表示するので頭上には出さない
@@ -1032,86 +1055,55 @@ export class Enemy {
         }
     }
 
-    destroy(reason, game) {
-        if (!this.active) return;
-
-        // ゴールドのドロップ
-        const gold = game.goldPool.get();
-        if (gold) {
-            // ステージ倍率: 1.0 + (stage * 0.2)
-            const stageMult = 1.0 + (game.currentStage * 0.2);
-
-            // タイプ倍率
-            let typeMult = 1.0;
-            if (this.isBoss) {
-                typeMult = 10.0;
-            } else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
-                typeMult = 3.0;
-            } else if ([CONSTANTS.ENEMY_TYPES.SHIELDER, CONSTANTS.ENEMY_TYPES.GUARDIAN, CONSTANTS.ENEMY_TYPES.OBSERVER].includes(this.type)) {
-                typeMult = 2.0;
-            } else if ([CONSTANTS.ENEMY_TYPES.ASSAULT, CONSTANTS.ENEMY_TYPES.DASHER, CONSTANTS.ENEMY_TYPES.ORBITER, CONSTANTS.ENEMY_TYPES.SPLITTER].includes(this.type)) {
-                typeMult = 1.2;
-            }
-
-            let value = Math.floor(15 * stageMult * typeMult); // 1.5倍に増量 (10 -> 15)
-            if (!Number.isFinite(value)) value = 15; // セーフティガード
-
-            gold.init(this.renderX, this.renderY, value);
-            game.golds.push(gold);
-        }
-
-        game.totalKills++;
-        game.killCount++; // パーウェーブのキル数をカウント
+    returnToPool() {
         this.active = false;
+        if (this.game && this.game.enemyPool) {
+            this.game.enemyPool.release(this);
+        }
+    }
 
-        if (game.audio) {
-            game.audio.play('explosion', { variation: 0.1 });
+    destroy(reason = 'damage', game) {
+        if (!this.active) return;
+        this.active = false;
+        this.destroyReason = reason;
+
+        // 破壊エフェクト
+        if (reason === 'damage' || reason === 'bullet' || reason === 'bomb' || reason === 'nuke' || reason === 'BULLET' || reason === 'BARRIER_DAMAGE' || reason === 'LIFETIME') {
+            Effects.createExplosion(this.renderX, this.renderY, this.type === CONSTANTS.ENEMY_TYPES.BOSS ? 200 : 50);
+            game.audio.play('explosion', { variation: 0.3, priority: 'medium' });
         }
 
-        // 撃破エフェクト (赤とオレンジの爆発)
-        Effects.createDeathExplosion(this.renderX, this.renderY, this.isBoss || this.type === CONSTANTS.ENEMY_TYPES.ELITE);
-
-        // 撃破カウントの減少は行わない（enemiesRemainingは未スポーン数を表すため）
-        // if (game.enemiesRemaining > 0) {
-        //     game.enemiesRemaining--;
-        // }
-
-        if (this.isBoss) {
-            // 衝突判定ループ内での急激な状態変化（配列クリア等）を避けるため、次フレームまで遅延させる
-            setTimeout(() => {
-                game.stageClear();
-            }, 0);
-            return;
-        }
-
-        // SPLITTER の分裂処理 (バリア即死時は分裂しない)
-        if (reason !== 'barrier' && this.type === CONSTANTS.ENEMY_TYPES.SPLITTER && this.generation === 0) {
-            const stageData = CONSTANTS.STAGE_DATA[game.currentStage];
-
-            // 進行方向に対して垂直なベクトルを計算 (出現位置を横にずらす)
-            const perpAngle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
-            const sideDist = 20;
-
-            for (let k = 0; k < CONSTANTS.SPLITTER.splitCount; k++) {
-                const child = game.enemyPool.get();
-                if (child) {
-                    // 1体目は左、2体目は右（あるいはその逆）にオフセット
-                    const side = (k % 2 === 0) ? 1 : -1;
-                    const ox = Math.cos(perpAngle) * sideDist * side;
-                    const oy = Math.sin(perpAngle) * sideDist * side;
-
-                    child.init(this.x + ox, this.y + oy, game.player.x, game.player.y,
-                        CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD,
-                        stageData.hpMul, stageData.speedMul, this.affinity);
-                    child.generation = 1;
-                    game.enemies.push(child);
-                }
+        // スコア・統計加算 (正当な撃破時のみ)
+        if (this.hp <= 0) {
+            game.totalKills++;
+            game.killCount++;
+            this.killed = true;
+            this.destroyReason = 'DEAD';
+            if (game.debugEnabled) {
+                // console.log(`[ENEMY KILLED] id:${this.id} type:${this.type} totalKills:${game.totalKills}`);
             }
         }
 
-        // ドロップアイテムの抽選
-        if (game.itemManager) {
-            game.itemManager.spawnDrop(this.renderX, this.renderY, this.type, game);
+        // バリアペアの片割れが死んだ場合、もう片方の挙動を変える
+        if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner) {
+            this.partner.partner = null; // リンク解除
+            this.partner.barrierState = 'vulnerable'; // または専用のステート
+        }
+
+        // ドロップ処理
+        if (reason !== 'glitch' && reason !== 'GLITCH' && reason !== 'return' && reason !== 'LIFETIME' && reason !== 'OOB') {
+            // GOLD (100% drop)
+            const goldAmount = CONSTANTS.ENEMY_GOLD[this.type] || 10;
+            const g = game.goldPool.get();
+            if (g) {
+                g.init(this.renderX, this.renderY, goldAmount);
+                game.golds.push(g);
+            }
+
+            // アイテムドロップ
+            if (game.itemManager) {
+                game.itemManager.spawnDrop(this.renderX, this.renderY, this.type, game);
+            }
         }
     }
 }

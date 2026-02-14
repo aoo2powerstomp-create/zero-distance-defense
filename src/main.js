@@ -13,10 +13,11 @@ import { SpatialGrid } from './SpatialGrid.js';
 import { ItemManager } from './ItemManager.js';
 import { AssetLoader } from './AssetLoader.js';
 import { FrameCache } from './utils/FrameCache.js';
+import { SpawnDirector } from './SpawnDirector.js';
 
 class Game {
     constructor() {
-        console.log('Main.js FIX APPLIED: VERSION 2026-02-14-HitboxA');
+        // console.log("[INITIALIZING GAME]");
         this.canvas = document.getElementById('game-canvas');
         this.ctx = this.canvas.getContext('2d');
 
@@ -81,9 +82,12 @@ class Game {
         this.orbitAngle = 0;
 
         // デバッグ設定
+        this.debugEnabled = true; // 開発中のため強制的に有効化
         this.debugInvincible = false;
+        this.timeScale = 1.0;
 
         this.frameCache = new FrameCache();
+        this.spawnDirector = new SpawnDirector(this);
 
         // 走行全体スタッツ (Game Over時にトータルを表示するため)
         this.runTotalDamageTaken = 0;
@@ -137,6 +141,10 @@ class Game {
         const btnStart = document.getElementById('btn-start');
         if (btnStart) {
             btnStart.addEventListener('click', async () => {
+                // 連打防止: 既に処理中なら無視
+                if (this.isStarting) return;
+                this.isStarting = true;
+
                 await this.audio.init();
                 this.audio.play('menu_select', { priority: 'high' });
 
@@ -150,6 +158,9 @@ class Game {
 
                 // カウントダウン開始に合わせてフェードイン
                 this.triggerFade('in', 500);
+
+                // 処理完了後にフラグ解除 (通常はgameState遷移で戻ってこないが念のため)
+                this.isStarting = false;
             });
         }
 
@@ -308,6 +319,17 @@ class Game {
                     if (this.debugInvincible) {
                         this.spawnDamageText(this.player.x, this.player.y - 60, "GOD MODE!", "#ffd700");
                     }
+                });
+            }
+
+            // デバッグSPEEDボタン
+            const btnDebugSpeed = document.getElementById('btn-debug-speed');
+            if (btnDebugSpeed) {
+                btnDebugSpeed.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (this.timeScale >= 3.0) this.timeScale = 1.0;
+                    else this.timeScale += 1.0;
+                    btnDebugSpeed.textContent = `SPEED: x${this.timeScale}`;
                 });
             }
         }
@@ -569,6 +591,7 @@ class Game {
         this.stageGoldEarned = 0;
 
         if ((this.currentStage + 1) % 5 === 0) {
+            this.enemiesRemaining = 0; // ボスステージは追加スポーンなし、ボス撃破＝クリアとする
             this.spawnBoss();
         }
 
@@ -595,6 +618,11 @@ class Game {
             damageTaken: 0,
             itemUsed: 0
         };
+
+        // SpawnDirector リセット
+        if (this.spawnDirector) {
+            this.spawnDirector.resetForStage();
+        }
 
         // リザルト等で隠れたUIを確実に再表示する
         const hud = document.getElementById('hud');
@@ -786,6 +814,17 @@ class Game {
         if (this.isClearing) return;
         this.isClearing = true;
 
+        // Stage Clear Logic
+
+        // クリア時にダメージ演出を即解除 (遷移先で点滅し続けないように)
+        if (this.player) {
+            this.player.damageFlashTimer = 0;
+            const hpFill = document.getElementById('hp-bar-fill');
+            const hpContainer = document.querySelector('.hp-container');
+            if (hpFill) hpFill.classList.remove('damage');
+            if (hpContainer) hpContainer.classList.remove('damage');
+        }
+
         // 安全策: runStats がない場合（途中更新など）の初期化
         if (!this.runStats) {
             this.runStats = {
@@ -896,221 +935,6 @@ class Game {
         }
     }
 
-    spawnEnemy(fromQueue = false) {
-        if (this.enemies.length >= CONSTANTS.ENEMY_LIMIT) {
-            if (!fromQueue && this.spawnQueue < CONSTANTS.SPAWN_QUEUE_MAX) this.spawnQueue++;
-            return;
-        }
-
-        // セクタの選択
-        const sector = this.sectors[Math.floor(Math.random() * this.sectors.length)];
-        const sectorCenter = sector ? sector.centerDeg : Math.random() * 360;
-
-        let found = false;
-        let x, y;
-        const margin = 50;
-        const maxTries = 3;
-
-        for (let i = 0; i < maxTries; i++) {
-            // セクタ範囲内での角度決定
-            const angleDeg = sectorCenter + (Math.random() - 0.5) * CONSTANTS.SPAWN_SECTOR_ANGLE;
-            const angleRad = angleDeg * (Math.PI / 180);
-
-            // 画面外周の矩形上の点へ投影（簡易計算：十分遠い距離から中心へ）
-            // 物理的に画面の端を指定する
-            const dist = 600; // 画面の中心(400,400)から十分外側
-            const tx = 400 + Math.cos(angleRad) * dist;
-            const ty = 400 + Math.sin(angleRad) * dist;
-
-            // クランプして外周に張り付ける
-            x = Math.max(-margin, Math.min(CONSTANTS.TARGET_WIDTH + margin, tx));
-            y = Math.max(-margin, Math.min(CONSTANTS.TARGET_HEIGHT + margin, ty));
-
-            // SAFE_RADIUS チェック (プレイヤー周辺 120px)
-            const dx = x - this.player.x;
-            const dy = y - this.player.y;
-            if (dx * dx + dy * dy > CONSTANTS.SPAWN_SAFE_RADIUS * CONSTANTS.SPAWN_SAFE_RADIUS) {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            if (!fromQueue && this.spawnQueue < CONSTANTS.SPAWN_QUEUE_MAX) this.spawnQueue++;
-            return;
-        }
-
-        const stageData = CONSTANTS.STAGE_DATA[this.currentStage];
-        const enemy = this.enemyPool.get();
-        if (enemy) {
-            let type = CONSTANTS.ENEMY_TYPES.NORMAL;
-            const rand = Math.random();
-
-            if (rand < 0.1) {
-                type = CONSTANTS.ENEMY_TYPES.ELITE;
-            } else {
-                const typeRand = Math.random();
-                // 優先度が高い順に判定。条件（スポーン率＋アンロックステージ）を満たさない場合は次へ
-                if (typeRand < 0.05 && this.currentStage >= CONSTANTS.FLANKER.unlockStage) type = CONSTANTS.ENEMY_TYPES.FLANKER;
-                else if (typeRand < 0.08 && this.currentStage >= CONSTANTS.BARRIER_PAIR.unlockStage) type = CONSTANTS.ENEMY_TYPES.BARRIER_PAIR;
-                else if (typeRand < 0.18 && this.currentStage >= CONSTANTS.TRICKSTER.unlockStage) type = CONSTANTS.ENEMY_TYPES.TRICKSTER;
-                else if (typeRand < 0.23 && this.currentStage >= CONSTANTS.ATTRACTOR.unlockStage) type = CONSTANTS.ENEMY_TYPES.ATTRACTOR;
-                else if (typeRand < 0.30 && this.currentStage >= CONSTANTS.REFLECTOR.unlockStage) type = CONSTANTS.ENEMY_TYPES.REFLECTOR;
-                else if (typeRand < 0.40) type = CONSTANTS.ENEMY_TYPES.ZIGZAG;
-                else if (typeRand < 0.50) type = CONSTANTS.ENEMY_TYPES.EVASIVE;
-                else if (typeRand < 0.55) type = CONSTANTS.ENEMY_TYPES.ASSAULT;
-                else if (typeRand < 0.60) type = CONSTANTS.ENEMY_TYPES.DASHER;
-                else if (typeRand < 0.65) type = CONSTANTS.ENEMY_TYPES.ORBITER;
-                else if (typeRand < 0.70) type = CONSTANTS.ENEMY_TYPES.SPLITTER;
-                else if (typeRand < 0.75 && this.currentStage >= CONSTANTS.SHIELDER.unlockStage) type = CONSTANTS.ENEMY_TYPES.SHIELDER;
-                else if (typeRand < 0.77 && this.currentStage >= CONSTANTS.GUARDIAN.unlockStage) type = CONSTANTS.ENEMY_TYPES.GUARDIAN;
-                else if (typeRand < 0.82 && this.currentStage >= CONSTANTS.OBSERVER.unlockStage) type = CONSTANTS.ENEMY_TYPES.OBSERVER;
-
-                // 同時出現上限チェック
-                const limits = CONSTANTS.SPAWN_LIMITS;
-                if (type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
-                    const count = this.enemies.filter(e => e.active && e.type === type).length;
-                    if (count >= limits.GUARDIAN) type = CONSTANTS.ENEMY_TYPES.NORMAL;
-                } else if (type === CONSTANTS.ENEMY_TYPES.SHIELDER) {
-                    const count = this.enemies.filter(e => e.active && e.type === type).length;
-                    if (count >= limits.SHIELDER) type = CONSTANTS.ENEMY_TYPES.NORMAL;
-                } else if (type === CONSTANTS.ENEMY_TYPES.ORBITER) {
-                    const count = this.enemies.filter(e => e.active && e.type === type).length;
-                    if (count >= limits.ORBITER) type = CONSTANTS.ENEMY_TYPES.NORMAL;
-                } else if (type === CONSTANTS.ENEMY_TYPES.OBSERVER) {
-                    const count = this.enemies.filter(e => e.active && e.type === type).length;
-                    if (count >= limits.OBSERVER) type = CONSTANTS.ENEMY_TYPES.NORMAL;
-                }
-            }
-
-            const affinity = this.getSpawnAffinity();
-            enemy.init(x, y, this.player.x, this.player.y, type, stageData.hpMul, stageData.speedMul, affinity);
-            this.enemies.push(enemy);
-
-            // BARRIER_PAIR の場合はペアでもう1体出す
-            if (type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR) {
-                const partner = this.enemyPool.get();
-                if (partner) {
-                    // 少しずらした位置に出す
-                    const offset = 40;
-                    partner.init(x + offset, y + offset, this.player.x, this.player.y, type, stageData.hpMul, stageData.speedMul, affinity);
-                    this.enemies.push(partner);
-
-                    // 相互リンク
-                    enemy.partner = partner;
-                    partner.partner = enemy;
-
-                    this.enemiesRemaining--;
-                    this.currentSpawnBudget -= 1;
-                }
-            }
-            this.enemiesRemaining--; // 敵をスポーンしたので残数を減らす
-            this.currentSpawnBudget -= 1; // 予算を消費
-        }
-    }
-
-    getSpawnAffinity() {
-        let rates = CONSTANTS.AFFINITY_SPAWN_RATES[0].rates;
-        for (let i = CONSTANTS.AFFINITY_SPAWN_RATES.length - 1; i >= 0; i--) {
-            if (this.currentStage >= CONSTANTS.AFFINITY_SPAWN_RATES[i].stage) {
-                rates = CONSTANTS.AFFINITY_SPAWN_RATES[i].rates;
-                break;
-            }
-        }
-        const rand = Math.random();
-        if (rand < rates[0]) return CONSTANTS.ENEMY_AFFINITIES.SWARM;
-        if (rand < rates[0] + rates[1]) return CONSTANTS.ENEMY_AFFINITIES.ARMORED;
-        return CONSTANTS.ENEMY_AFFINITIES.PHASE;
-    }
-
-    spawnFormation(fType, centerDeg) {
-        const stageData = CONSTANTS.STAGE_DATA[this.currentStage];
-        const angleRad = centerDeg * (Math.PI / 180);
-
-        // 隊形ごとの数と移動タイプを決定
-        let count = 0;
-        let mvType = CONSTANTS.ENEMY_MOVEMENT_TYPES.STRAIGHT;
-
-        // 後半(Stage6-)は INVADER 確率アップ
-        const invaderChance = (this.currentStage >= 5) ? 0.25 : 0.05;
-        if (Math.random() < invaderChance) mvType = CONSTANTS.ENEMY_MOVEMENT_TYPES.INVADER;
-
-        if (fType === CONSTANTS.ENEMY_FORMATION_TYPES.LINEAR) {
-            count = Math.floor(5 + Math.random() * 8); // 5-12
-        } else if (fType === CONSTANTS.ENEMY_FORMATION_TYPES.PARALLEL) {
-            count = Math.floor(5 + Math.random() * 6); // 5-10
-        } else if (fType === CONSTANTS.ENEMY_FORMATION_TYPES.V_SHAPE) {
-            count = 7; // 1 + 3 + 3
-        }
-
-        // 予算と制限のチェック
-        if (this.enemiesRemaining < count) count = this.enemiesRemaining;
-        if (this.enemies.length + count >= CONSTANTS.ENEMY_LIMIT) {
-            count = Math.max(0, CONSTANTS.ENEMY_LIMIT - this.enemies.length);
-        }
-        if (count <= 0) return;
-
-        const margin = 50;
-        const dist = 600; // 外周の距離
-        const startX = CONSTANTS.TARGET_WIDTH / 2 + Math.cos(angleRad) * dist;
-        const startY = CONSTANTS.TARGET_HEIGHT / 2 + Math.sin(angleRad) * dist;
-
-        // 隊形全体で属性を統一
-        const fAffinity = this.getSpawnAffinity();
-        // 位相を揃えることで隊形全体のうねりを表現
-        const sharedPhase = Math.random() * Math.PI * 2;
-
-        for (let i = 0; i < count; i++) {
-            let ex = startX;
-            let ey = startY;
-
-            if (fType === CONSTANTS.ENEMY_FORMATION_TYPES.LINEAR) {
-                // 列：放射方向に間隔をあける (先行と追従)
-                const spacing = 35;
-                ex += Math.cos(angleRad) * (i * spacing);
-                ey += Math.sin(angleRad) * (i * spacing);
-            } else if (fType === CONSTANTS.ENEMY_FORMATION_TYPES.PARALLEL) {
-                // 壁：接線方向に横並び
-                const spacing = 45;
-                const perpAngle = angleRad + Math.PI / 2;
-                const offset = (i - (count - 1) / 2) * spacing;
-                ex += Math.cos(perpAngle) * offset;
-                ey += Math.sin(perpAngle) * offset;
-            } else if (fType === CONSTANTS.ENEMY_FORMATION_TYPES.V_SHAPE) {
-                // V字
-                const spacing = 40;
-                const perpAngle = angleRad + Math.PI / 2;
-                const depthSpacing = 30;
-                if (i !== 0) {
-                    const side = (i % 2 === 0) ? 1 : -1;
-                    const step = Math.ceil(i / 2);
-                    ex += Math.cos(perpAngle) * (step * spacing * side);
-                    ey += Math.sin(perpAngle) * (step * spacing * side);
-                    ex += Math.cos(angleRad) * (step * depthSpacing);
-                    ey += Math.sin(angleRad) * (step * depthSpacing);
-                }
-            }
-
-            // マージンでクランプ
-            ex = Math.max(-margin, Math.min(CONSTANTS.TARGET_WIDTH + margin, ex));
-            ey = Math.max(-margin, Math.min(CONSTANTS.TARGET_HEIGHT + margin, ey));
-
-            // SAFE_RADIUS チェック
-            const dx = ex - this.player.x;
-            const dy = ey - this.player.y;
-            if (dx * dx + dy * dy < CONSTANTS.SPAWN_SAFE_RADIUS * CONSTANTS.SPAWN_SAFE_RADIUS) continue;
-
-            const enemy = this.enemyPool.get();
-            if (enemy) {
-                enemy.init(ex, ey, this.player.x, this.player.y, CONSTANTS.ENEMY_TYPES.NORMAL, stageData.hpMul, stageData.speedMul, fAffinity);
-                enemy.movementType = mvType;
-                enemy.movementPhase = sharedPhase;
-                this.enemies.push(enemy);
-                this.enemiesRemaining--;
-                this.currentSpawnBudget -= 1;
-            }
-        }
-    }
 
     spawnBoss() {
         const x = CONSTANTS.TARGET_WIDTH / 2;
@@ -1121,6 +945,14 @@ class Game {
             boss.initBoss(x, y, this.player.x, this.player.y, stageData.hpMul, (bx, by) => {
                 this.handleBossSummon(bx, by);
             });
+
+            // 10面ボス (Stage 10) は「浮遊城塞」として周囲を周回する
+            if (this.currentStage === 9) {
+                boss.movementMode = 'HOVER';
+                boss.orbitRadius = 300;
+                boss.turnRate = 0.04;
+            }
+
             this.enemies.push(boss);
         }
     }
@@ -1319,9 +1151,6 @@ class Game {
             isRicochet: true,
             isRicochetInitiated: true
         };
-        extra.ricochetExcludes.add(targetEnemy);
-
-        // 跳弾は見た目を少しだけ強調（発光強化のためflashFramesを1にするなど）
         extra.flashFrames = 2;
 
         // 跳弾はわずかに彩度/輝度を上げる演出
@@ -1366,9 +1195,9 @@ class Game {
     }
 
     update(dt) {
-        if (this.gameState === CONSTANTS.STATE.TITLE || this.gameState === CONSTANTS.STATE.COUNTDOWN || this.gameState === CONSTANTS.STATE.RESULT) return;
-
         this.optimizationFrameCount++;
+        // if (this.optimizationFrameCount % 600 === 0) console.log(`[LOOP TICK] state: ${this.gameState}`);
+        if (this.gameState === CONSTANTS.STATE.TITLE || this.gameState === CONSTANTS.STATE.COUNTDOWN || this.gameState === CONSTANTS.STATE.RESULT) return;
 
         // 1. フレームデータのキャッシュ構築
         Profiler.start('frame_cache');
@@ -1433,10 +1262,10 @@ class Game {
         const hasBoss = this.enemies.some(e => e.isBoss);
 
         Profiler.start('spawning');
-        if (this.enemiesRemaining > 0 || this.spawnQueue > 0 || isBossStage) {
-            this.updateSpawningSystem(dt);
+        // SpawnDirector による管理 (ボスステージ以外)
+        if (!isBossStage) {
+            this.spawnDirector.update(dt);
         }
-        this.processSpawnQueue(dt);
         Profiler.end('spawning');
 
         const { hasGuardian, hasMark } = this.frameCache.buffFlags;
@@ -1469,6 +1298,20 @@ class Game {
         }
         Profiler.end('enemy_update');
 
+        // システム統計ログ (約1秒に1回)
+        if (this.optimizationFrameCount % 60 === 0) {
+            const { scale, offsetX, offsetY, viewW, viewH } = this.getRenderTransform();
+            const inViewCount = this.enemies.filter(e => {
+                if (!e.active) return false;
+                const sx = e.x * scale + offsetX;
+                const sy = e.y * scale + offsetY;
+                return sx >= 0 && sx <= viewW && sy >= 0 && sy <= viewH;
+            }).length;
+            if (this.debugEnabled) {
+                // console.log(`[BATTLE STATE] Total:${this.enemies.length}, InView:${inViewCount}, Remaining:${this.enemiesRemaining}, Kills:${this.killCount}`);
+            }
+        }
+
         // 敵同士の緩やかな斥力 (重なりすぎ防止)
         // 負荷軽減：2フレームに1回のみ計算し、さらに生存中の敵のみを対象とする
         Profiler.start('enemy_repulsion');
@@ -1477,11 +1320,15 @@ class Game {
             const r = CONSTANTS.ENEMY_SIZE * 0.8;
             const rSq = r * r;
 
+            const MAX_REPULSION = 1.5;
             for (let i = 0; i < activeEnemies.length; i++) {
                 const e = activeEnemies[i];
-                if (e.isBoss) continue;
+                if (e.isBoss || e.age < 0.5) continue; // ボスとスポーン直後は斥力無効
 
                 const candidates = this.grid.queryCircle(e.x, e.y, CONSTANTS.ENEMY_SIZE * 1.5);
+                let sumX = 0;
+                let sumY = 0;
+
                 for (let j = 0; j < candidates.length; j++) {
                     const other = candidates[j];
                     if (e === other || !other.active || other.isBoss) continue;
@@ -1490,19 +1337,25 @@ class Game {
                     const dy = other.y - e.y;
                     const distSq = dx * dx + dy * dy;
 
-                    if (distSq < rSq && distSq > 0) {
+                    if (distSq < rSq && distSq > 0.001) {
                         const dist = Math.sqrt(distSq);
                         const push = (r - dist) * 0.05;
                         const nx = dx / dist;
                         const ny = dy / dist;
-                        const ox = nx * push;
-                        const oy = ny * push;
-                        e.x -= ox;
-                        e.y -= oy;
-                        other.x += ox;
-                        other.y += oy;
+                        sumX -= nx * push;
+                        sumY -= ny * push;
                     }
                 }
+
+                // 合計移動量（斥力）にキャップをかける
+                const mag = Math.sqrt(sumX * sumX + sumY * sumY);
+                if (mag > MAX_REPULSION) {
+                    sumX = (sumX / mag) * MAX_REPULSION;
+                    sumY = (sumY / mag) * MAX_REPULSION;
+                }
+
+                e.x += sumX;
+                e.y += sumY;
             }
         }
         Profiler.end('enemy_repulsion');
@@ -1532,31 +1385,8 @@ class Game {
         if (isBossStage) {
             // ボスステージではボスが死んでいれば handleCollisions 内で stageClear が呼ばれる
         } else {
-            if (this.enemiesRemaining <= 0 && this.enemies.length === 0) {
+            if (this.enemiesRemaining === 0 && this.enemies.length === 0) {
                 this.stageClear();
-            }
-
-            // デバッグ用：詰まっている可能性があればコンソールに出力
-            // フェイルセーフ：あまりにも遠くに行った敵、またはNaN座標の敵は消滅させる
-            if (this.enemiesRemaining <= 0 && this.enemies.length > 0) {
-                for (let i = this.enemies.length - 1; i >= 0; i--) {
-                    const e = this.enemies[i];
-                    if (!e.active) continue;
-
-                    // NaNチェック
-                    if (isNaN(e.x) || isNaN(e.y)) {
-                        console.warn("Retiring NaN enemy:", e);
-                        e.destroy('glitch', this);
-                        continue;
-                    }
-
-                    // 距離チェック (画面対角の約3倍)
-                    const distSq = (e.x - this.player.x) ** 2 + (e.y - this.player.y) ** 2;
-                    if (distSq > 2400 * 2400) { // 2400px
-                        console.warn("Retiring stuck enemy (too far):", e.type, e.x, e.y);
-                        e.destroy('glitch', this);
-                    }
-                }
             }
         }
 
@@ -1564,8 +1394,8 @@ class Game {
             this.showOverlay('GAME OVER', '基地が破壊されました', 'result');
         }
 
-        // フェイルセーフ: 敵が全滅しているのにカウントが残っている、またはその逆の整合性をチェック
-        if (this.enemiesRemaining <= 0 && this.spawnQueue <= 0 && !this.enemies.some(e => e.active)) {
+        // ステージクリア判定: 未出現数が0 かつ 画面上の敵が0
+        if (this.enemiesRemaining === 0 && this.enemies.length === 0) {
             if (this.gameState === CONSTANTS.STATE.PLAYING && !isBossStage) {
                 this.stageClear();
             }
@@ -1710,7 +1540,7 @@ class Game {
                     e.applyKnockback(b.vx, b.vy, knockPower);
                     this.player.hp = Math.min(CONSTANTS.PLAYER_MAX_HP, this.player.hp + CONSTANTS.PLAYER_MAX_HP * CONSTANTS.STANDARD_RECOVERY_ON_HIT);
 
-                    if (e.hp <= 0) e.destroy('bullet', this);
+                    if (e.hp <= 0) e.destroy('BULLET', this);
 
                     b.pierceCount--;
                     if (b.pierceCount < 0) {
@@ -1761,30 +1591,48 @@ class Game {
                         e.lastContactTime = now;
                     }
                 }
+                // プレイヤーに接触した時点で「到達」とみなし、削除する（キル数には含めない）
+                // ただしボスは消滅させず、接触ダメージを与え続ける
+                if (!e.isBoss) {
+                    e.destroy('LIFETIME', this);
+                }
             }
 
             if (distSq < CONSTANTS.BARRIER_RADIUS * CONSTANTS.BARRIER_RADIUS) {
+                if (!e.active) return; // 二重処理防止
+
                 let d = CONSTANTS.BARRIER_DPS * (dt / 1000);
                 if (e.isBoss) d *= 0.5;
                 e.takeDamage(d, { globalBuffActive, isAuraProtected: e.isShielded });
 
-                if (CONSTANTS.BARRIER_INSTANT_KILL_TYPES.includes(e.type) && !this.player.barrierKillConsumedThisFrame && this.player.barrierCharges > 0) {
+                if (!e.isBoss && CONSTANTS.BARRIER_INSTANT_KILL_TYPES.includes(e.type) && !this.player.barrierKillConsumedThisFrame && this.player.barrierCharges > 0) {
                     this.player.barrierCharges--;
                     this.player.barrierKillConsumedThisFrame = true;
                     this.audio.play('barrier_hit', { variation: 0.1 });
-                    e.destroy('barrier', this);
+                    e.destroy('LIFETIME', this); // バリア即死は寿命(LIFETIME)とする
                 } else {
                     if (Math.random() < 0.1) this.spawnDamageText(e.renderX, e.renderY, ".", "#ffffff");
                     const dist = Math.sqrt(distSq);
                     if (dist > 0) e.applyKnockback((e.renderX - this.player.x) / dist, (e.renderY - this.player.y) / dist, CONSTANTS.BARRIER_KNOCKBACK * (dt / 16.6));
-                    if (e.hp <= 0 && e.active) e.destroy('barrier_damage', this);
+                    if (e.hp <= 0 && e.active) e.destroy('BARRIER_DAMAGE', this);
                 }
             }
         });
 
+        // ステージクリア判定
         const isBossStage = (this.currentStage + 1) % 5 === 0;
-        if (!isBossStage && this.enemiesRemaining <= 0 && this.spawnQueue <= 0 && this.enemies.length === 0) {
-            this.stageClear();
+
+        if (isBossStage) {
+            // ボスステージ: ボスが撃破され、かつ敵が残っていない場合
+            const hasActiveBoss = this.enemies.some(e => e.active && e.isBoss);
+            if (!hasActiveBoss && this.enemiesRemaining <= 0 && this.spawnQueue <= 0 && this.enemies.length === 0) {
+                this.stageClear();
+            }
+        } else {
+            // 通常ステージ
+            if (this.enemiesRemaining <= 0 && this.spawnQueue <= 0 && this.enemies.length === 0) {
+                this.stageClear();
+            }
         }
 
         for (let k = this.golds.length - 1; k >= 0; k--) {
@@ -1839,9 +1687,40 @@ class Game {
                 this.bulletPool.release(this.bullets.splice(i, 1)[0]);
             }
         }
+        const { scale, offsetX, offsetY, viewW, viewH } = this.getRenderTransform();
+        const margin = 200;
+
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const e = this.enemies[i];
-            if (!e.active || e.x < -300 || e.x > CONSTANTS.TARGET_WIDTH + 300 || e.y < -300 || e.y > CONSTANTS.TARGET_HEIGHT + 300) {
+
+            // 画面外判定 (スクリーン座標系 + マージン)
+            const sx = e.x * scale + offsetX;
+            const sy = e.y * scale + offsetY;
+            const isOffScreen = sx < -margin || sx > viewW + margin || sy < -margin || sy > viewH + margin;
+
+            // 猶予ルールの適用
+            if (e.active && isOffScreen && (e.age || 0) > 0.5) {
+                e.oobFrames++;
+            } else {
+                e.oobFrames = 0;
+            }
+
+            // 統計ログ (DEBUG時) - 1秒に1回 OOB判定の詳細を出す (先頭の敵のみ)
+            if (this.debugEnabled && e.active && e.id !== -1 && this.optimizationFrameCount % 60 === 0 && i === 0) {
+                // console.log(`[OOB DEBUG] id:${e.id} type:${e.type} world:(${e.x.toFixed(0)},${e.y.toFixed(0)}) screen:(${sx.toFixed(0)},${sy.toFixed(0)}) scale:${scale.toFixed(4)} offset:(${offsetX.toFixed(1)},${offsetY.toFixed(1)}) view:${viewW}x${viewH}`);
+            }
+
+            if (!e.active || e.oobFrames >= 30) {
+                if (this.debugEnabled) {
+                    let reason = e.destroyReason || (e.oobFrames >= 30 ? "OOB" : "UNKNOWN");
+                    if (!Number.isFinite(e.x) || !Number.isFinite(e.y)) reason = "INVALID";
+
+                    if (reason === "OOB") {
+                        // console.log(`[ENEMY REMOVED] id:${e.id} type:${e.type} reason:${reason} world:(${e.x.toFixed(0)},${e.y.toFixed(0)}) screen:(${sx.toFixed(0)},${sy.toFixed(0)}) transform:[s:${scale.toFixed(2)} ox:${offsetX.toFixed(0)} oy:${offsetY.toFixed(0)}] view:${viewW}x${viewH}`);
+                    } else {
+                        // console.log(`[ENEMY REMOVED] id:${e.id} type:${e.type} reason:${reason}`);
+                    }
+                }
                 this.enemyPool.release(this.enemies.splice(i, 1)[0]);
             }
         }
@@ -1852,162 +1731,6 @@ class Game {
         }
     }
 
-    updateSpawningSystem(dt) {
-        const stageData = CONSTANTS.STAGE_DATA[this.currentStage];
-        const is2Sector = (this.currentStage + 1) >= CONSTANTS.STAGE_2SECTOR_START;
-
-        // 予算の回復 (1秒ごとに SPAWN_BUDGET_PER_SEC 回復)
-        this.currentSpawnBudget = Math.min(CONSTANTS.SPAWN_BUDGET_PER_SEC, this.currentSpawnBudget + (CONSTANTS.SPAWN_BUDGET_PER_SEC * dt / 1000));
-
-        // セクタ管理
-        if (this.sectors.length === 0) {
-            this.sectors.push({ centerDeg: Math.random() * 360, timer: CONSTANTS.SPAWN_SECTOR_DURATION_MS });
-        }
-        if (is2Sector && this.sectors.length < 2) {
-            this.addSecondSector();
-        }
-
-        this.sectors.forEach(s => {
-            s.timer -= dt;
-            if (s.timer <= 0) {
-                this.rotateSector(s);
-            }
-        });
-
-        // リズム管理 (BURST/COOL)
-        this.phaseTimer -= dt;
-        if (this.phaseTimer <= 0) {
-            if (this.spawnPhase === 'BURST') {
-                this.spawnPhase = 'COOL';
-                this.phaseTimer = CONSTANTS.SPAWN_COOL_TIME_MS;
-            } else {
-                this.spawnPhase = 'BURST';
-                this.phaseTimer = CONSTANTS.SPAWN_BURST_TIME_MS;
-            }
-        }
-
-        // ソフトキャップによる強制COOL
-        if (this.enemies.length >= CONSTANTS.ENEMY_LIMIT * CONSTANTS.ACTIVE_ENEMIES_SOFT_CAP_RATIO) {
-            if (this.spawnPhase === 'BURST') {
-                this.spawnPhase = 'COOL';
-                this.phaseTimer = CONSTANTS.SPAWN_COOL_TIME_MS;
-            }
-        }
-
-        // スポーン実行(BURST中のみ)
-        if (this.spawnPhase === 'BURST' && this.enemiesRemaining > 0) {
-            this.spawnTimer += dt;
-            if (this.spawnTimer >= stageData.spawnInterval) {
-                // 密度チェック
-                let dangerCount = 0;
-                this.enemies.forEach(e => {
-                    const dx = e.renderX - this.player.x;
-                    const dy = e.renderY - this.player.y;
-                    if (dx * dx + dy * dy < CONSTANTS.SPAWN_DANGER_RADIUS * CONSTANTS.SPAWN_DANGER_RADIUS) {
-                        dangerCount++;
-                    }
-                });
-
-                // 密度上限または予算不足ならキューへ
-                if (dangerCount >= CONSTANTS.DANGER_CAP || this.currentSpawnBudget < 1) {
-                    if (this.spawnQueue < CONSTANTS.SPAWN_QUEUE_MAX) {
-                        this.spawnQueue++;
-                        this.enemiesRemaining--;
-                    }
-                } else {
-                    // 隊形スポーンの抽選 (Stage 3以降、15%の確率)
-                    const formationChance = (this.currentStage >= 2) ? 0.15 : 0;
-                    if (Math.random() < formationChance && this.currentSpawnBudget >= 5) {
-                        const s = this.sectors[Math.floor(Math.random() * this.sectors.length)];
-                        const angle = s.centerDeg + (Math.random() - 0.5) * CONSTANTS.SPAWN_SECTOR_ANGLE;
-                        const fTypes = [
-                            CONSTANTS.ENEMY_FORMATION_TYPES.LINEAR,
-                            CONSTANTS.ENEMY_FORMATION_TYPES.PARALLEL,
-                            CONSTANTS.ENEMY_FORMATION_TYPES.V_SHAPE
-                        ];
-                        const fType = fTypes[Math.floor(Math.random() * fTypes.length)];
-                        this.spawnFormation(fType, angle);
-                    } else {
-                        this.spawnEnemy();
-                        this.currentSpawnBudget -= 1;
-                        this.enemiesRemaining--;
-                    }
-                }
-                this.spawnTimer = 0;
-            }
-        }
-    }
-
-    addSecondSector() {
-        const first = this.sectors[0].centerDeg;
-        // 挟み撃ち防止（150度以内）かつ重なり防止（80度以上）
-        const offset = CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG + Math.random() * (CONSTANTS.SPAWN_SECTOR_MAX_SEP_DEG - CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG);
-        const dir = Math.random() < 0.5 ? 1 : -1;
-        const newCenter = (first + offset * dir + 360) % 360;
-        this.sectors.push({ centerDeg: newCenter, timer: CONSTANTS.SPAWN_SECTOR_DURATION_MS });
-    }
-
-    rotateSector(s) {
-        // ±90度以内で移動
-        const move = (Math.random() - 0.5) * 180;
-        let newCenter = (s.centerDeg + move + 360) % 360;
-
-        // 2セクタ時は互いに離す
-        if (this.sectors.length > 1) {
-            const other = this.sectors.find(x => x !== s);
-            let diff = Math.abs(newCenter - other.centerDeg);
-            if (diff > 180) diff = 360 - diff;
-
-            if (diff < CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG) {
-                // 近すぎる場合、現在の移動方向を維持しつつ最低距離まで押し出す
-                const dir = (move >= 0) ? 1 : -1;
-                newCenter = (other.centerDeg + (CONSTANTS.SPAWN_SECTOR_MIN_SEP_DEG + 5) * dir + 360) % 360;
-            } else if (diff > CONSTANTS.SPAWN_SECTOR_MAX_SEP_DEG) {
-                // 離れすぎ（挟み撃ち）の場合、最大距離まで引き戻す
-                // otherに対してnewCenterがどちら側にいるか判定
-                let diffRaw = newCenter - other.centerDeg;
-                while (diffRaw > 180) diffRaw -= 360;
-                while (diffRaw < -180) diffRaw += 360;
-                const dir = (diffRaw >= 0) ? 1 : -1;
-                newCenter = (other.centerDeg + CONSTANTS.SPAWN_SECTOR_MAX_SEP_DEG * dir + 360) % 360;
-            }
-        }
-        s.centerDeg = newCenter;
-        s.timer = CONSTANTS.SPAWN_SECTOR_DURATION_MS;
-    }
-
-    processSpawnQueue(dt) {
-        if (this.spawnQueue <= 0) return;
-
-        // 予算チェック
-        if (this.currentSpawnBudget < 1) return;
-
-        // 密度判定 (DANGER_RADIUS内の敵数)
-        let countInDanger = 0;
-        this.enemies.forEach(e => {
-            const dx = e.renderX - this.player.x;
-            const dy = e.renderY - this.player.y;
-            if (dx * dx + dy * dy < CONSTANTS.SPAWN_DANGER_RADIUS * CONSTANTS.SPAWN_DANGER_RADIUS) {
-                countInDanger++;
-            }
-        });
-
-        // 密集しすぎ、または予算不足なら放出しない
-        if (countInDanger >= CONSTANTS.DANGER_CAP) return;
-
-        this.releaseTimer += dt;
-        const releaseInterval = 1000 / CONSTANTS.SPAWN_RELEASE_PER_SEC_MAX;
-
-        if (this.releaseTimer >= releaseInterval) {
-            const count = Math.min(this.spawnQueue, CONSTANTS.SPAWN_RELEASE_PER_FRAME_MAX, Math.floor(this.currentSpawnBudget));
-            for (let i = 0; i < count; i++) {
-                this.spawnEnemy(true); // キューからの放出
-                this.spawnQueue--;
-                this.currentSpawnBudget -= 1;
-            }
-            this.releaseTimer = 0;
-        }
-    }
 
     triggerPulse() {
         if (this.pulseCooldownTimer > 0) return;
@@ -2051,8 +1774,8 @@ class Game {
 
             if (distSq < radius * radius) {
                 const dist = Math.sqrt(distSq);
-                const vx = dx / dist;
-                const vy = dy / dist;
+                const vx = dx / (dist || 0.001); // Epsilon
+                const vy = dy / (dist || 0.001);
 
                 // 距離減衰ノックバック
                 const ratio = 1 - (dist / radius);
@@ -2176,16 +1899,28 @@ class Game {
         }
     }
 
+    getRenderTransform() {
+        const scale = this.canvas.height / CONSTANTS.TARGET_HEIGHT;
+        const offsetX = (this.canvas.width - CONSTANTS.TARGET_WIDTH * scale) / 2;
+        const offsetY = 0; // 現在の描画ロジックでは0
+        return {
+            scale,
+            offsetX,
+            offsetY,
+            viewW: this.canvas.width,
+            viewH: this.canvas.height
+        };
+    }
+
     draw() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
         this.ctx.save();
 
         // 以前の挙動を再現：縦幅を基準にスケールを決め、横方向は中央寄せ（入り切らない分はクリップされる）
-        const scale = this.canvas.height / CONSTANTS.TARGET_HEIGHT;
-        const offsetX = (this.canvas.width - CONSTANTS.TARGET_WIDTH * scale) / 2;
+        const { scale, offsetX, offsetY } = this.getRenderTransform();
 
-        this.ctx.translate(offsetX, 0);
+        this.ctx.translate(offsetX, offsetY);
 
         // 画面シェイクの適用
         if (this.screenShakeTimer > 0) {
@@ -2279,13 +2014,21 @@ class Game {
         Profiler.resetCounts();
         Profiler.updateFrame();
 
-        this.update(dt);
+        this.update(dt * this.timeScale);
         this.draw();
         this.updatePerfOverlay(); // 新規追加
 
         requestAnimationFrame((t) => this.loop(t));
     }
     updatePerfOverlay() {
+        if (DEBUG_ENABLED) {
+            const stateEl = document.getElementById('db-state');
+            if (stateEl && this.spawnDirector) stateEl.textContent = `PHASE: ${this.spawnDirector.phase}`;
+
+            const queueEl = document.getElementById('db-queue');
+            if (queueEl) queueEl.textContent = this.spawnQueue;
+        }
+
         const overlay = document.getElementById('perf-overlay');
         if (!overlay) return;
 

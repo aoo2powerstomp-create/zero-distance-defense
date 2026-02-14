@@ -174,6 +174,8 @@ export class Player {
     }
 
     update(dt) {
+        this.barrierKillConsumedThisFrame = false;
+
         if (this.damageFlashTimer > 0) {
             this.damageFlashTimer = Math.max(0, this.damageFlashTimer - dt);
         }
