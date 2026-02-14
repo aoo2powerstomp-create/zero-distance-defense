@@ -35,6 +35,7 @@ export class Player {
 
         // 演出用
         this.damageFlashTimer = 0;
+        this.invincibleFrames = 0;
     }
 
     getWeaponConfig() {
@@ -156,8 +157,8 @@ export class Player {
     }
 
     takeDamage(ratio) {
-        // INVINCIBLE中は無敵
-        if (Date.now() < this.invincibleUntilMs) return;
+        // INVINCIBLE中は無敵 (アイテム効果 or 被弾後無敵)
+        if (Date.now() < this.invincibleUntilMs || this.invincibleFrames > 0) return;
 
         const damage = CONSTANTS.PLAYER_MAX_HP * ratio;
         this.hp = Math.max(0, this.hp - damage);
@@ -213,6 +214,10 @@ export class Player {
         if (now - this.lastDamageTime > CONSTANTS.PLAYER_REGEN_STOP_MS) {
             const regen = CONSTANTS.PLAYER_MAX_HP * CONSTANTS.PLAYER_REGEN_PER_SEC * (dt / 1000);
             this.hp = Math.min(CONSTANTS.PLAYER_MAX_HP, this.hp + regen);
+        }
+
+        if (this.invincibleFrames > 0) {
+            this.invincibleFrames--;
         }
     }
 

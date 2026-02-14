@@ -32,7 +32,7 @@ export const CONSTANTS = {
 
     // エリート設定
     ELITE_HP_MUL: 3,
-    ELITE_SIZE_MUL: 2.1,
+    ELITE_SIZE_MUL: 1.8,
     ELITE_KB_RESIST: 0.8, // 80%軽減
 
     // ボス設定

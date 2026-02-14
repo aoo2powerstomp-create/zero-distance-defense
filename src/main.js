@@ -123,6 +123,12 @@ class Game {
         // ステージセレクト表示のトグル
         const btnToggleStage = document.getElementById('btn-toggle-stage-select');
         const stageSelectList = document.getElementById('stage-select-list');
+        const stageSelectContainer = document.getElementById('stage-select-container');
+
+        if (!DEBUG_ENABLED && stageSelectContainer) {
+            stageSelectContainer.classList.add('hidden');
+        }
+
         if (btnToggleStage && stageSelectList) {
             btnToggleStage.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1381,6 +1387,34 @@ class Game {
         });
         Profiler.end('enemy_update');
 
+        // 敵同士の緩やかな斥力 (重なりすぎ防止)
+        Profiler.start('enemy_repulsion');
+        this.enemies.forEach(e => {
+            if (!e.active || e.isBoss) return;
+            const candidates = this.grid.queryEnemiesNear(e.x, e.y);
+            const r = CONSTANTS.ENEMY_SIZE * 0.8; // 重なりを許容しつつ、中心付近が重なりすぎないように
+            for (let i = 0; i < candidates.length; i++) {
+                const other = candidates[i];
+                if (e === other || !other.active || other.isBoss) continue;
+                const dx = other.x - e.x;
+                const dy = other.y - e.y;
+                const distSq = dx * dx + dy * dy;
+                if (distSq < r * r && distSq > 0) {
+                    const dist = Math.sqrt(distSq);
+                    const push = (r - dist) * 0.05; // 斥力係数 0.05 (弱い)
+                    const nx = dx / dist;
+                    const ny = dy / dist;
+                    const ox = nx * push;
+                    const oy = ny * push;
+                    e.x -= ox;
+                    e.y -= oy;
+                    other.x += ox;
+                    other.y += oy;
+                }
+            }
+        });
+        Profiler.end('enemy_repulsion');
+
         this.golds.forEach(g => g.update(this.player.x, this.player.y));
         this.damageTexts.forEach(d => d.update());
 
@@ -1583,6 +1617,7 @@ class Game {
         }
 
         const now = Date.now();
+        let frameTouchHitApplied = false;
         this.enemies.forEach(e => {
             if (!e.active) return;
             const dx = this.player.x - e.renderX;
@@ -1598,11 +1633,14 @@ class Game {
 
             Profiler.counts.enemyBarrierChecks++;
             if (distSq < minDist * minDist) {
-                if (now - e.lastContactTime > CONSTANTS.ENEMY_CONTACT_COOLDOWN_MS) {
-                    this.player.takeDamage(CONSTANTS.ENEMY_DAMAGE_RATIO);
-                    this.audio.play('damage', { priority: 'high' });
-                    // this.spawnDamageText(this.player.x, this.player.y, '!', '#ff0000');
-                    e.lastContactTime = now;
+                if (!frameTouchHitApplied && this.player.invincibleFrames <= 0) {
+                    if (now - e.lastContactTime > CONSTANTS.ENEMY_CONTACT_COOLDOWN_MS) {
+                        this.player.takeDamage(CONSTANTS.ENEMY_DAMAGE_RATIO);
+                        this.player.invincibleFrames = 18; // 0.3s @ 60fps
+                        frameTouchHitApplied = true;
+                        this.audio.play('damage', { priority: 'high' });
+                        e.lastContactTime = now;
+                    }
                 }
             }
 
