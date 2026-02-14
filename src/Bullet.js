@@ -64,6 +64,19 @@ export function getTintForWeapon(type, lv) {
     return null;
 }
 
+function normalizeAngle(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+}
+
+function getLaserTurnRate(lv) {
+    if (lv >= 30) return 0.08;
+    if (lv >= 20) return 0.05;
+    if (lv >= 10) return 0.03;
+    return 0.0;
+}
+
 export class Bullet {
     constructor() {
         this.x = 0;
@@ -88,6 +101,11 @@ export class Bullet {
         this.isRicochetInitiated = false; // 跳弾情報の初期化済みフラグ
         this.burstFrames = 0;        // Lv30バースト残りフレーム
         this.burstDamageMul = 1.0;   // バースト時のダメージ倍率
+        this.level = 1;
+        this.speed = 0;
+        this.homingFrames = 0;
+        this.homingTarget = null;
+        this.homingLocked = false;
     }
 
     init(x, y, angle, speed, damage, pierce, lifetime, weaponType, extra = {}) {
@@ -121,10 +139,67 @@ export class Bullet {
         this.burstFrames = extra.burstFrames || 0;
         this.burstDamageMul = extra.burstDamageMul || 1.0;
 
+        this.level = extra.level || 1;
+        this.speed = speed;
+
+        if (this.weaponType === CONSTANTS.WEAPON_TYPES.PIERCE && this.level >= 10) {
+            this.homingFrames = 9;
+        } else {
+            this.homingFrames = 0;
+        }
+        this.homingTarget = null;
+        this.homingLocked = false;
+
         this.hitEnemies.clear(); // 初期化時にクリア
     }
 
-    update() {
+    update(enemies) {
+        if (this.homingFrames > 0 && enemies) {
+            const turnRate = getLaserTurnRate(this.level);
+
+            if (turnRate > 0) {
+                // 1. 未ロックならターゲット選定（一度だけ）
+                if (!this.homingLocked) {
+                    let nearest = null;
+                    let bestD2 = 260 * 260; // プロンプト指定の260px
+
+                    for (let i = 0; i < enemies.length; i++) {
+                        const e = enemies[i];
+                        if (!e || !e.active || e.hp <= 0) continue;
+
+                        const dx = e.x - this.x;
+                        const dy = e.y - this.y;
+                        const d2 = dx * dx + dy * dy;
+
+                        if (d2 < bestD2) {
+                            bestD2 = d2;
+                            nearest = e;
+                        }
+                    }
+                    this.homingTarget = nearest;
+                    this.homingLocked = true;
+                }
+
+                // 2. 誘導実行
+                const t = this.homingTarget;
+                if (t && t.active && t.hp > 0) {
+                    const targetAngle = Math.atan2(t.y - this.y, t.x - this.x);
+                    let diff = normalizeAngle(targetAngle - this.angle);
+
+                    if (diff > turnRate) diff = turnRate;
+                    if (diff < -turnRate) diff = -turnRate;
+
+                    this.angle += diff;
+                    this.vx = Math.cos(this.angle) * this.speed;
+                    this.vy = Math.sin(this.angle) * this.speed;
+                } else {
+                    // ターゲット消失で誘導停止
+                    this.homingFrames = 0;
+                }
+            }
+            this.homingFrames--;
+        }
+
         this.x += this.vx;
         this.y += this.vy;
 

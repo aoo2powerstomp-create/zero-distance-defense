@@ -531,7 +531,7 @@ export const CONSTANTS = {
         baseScore: 100,
         penalty: {
             hit: 8,              // 被弾1回あたり減点
-            item: 5,             // アイテム使用1回あたり減点
+            item: 1,             // アイテム使用1回あたり減点
             overtimePerSec: 0.2  // 目標時間超過1秒あたり減点
         },
         thresholds: [

@@ -276,29 +276,6 @@ export class Player {
                 // メインキャンバスに重ねる
                 ctx.drawImage(this.tintCanvas, -drawW / 2, -drawH / 2 + yOffset, drawW, drawH);
             }
-        } else {
-            // 自機 (円と向きを示す線) - フォールバック
-            ctx.beginPath();
-            ctx.arc(0, 0, CONSTANTS.PLAYER_SIZE, 0, Math.PI * 2);
-            ctx.fillStyle = '#00ff88';
-            ctx.fill();
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            // 正面インジケータ（▲マーク）
-            ctx.beginPath();
-            const offset = CONSTANTS.PLAYER_SIZE + 2;
-            ctx.moveTo(offset + 10, 0);   // 先端
-            ctx.lineTo(offset, -7);      // 後端左
-            ctx.lineTo(offset, 7);       // 後端右
-            ctx.closePath();
-
-            ctx.fillStyle = '#00ffff';
-            ctx.fill();
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 1;
-            ctx.stroke();
         }
 
         ctx.restore();

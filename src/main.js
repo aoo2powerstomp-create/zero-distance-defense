@@ -1,3 +1,4 @@
+import { DEBUG_ENABLED } from './utils/env.js';
 import { CONSTANTS } from './constants.js';
 import { Player } from './Player.js';
 import { Bullet, getStageByLevel, getTintForWeapon } from './Bullet.js';
@@ -73,7 +74,13 @@ class Game {
         this.screenShakeTimer = 0;
         this.screenShakeIntensity = 0;
 
+        // 走行全体スタッツ (Game Over時にトータルを表示するため)
+        this.runTotalDamageTaken = 0;
+        this.runTotalItemsUsed = 0;
+        this.runTotalTimeMs = 0;
+
         this.initUI();
+        this.setupDebugMenu();
         this.audio = new AudioManager();
 
         // アセットローダー初期化とロード開始
@@ -92,6 +99,12 @@ class Game {
         const parent = this.canvas.parentElement;
         this.canvas.width = parent.clientWidth;
         this.canvas.height = parent.clientHeight;
+    }
+
+    setupDebugMenu() {
+        const el = document.getElementById("debugMenu");
+        if (!el) return;
+        el.style.display = DEBUG_ENABLED ? "block" : "none";
     }
 
     initUI() {
@@ -215,33 +228,35 @@ class Game {
             });
         }
 
-        // デバッグGOLDボタン
-        const btnDebugGold = document.getElementById('btn-debug-gold');
-        if (btnDebugGold) {
-            btnDebugGold.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.goldCount += 100000;
-                this.totalGoldEarned += 100000;
-                this.audio.play('money');
-                this.spawnDamageText(this.player.x, this.player.y - 20, "+100,000G", "#ffd700");
-                this.updateUI();
-            });
-        }
-
-        // デバッグMAXボタン
-        const btnDebugMax = document.getElementById('btn-debug-max');
-        if (btnDebugMax) {
-            btnDebugMax.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const maxLv = CONSTANTS.UPGRADE_LV_MAX;
-                Object.keys(this.player.weapons).forEach(key => {
-                    this.player.weapons[key].unlocked = true;
-                    this.player.weapons[key].level = maxLv;
-                    this.player.weapons[key].atkSpeedLv = maxLv;
+        if (DEBUG_ENABLED) {
+            // デバッグGOLDボタン
+            const btnDebugGold = document.getElementById('btn-debug-gold');
+            if (btnDebugGold) {
+                btnDebugGold.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.goldCount += 100000;
+                    this.totalGoldEarned += 100000;
+                    this.audio.play('money');
+                    this.spawnDamageText(this.player.x, this.player.y - 20, "+100,000G", "#ffd700");
+                    this.updateUI();
                 });
-                this.spawnDamageText(this.player.x, this.player.y - 40, "FULL POWER!", "#ff00ff");
-                this.updateUI();
-            });
+            }
+
+            // デバッグMAXボタン
+            const btnDebugMax = document.getElementById('btn-debug-max');
+            if (btnDebugMax) {
+                btnDebugMax.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const maxLv = CONSTANTS.UPGRADE_LV_MAX;
+                    Object.keys(this.player.weapons).forEach(key => {
+                        this.player.weapons[key].unlocked = true;
+                        this.player.weapons[key].level = maxLv;
+                        this.player.weapons[key].atkSpeedLv = maxLv;
+                    });
+                    this.spawnDamageText(this.player.x, this.player.y - 40, "FULL POWER!", "#ff00ff");
+                    this.updateUI();
+                });
+            }
         }
 
         // PC向け：マウスホイールでの武器切り替え
@@ -399,7 +414,7 @@ class Game {
 
         ctx.fillText(result.kills, cx + 40, startY);
         ctx.fillText(result.gold, cx + 40, startY + lineHeight);
-        const timeStr = (result.time / 1000).toFixed(2) + "S";
+        const timeStr = (result.time / 1000).toFixed(2);
         ctx.fillText(timeStr, cx + 40, startY + lineHeight * 2);
         ctx.fillText(result.damage, cx + 40, startY + lineHeight * 3);
         ctx.fillText(result.item, cx + 40, startY + lineHeight * 4);
@@ -524,8 +539,10 @@ class Game {
         if (hud) hud.classList.remove('hidden');
         const controls = document.getElementById('controls');
         if (controls) controls.classList.remove('hidden');
-        const dbHud = document.getElementById('debug-hud');
-        if (dbHud) dbHud.classList.remove('hidden');
+        if (DEBUG_ENABLED) {
+            const dbMenu = document.getElementById('debugMenu');
+            if (dbMenu) dbMenu.classList.remove('hidden');
+        }
 
         this.updateUI();
     }
@@ -534,12 +551,14 @@ class Game {
         if (this.runStats) {
             this.runStats.damageTaken++;
         }
+        this.runTotalDamageTaken++;
     }
 
     recordItemUse() {
         if (this.runStats) {
             this.runStats.itemUsed++;
         }
+        this.runTotalItemsUsed++;
     }
 
     calculateRank() {
@@ -580,6 +599,48 @@ class Game {
             item: stats.itemUsed,
             kills: this.killCount,
             gold: this.stageGoldEarned
+        };
+    }
+
+    calculateTotalRank() {
+        // トータルタイム計算 (現在の進行中のステージ分を加算)
+        const now = Date.now();
+        const currentStageDuration = this.runStats ? (now - this.runStats.startTime) : 0;
+        const totalDurationMs = this.runTotalTimeMs + currentStageDuration;
+
+        // 目標タイムの合計 (到達したステージまで)
+        let totalTargetSec = 0;
+        for (let i = 1; i <= (this.currentStage + 1); i++) {
+            totalTargetSec += CONSTANTS.STAGE_TARGET_TIME_SEC[i] || CONSTANTS.DEFAULT_TARGET_TIME_SEC;
+        }
+
+        const totalDurationSec = totalDurationMs / 1000;
+        const overtimeSec = Math.max(0, totalDurationSec - totalTargetSec);
+
+        // スコア計算 (トータルスタッツを使用)
+        let score = CONSTANTS.RANK_RULES.baseScore;
+        score -= CONSTANTS.RANK_RULES.penalty.hit * this.runTotalDamageTaken;
+        score -= CONSTANTS.RANK_RULES.penalty.item * this.runTotalItemsUsed;
+        score -= CONSTANTS.RANK_RULES.penalty.overtimePerSec * overtimeSec;
+
+        score = Math.max(0, Math.min(100, Math.floor(score)));
+
+        let rank = "F";
+        for (const r of CONSTANTS.RANK_RULES.thresholds) {
+            if (score >= r.minScore) {
+                rank = r.rank;
+                break;
+            }
+        }
+
+        return {
+            rank,
+            score,
+            time: totalDurationMs,
+            damage: this.runTotalDamageTaken,
+            item: this.runTotalItemsUsed,
+            kills: this.totalKills,
+            gold: this.totalGoldEarned
         };
     }
 
@@ -626,6 +687,12 @@ class Game {
         text.classList.remove('ani-slide-left');
         overlay.classList.remove('hidden');
 
+        // 初期状態で非表示にしているので、カウントダウン開始時に表示する
+        const hud = document.getElementById('hud');
+        if (hud) hud.classList.remove('hidden');
+        const controls = document.getElementById('controls');
+        if (controls) controls.classList.remove('hidden');
+
         let count = 3;
         const process = () => {
             if (count > 0) {
@@ -667,15 +734,18 @@ class Game {
             };
         }
         this.runStats.endTime = Date.now();
+        this.runTotalTimeMs += (this.runStats.endTime - this.runStats.startTime);
 
         this.enemies.forEach(e => this.enemyPool.release(e));
         this.enemies = [];
         this.bullets.forEach(b => this.bulletPool.release(b)); // 弾も消す
         this.bullets = [];
 
-        const result = this.calculateRank();
+        const result = this.calculateRank(); // ステージ単体の評価
         const saved = this.saveStageRecord(this.currentStage + 1, result);
-        this.lastResult = { ...result, isBest: saved.isBest };
+
+        // 最終的な表示用はトータル評価
+        this.lastResult = { ...this.calculateTotalRank(), isBest: saved.isBest };
 
         // 最終ステージクリア時のみリザルト画面へ
         const isFinalStage = this.currentStage >= CONSTANTS.STAGE_DATA.length - 1;
@@ -729,38 +799,38 @@ class Game {
                 };
             }
             this.runStats.endTime = Date.now();
-            const result = this.calculateRank();
+            const totalResult = this.calculateTotalRank();
             // ゲームオーバー時は記録保存しない（クリアではないため）が、表示用にlastResultは必要
             // ただしハイスコア更新判定もしない
-            this.lastResult = { ...result, isBest: false };
+            this.lastResult = { ...totalResult, isBest: false };
 
             statsArea.classList.remove('hidden');
-            document.getElementById('stat-kills').textContent = this.totalKills;
-            document.getElementById('stat-gold').textContent = this.totalGoldEarned;
+            document.getElementById('stat-kills').textContent = totalResult.kills;
+            document.getElementById('stat-gold').textContent = totalResult.gold;
             document.getElementById('stat-stage').textContent = `STAGE ${this.currentStage + 1}`;
 
             // ランク表示の更新
             const rankEl = document.getElementById('stat-rank');
             if (rankEl) {
-                rankEl.textContent = result.rank;
+                rankEl.textContent = totalResult.rank;
                 // ランクに応じた色設定
                 let color = '#fff';
-                if (result.rank === 'SSS') color = '#ffed00';
-                else if (result.rank.startsWith('S')) color = '#ffaa00';
-                else if (result.rank.startsWith('A')) color = '#ff44aa';
-                else if (result.rank === 'B') color = '#4488ff';
-                else if (result.rank === 'C') color = '#44ff88';
+                if (totalResult.rank === 'SSS') color = '#ffed00';
+                else if (totalResult.rank.startsWith('S')) color = '#ffaa00';
+                else if (totalResult.rank.startsWith('A')) color = '#ff44aa';
+                else if (totalResult.rank === 'B') color = '#4488ff';
+                else if (totalResult.rank === 'C') color = '#44ff88';
                 rankEl.style.color = color;
                 rankEl.style.textShadow = `0 0 10px ${color}`;
             }
 
-            // 新規: TIME, DAMAGE, ITEM の表示
+            // 新規: TIME, DAMAGE, ITEM の表示 (トータルを表示)
             const timeEl = document.getElementById('stat-time');
-            if (timeEl) timeEl.textContent = (result.time / 1000).toFixed(2) + "s";
+            if (timeEl) timeEl.textContent = (totalResult.time / 1000).toFixed(2);
             const damageEl = document.getElementById('stat-damage');
-            if (damageEl) damageEl.textContent = result.damage;
+            if (damageEl) damageEl.textContent = totalResult.damage;
             const itemEl = document.getElementById('stat-item');
-            if (itemEl) itemEl.textContent = result.item;
+            if (itemEl) itemEl.textContent = totalResult.item;
         }
     }
 
@@ -1026,7 +1096,8 @@ class Game {
             ...stats,
             tintColor,
             visualScale,
-            flashFrames
+            flashFrames,
+            level
         };
 
         if (weaponType === CONSTANTS.WEAPON_TYPES.SHOT) {
@@ -1243,7 +1314,7 @@ class Game {
 
         if (this.gameState === CONSTANTS.STATE.WAVE_CLEAR_CUTIN) {
             this.player.update(dt);
-            this.bullets.forEach(b => b.update());
+            this.bullets.forEach(b => b.update(this.enemies));
             this.golds.forEach(g => g.update(this.player.x, this.player.y));
             this.damageTexts.forEach(d => d.update());
             this.cleanupEntities();
@@ -1280,7 +1351,7 @@ class Game {
         );
 
         Profiler.start('bullet_update');
-        this.bullets.forEach(b => b.update());
+        this.bullets.forEach(b => b.update(this.enemies));
         Profiler.end('bullet_update');
 
         const activeEnemies = this.enemies.filter(e => e.active);
@@ -2107,7 +2178,12 @@ class Game {
         }
 
         overlay.innerHTML = html;
-        overlay.style.display = 'block';
+        // 開発中のみ表示するか、あるいはTITLE画面では隠すなどの配慮が必要
+        if (DEBUG_ENABLED && this.gameState !== CONSTANTS.STATE.TITLE) {
+            overlay.style.display = 'block';
+        } else {
+            overlay.style.display = 'none';
+        }
     }
 }
 
