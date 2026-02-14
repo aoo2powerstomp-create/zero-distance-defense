@@ -31,6 +31,46 @@ body {
     z-index: 20;
 }
 
+#fade-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    z-index: 2000;
+    opacity: 0;
+    pointer-events: none;
+}
+
+#fade-overlay.fade-in {
+    animation: fade-in-anim 1s forwards;
+}
+
+#fade-overlay.fade-out {
+    animation: fade-out-anim 1s forwards;
+}
+
+@keyframes fade-in-anim {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes fade-out-anim {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
 .hud-top {
     display: flex;
     justify-content: space-between;
@@ -60,6 +100,50 @@ body {
     height: 100%;
     background: linear-gradient(90deg, #00ffff, #008888);
     transition: width 0.2s;
+}
+
+#hp-bar-fill.damage {
+    animation: damage-blink 0.1s infinite;
+}
+
+.hp-container.damage {
+    animation: damage-shake 0.15s infinite;
+}
+
+@keyframes damage-blink {
+
+    0%,
+    100% {
+        background: #ff0000;
+        box-shadow: 0 0 10px #ff0000;
+    }
+
+    50% {
+        background: #ffaaaa;
+        box-shadow: 0 0 5px #ffaaaa;
+    }
+}
+
+@keyframes damage-shake {
+    0% {
+        transform: translate(0, 0);
+    }
+
+    25% {
+        transform: translate(2px, -2px);
+    }
+
+    50% {
+        transform: translate(-2px, 2px);
+    }
+
+    75% {
+        transform: translate(2px, 2px);
+    }
+
+    100% {
+        transform: translate(0, 0);
+    }
 }
 
 #stage-info,

@@ -137,6 +137,38 @@ export class Effects {
         }
     }
 
+    static createDeathExplosion(x, y, isLarge = false) {
+        const radiusMult = isLarge ? 2.0 : 1.0;
+        const particleCount = isLarge ? 12 : 6;
+
+        // メインの爆発リング (赤)
+        this.list.push({
+            type: 'ring',
+            x, y,
+            radius: 5,
+            targetRadius: 25 * radiusMult,
+            life: 0.3 * radiusMult,
+            maxLife: 0.3 * radiusMult,
+            color: '#ff4400'
+        });
+
+        // 火花パーティクル (オレンジ)
+        for (let i = 0; i < particleCount; i++) {
+            const angle = (Math.PI * 2 / particleCount) * i + Math.random() * 1.0;
+            const speed = (2 + Math.random() * 3) * radiusMult;
+            this.list.push({
+                type: 'particle',
+                x, y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                size: (3 + Math.random() * 2) * radiusMult,
+                life: 0.35 * radiusMult,
+                maxLife: 0.35 * radiusMult,
+                color: '#ffaa00'
+            });
+        }
+    }
+
     static createRing(x, y, color) {
         this.list.push({
             type: 'ring',

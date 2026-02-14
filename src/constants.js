@@ -43,6 +43,8 @@ export const CONSTANTS = {
     BOSS_SUMMON_INTERVAL_NORMAL_MS: 4000,
     BOSS_SUMMON_INTERVAL_ENRAGED_MS: 2000,
     BOSS_SUMMON_INTERVAL_ENRAGED_MS: 2000,
+    BOSS_RETREAT_DISTANCE: 220,
+    BOSS_STOP_DISTANCE: 280,
     BOSS_SUMMON_COUNT: 3,
 
     // 画像アセット定義 (キー: 相対パス)
@@ -247,7 +249,41 @@ export const CONSTANTS = {
         ORBITER: 'I',  // 旋回型
         SPLITTER: 'J', // 分裂型
         SPLITTER_CHILD: 'K', // 分裂後の小型
-        OBSERVER: 'L'       // 観察者
+        OBSERVER: 'L',       // 観察者
+        FLANKER: 'M',        // 回り込み型 (Purple)
+        BARRIER_PAIR: 'N',   // バリアペア (Cyan)
+        TRICKSTER: 'O',      // 翻弄小型 (Yellow)
+        ATTRACTOR: 'P',      // 密集誘導体 (Green)
+        REFLECTOR: 'Q'        // 反射殻 (Red)
+    },
+
+    // 新敵タイプ設定
+    FLANKER: {
+        speedMul: 1.4,
+        backDist: 150, // プレイヤーの背後に回ろうとする際の基準距離
+        spawnRate: 0.05
+    },
+    BARRIER_PAIR: {
+        maxDist: 200, // ペアが離れすぎないようにする距離
+        barrierWidth: 4,
+        spawnRate: 0.03
+    },
+    TRICKSTER: {
+        sizeMul: 0.7,
+        zigzagAmp: 80,
+        zigzagFreq: 0.005,
+        spawnRate: 0.10
+    },
+    ATTRACTOR: {
+        pullRadius: 200,
+        pullForce: 0.05,
+        maxHp: 4,
+        spawnRate: 0.05
+    },
+    REFLECTOR: {
+        reflectAngle: Math.PI / 3, // 前方60度
+        spawnRate: 0.07,
+        unlockStage: 15 // 15ステージ以降
     },
 
     // スポーン同時上限

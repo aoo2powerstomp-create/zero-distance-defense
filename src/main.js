@@ -93,12 +93,26 @@ class Game {
 
         const upgradePanel = document.getElementById('upgrade-panel');
         if (upgradePanel) upgradePanel.classList.add('hidden');
+
+        // 初回フェードイン
+        this.triggerFade('in', 1000);
     }
 
     resize() {
         const parent = this.canvas.parentElement;
         this.canvas.width = parent.clientWidth;
         this.canvas.height = parent.clientHeight;
+    }
+
+    triggerFade(type, duration = 1000) {
+        const overlay = document.getElementById('fade-overlay');
+        if (!overlay) return Promise.resolve();
+
+        overlay.classList.remove('fade-in', 'fade-out');
+        void overlay.offsetWidth; // trigger reflow
+        overlay.classList.add(type === 'in' ? 'fade-in' : 'fade-out');
+
+        return new Promise(resolve => setTimeout(resolve, duration));
     }
 
     setupDebugMenu() {
@@ -114,9 +128,17 @@ class Game {
             btnStart.addEventListener('click', async () => {
                 await this.audio.init();
                 this.audio.play('menu_select', { priority: 'high' });
+
+                // フェードアウトしてから開始
+                await this.triggerFade('out', 500);
+
                 const titleScreen = document.getElementById('title-screen');
                 if (titleScreen) titleScreen.classList.add('hidden');
+
                 this.startCountdown();
+
+                // カウントダウン開始に合わせてフェードイン
+                this.triggerFade('in', 500);
             });
         }
 
@@ -221,7 +243,7 @@ class Game {
         if (btnNext) {
             btnNext.addEventListener('click', () => {
                 if (this.gameState === CONSTANTS.STATE.RESULT || this.gameState === CONSTANTS.STATE.GAME_OVER) {
-                    location.reload();
+                    this.triggerFade('out', 500).then(() => location.reload());
                 }
             });
         }
@@ -335,7 +357,7 @@ class Game {
             // Title
             if (Math.abs(x - (cX + 150)) < btnW / 2 && Math.abs(y - startY) < btnH / 2) {
                 this.audio.play('menu_select');
-                location.reload();
+                this.triggerFade('out', 500).then(() => location.reload());
                 return;
             }
         }
@@ -1967,7 +1989,16 @@ class Game {
 
     updateUI() {
         const hpPercent = (this.player.hp / CONSTANTS.PLAYER_MAX_HP) * 100;
-        document.getElementById('hp-bar-fill').style.width = Math.max(0, hpPercent) + '%';
+        const hpFill = document.getElementById('hp-bar-fill');
+        const hpContainer = document.querySelector('.hp-container');
+
+        hpFill.style.width = Math.max(0, hpPercent) + '%';
+
+        // ダメージ演出の適用
+        const isDamaged = this.player.damageFlashTimer > 0;
+        hpFill.classList.toggle('damage', isDamaged);
+        hpContainer.classList.toggle('damage', isDamaged);
+
         document.getElementById('gold-count').textContent = this.goldCount;
         document.getElementById('stage-info').textContent = `STAGE ${this.currentStage + 1}`;
 

@@ -361,8 +361,10 @@ export class Player {
 
         // HP連動カラー (1.0: Cyan, 0.5: Purple, 0.25: Red)
         let r, g, b;
-        if (this.damageFlashTimer > 0) {
-            // 被弾時は強制的に明るい赤
+        const isDamageBlink = this.damageFlashTimer > 0 && Math.floor(Date.now() / 60) % 2 === 0;
+
+        if (isDamageBlink) {
+            // 被弾点滅中：明るい赤
             r = 255; g = 50; b = 50;
         } else if (hpRatio > 0.5) {
             // Cyan (0, 255, 255) to Purple (180, 0, 255)

@@ -53,9 +53,16 @@ export class Enemy {
         else if (type === CONSTANTS.ENEMY_TYPES.ORBITER) typeSpeedMul = 1.0;
         else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER) typeSpeedMul = 1.0;
         else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) typeSpeedMul = CONSTANTS.SPLITTER_CHILD.speedMultiplier;
+        else if (type === CONSTANTS.ENEMY_TYPES.FLANKER) typeSpeedMul = CONSTANTS.FLANKER.speedMul;
+        else if (type === CONSTANTS.ENEMY_TYPES.TRICKSTER) typeSpeedMul = 1.3;
 
         this.baseSpeed = CONSTANTS.ENEMY_BASE_SPEED * speedMul * typeSpeedMul;
         this.baseAngle = Math.atan2(targetY - y, targetX - x);
+
+        // FLANKER の初期角度補正
+        if (type === CONSTANTS.ENEMY_TYPES.FLANKER) {
+            this.flankSide = Math.random() < 0.5 ? 1 : -1;
+        }
 
         // シールダー・ガーディアン・オービターの初期角度設定
         if (type === CONSTANTS.ENEMY_TYPES.SHIELDER || type === CONSTANTS.ENEMY_TYPES.GUARDIAN || type === CONSTANTS.ENEMY_TYPES.ORBITER) {
@@ -272,6 +279,16 @@ export class Enemy {
             }
         } else if (this.isEvading) {
             skipCommonLogic = true;
+        }
+
+        if (this.isBoss && dist > 0) {
+            if (dist < CONSTANTS.BOSS_RETREAT_DISTANCE) {
+                // 近すぎ：後退
+                targetSpeed = -this.currentSpeed * 0.5;
+            } else if (dist < CONSTANTS.BOSS_STOP_DISTANCE) {
+                // 停止範囲
+                targetSpeed = 0;
+            }
         }
 
         if (!skipCommonLogic && dot < 0 && distSq > 50 * 50) {
@@ -512,6 +529,8 @@ export class Enemy {
         }
 
         let assetKey = null;
+        let filter = "none";
+
         switch (this.type) {
             case CONSTANTS.ENEMY_TYPES.NORMAL: assetKey = 'ENEMY_A'; break;
             case CONSTANTS.ENEMY_TYPES.ZIGZAG: assetKey = 'ENEMY_B'; break;
@@ -525,6 +544,28 @@ export class Enemy {
             case CONSTANTS.ENEMY_TYPES.SPLITTER: assetKey = 'ENEMY_J'; break;
             case CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD: assetKey = 'ENEMY_K'; break;
             case CONSTANTS.ENEMY_TYPES.OBSERVER: assetKey = 'ENEMY_L'; break;
+
+            // 新敵タイプ (既存アセットの流用 + フィルタ)
+            case CONSTANTS.ENEMY_TYPES.FLANKER:
+                assetKey = 'ENEMY_A';
+                filter = "hue-rotate(240deg) brightness(0.8)";
+                break;
+            case CONSTANTS.ENEMY_TYPES.BARRIER_PAIR:
+                assetKey = 'ENEMY_F';
+                filter = "hue-rotate(180deg) brightness(1.2)";
+                break;
+            case CONSTANTS.ENEMY_TYPES.TRICKSTER:
+                assetKey = 'ENEMY_A';
+                filter = "hue-rotate(60deg) brightness(1.2) drop-shadow(0 0 5px #ffff00)";
+                break;
+            case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
+                assetKey = 'ENEMY_G';
+                filter = "hue-rotate(120deg) brightness(1.1)";
+                break;
+            case CONSTANTS.ENEMY_TYPES.REFLECTOR:
+                assetKey = 'ENEMY_F';
+                filter = "hue-rotate(0deg) brightness(1.1)"; // 後で金縁風の描画を追加検討
+                break;
         }
         if (this.isBoss) {
             const stageNum = (this.game) ? this.game.currentStage + 1 : 1;
@@ -534,15 +575,20 @@ export class Enemy {
         const asset = (this.game && this.game.assetLoader) ? this.game.assetLoader.get(assetKey) : null;
 
         if (asset) {
+            if (filter !== "none") ctx.filter = filter;
             // アセットがある場合：スプライト描画
             let size = CONSTANTS.ENEMY_SIZE * 2.5;
             if (this.isBoss) {
                 size = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL * 2.5;
             } else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
                 size = CONSTANTS.ENEMY_SIZE * CONSTANTS.ELITE_SIZE_MUL * 2.5;
+            } else if (this.type === CONSTANTS.ENEMY_TYPES.TRICKSTER) {
+                size *= CONSTANTS.TRICKSTER.sizeMul;
             }
             ctx.drawImage(asset, -size / 2, -size / 2, size, size);
+            ctx.filter = "none";
 
+            /* 
             // パルス時のアウトライン (画像の場合は矩形枠を表示)
             if (this.pulseOutlineTimer > 0) {
                 ctx.strokeStyle = '#fff';
@@ -551,6 +597,7 @@ export class Enemy {
                 ctx.rect(-size / 2, -size / 2, size, size);
                 ctx.stroke();
             }
+            */
         } else {
             // アセットがない場合：従来の図形描画
             switch (this.type) {
@@ -593,7 +640,7 @@ export class Enemy {
                 case CONSTANTS.ENEMY_TYPES.SHIELDER:
                 case CONSTANTS.ENEMY_TYPES.GUARDIAN:
                     // SHIELDER/GUARDIAN は特殊エフェクトが下に続くが、本体も描画
-                    this.drawShape(ctx, 6, '#00ffff');
+                    this.drawShape(ctx, 6, '#00ffff', false); // アウトラインなし
                     break;
                 default:
                     this.drawShape(ctx, 3, '#ff0000');
@@ -728,7 +775,7 @@ export class Enemy {
         this.renderY = this.y;
     }
 
-    drawShape(ctx, sides, color) {
+    drawShape(ctx, sides, color, useStroke = true) {
         ctx.fillStyle = color;
         ctx.beginPath();
         const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
@@ -742,9 +789,11 @@ export class Enemy {
         ctx.closePath();
         ctx.fill();
 
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        if (useStroke) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
     }
 
     drawStar(ctx, points, color) {
@@ -868,6 +917,9 @@ export class Enemy {
         if (game.audio) {
             game.audio.play('explosion', { variation: 0.1 });
         }
+
+        // 撃破エフェクト (赤とオレンジの爆発)
+        Effects.createDeathExplosion(this.renderX, this.renderY, this.isBoss || this.type === CONSTANTS.ENEMY_TYPES.ELITE);
 
         // 撃破カウントの減少は行わない（enemiesRemainingは未スポーン数を表すため）
         // if (game.enemiesRemaining > 0) {
