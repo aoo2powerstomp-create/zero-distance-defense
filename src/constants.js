@@ -260,30 +260,39 @@ export const CONSTANTS = {
     // 新敵タイプ設定
     FLANKER: {
         speedMul: 1.4,
-        backDist: 150, // プレイヤーの背後に回ろうとする際の基準距離
-        spawnRate: 0.05
+        backDist: 180, // プレイヤーの背後に回ろうとする際の基準距離
+        orbitRadius: 220, // 回り込み中の半径
+        spawnRate: 0.05,
+        unlockStage: 3 // Stage 4
     },
     BARRIER_PAIR: {
-        maxDist: 200, // ペアが離れすぎないようにする距離
-        barrierWidth: 4,
-        spawnRate: 0.03
+        maxDist: 200, // ペアが離れすぎないようにする距離 (300 -> 200)
+        minDist: 100, // ペアが近すぎないようにする距離 (120 -> 100)
+        barrierWidth: 6,
+        orbitRadius: 180, // プレイヤーとの距離を維持 (250 -> 180)
+        spawnRate: 0.03,
+        unlockStage: 5 // Stage 6
     },
     TRICKSTER: {
         sizeMul: 0.7,
         zigzagAmp: 80,
         zigzagFreq: 0.005,
-        spawnRate: 0.10
+        spawnRate: 0.10,
+        unlockStage: 1 // Stage 2
     },
     ATTRACTOR: {
         pullRadius: 200,
         pullForce: 0.05,
         maxHp: 4,
-        spawnRate: 0.05
+        orbitRadius: 300, // 遠巻きに維持
+        spawnRate: 0.05,
+        unlockStage: 4 // Stage 5
     },
     REFLECTOR: {
         reflectAngle: Math.PI / 3, // 前方60度
+        orbitRadius: 200, // 弾を防ぎやすい距離を維持
         spawnRate: 0.07,
-        unlockStage: 15 // 15ステージ以降
+        unlockStage: 6 // Stage 7
     },
 
     // スポーン同時上限
@@ -322,10 +331,11 @@ export const CONSTANTS = {
     // シールダー(Shielder)設定
     SHIELDER: {
         maxHp: 6,                 // 基本HP
+        unlockStage: 4,           // Stage 5
         speed: 2.6,               // 基本速度
-        orbitRadius: 220,         // 維持する半径
-        orbitRadiusMin: 170,
-        orbitRadiusMax: 260,
+        orbitRadius: 160,         // 維持する半径 (220 -> 160)
+        orbitRadiusMin: 120,      // (170 -> 120)
+        orbitRadiusMax: 200,      // (260 -> 200)
         orbitAngularSpeed: 0.045, // 旋回角速度
         retreatBoost: 1.6,
         approachBoost: 1.2,
@@ -333,7 +343,7 @@ export const CONSTANTS = {
         barrierWindupMs: 250,     // 予兆時間
         barrierDurationMs: 900,   // バリア持続時間
         barrierCooldownMs: 3200,  // バリア再使用間隔
-        damageMultiplierWhileBarrier: 0.1, // バリア中の被ダメ倍率
+        damageMultiplierWhileBarrier: 0.2, // バリア中の被ダメ倍率 (0.1 -> 0.2)
 
         vulnerableMs: 650,        // 弱点（露出）時間
         vulnerableDamageMultiplier: 1.8,   // 弱点中の被ダメ倍率
@@ -346,10 +356,11 @@ export const CONSTANTS = {
     // ガーディアン(Guardian)設定 - 全画面バフ
     GUARDIAN: {
         maxHp: 12,
+        unlockStage: 7,           // Stage 8
         speed: 1.8,               // シールダーより遅い
-        orbitRadius: 280,         // より遠巻きに旋回
-        orbitRadiusMin: 240,
-        orbitRadiusMax: 320,
+        orbitRadius: 220,         // より遠巻きに旋回 (280 -> 220)
+        orbitRadiusMin: 180,      // (240 -> 180)
+        orbitRadiusMax: 260,      // (320 -> 260)
         orbitAngularSpeed: 0.03,
         retreatBoost: 1.4,
         approachBoost: 1.1,
@@ -395,6 +406,8 @@ export const CONSTANTS = {
         sizeMul: 0.7
     },
     OBSERVER: {
+        speedMul: 1.0,
+        unlockStage: 5,           // Stage 6
         maxHp: 5,            // 低め（当てられたら倒せる）
         speed: 0,            // 移動はSNAPで扱う
         observerRadius: 260, // 外周半径

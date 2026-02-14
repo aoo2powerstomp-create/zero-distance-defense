@@ -21,8 +21,12 @@ export class SpatialGrid {
      */
     insertEnemy(enemy) {
         if (!enemy.active) return;
-        const cx = Math.floor(enemy.renderX / this.cellSize);
-        const cy = Math.floor(enemy.renderY / this.cellSize);
+        // renderX/Y が未定義の場合は x/y を使用
+        const x = enemy.renderX ?? enemy.x;
+        const y = enemy.renderY ?? enemy.y;
+
+        const cx = Math.floor(x / this.cellSize);
+        const cy = Math.floor(y / this.cellSize);
         const key = `${cx},${cy}`;
 
         if (!this.grid.has(key)) {
@@ -36,7 +40,8 @@ export class SpatialGrid {
      */
     build(enemies) {
         this.clear();
-        for (const e of enemies) {
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
             if (e.active) {
                 this.insertEnemy(e);
             }
@@ -44,24 +49,38 @@ export class SpatialGrid {
     }
 
     /**
-     * 指定座標の周囲（9セル）にいる敵を取得
+     * 指定座標の周囲（円範囲）にいる敵を取得
      */
-    queryEnemiesNear(x, y) {
+    queryCircle(x, y, radius) {
         const cx = Math.floor(x / this.cellSize);
         const cy = Math.floor(y / this.cellSize);
+        const range = Math.ceil(radius / this.cellSize);
+        const rSq = radius * radius;
         const results = [];
 
-        for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -range; dy <= range; dy++) {
+            for (let dx = -range; dx <= range; dx++) {
                 const key = `${cx + dx},${cy + dy}`;
                 const cell = this.grid.get(key);
                 if (cell) {
-                    for (const e of cell) {
-                        results.push(e);
+                    for (let i = 0; i < cell.length; i++) {
+                        const e = cell[i];
+                        const edx = e.x - x;
+                        const edy = e.y - y;
+                        if (edx * edx + edy * edy < rSq) {
+                            results.push(e);
+                        }
                     }
                 }
             }
         }
         return results;
+    }
+
+    /**
+     * 指定座標の周囲（9セル）にいる敵を取得 (後方互換用)
+     */
+    queryEnemiesNear(x, y) {
+        return this.queryCircle(x, y, this.cellSize * 1.5);
     }
 }

@@ -153,7 +153,7 @@ export class Bullet {
         this.hitEnemies.clear(); // 初期化時にクリア
     }
 
-    update(enemies) {
+    update(enemies, grid, targetX, targetY) {
         if (this.homingFrames > 0 && enemies) {
             const turnRate = getLaserTurnRate(this.level);
 
@@ -161,19 +161,61 @@ export class Bullet {
                 // 1. 未ロックならターゲット選定（一度だけ）
                 if (!this.homingLocked) {
                     let nearest = null;
-                    let bestD2 = 260 * 260; // プロンプト指定の260px
+                    const radius = 350; // 索敵範囲を少し拡大 (260 -> 350)
 
-                    for (let i = 0; i < enemies.length; i++) {
-                        const e = enemies[i];
-                        if (!e || !e.active || e.hp <= 0) continue;
+                    // 比較用の距離: カーソル座標が渡されていればカーソルとの距離、なければ弾との距離
+                    let bestD2 = Number.MAX_VALUE;
+                    const useCursor = (targetX !== undefined && targetY !== undefined);
 
-                        const dx = e.x - this.x;
-                        const dy = e.y - this.y;
-                        const d2 = dx * dx + dy * dy;
+                    if (grid) {
+                        // SpatialGrid を利用した高速探索
+                        const candidates = grid.queryCircle(this.x, this.y, radius);
+                        for (let i = 0; i < candidates.length; i++) {
+                            const e = candidates[i];
+                            if (!e.active || e.hp <= 0) continue;
 
-                        if (d2 < bestD2) {
-                            bestD2 = d2;
-                            nearest = e;
+                            // ターゲット選定基準
+                            let d2;
+                            if (useCursor) {
+                                // カーソルとの距離で判定
+                                const dx = e.x - targetX;
+                                const dy = e.y - targetY;
+                                d2 = dx * dx + dy * dy;
+                            } else {
+                                // 従来通り弾との距離
+                                const dx = e.x - this.x;
+                                const dy = e.y - this.y;
+                                d2 = dx * dx + dy * dy;
+                            }
+
+                            if (d2 < bestD2) {
+                                bestD2 = d2;
+                                nearest = e;
+                            }
+                        }
+                    } else {
+                        // フォールバック：全件探索
+                        for (let i = 0; i < enemies.length; i++) {
+                            const e = enemies[i];
+                            if (!e || !e.active || e.hp <= 0) continue;
+
+                            // 弾からの距離チェック（全件探索時はまず範囲内か見る）
+                            const distToBulletSq = (e.x - this.x) ** 2 + (e.y - this.y) ** 2;
+                            if (distToBulletSq > radius * radius) continue;
+
+                            let d2;
+                            if (useCursor) {
+                                const dx = e.x - targetX;
+                                const dy = e.y - targetY;
+                                d2 = dx * dx + dy * dy;
+                            } else {
+                                d2 = distToBulletSq;
+                            }
+
+                            if (d2 < bestD2) {
+                                bestD2 = d2;
+                                nearest = e;
+                            }
                         }
                     }
                     this.homingTarget = nearest;
