@@ -1,6 +1,6 @@
 import { CONSTANTS } from './constants.js';
 import { Player } from './Player.js';
-import { Bullet } from './Bullet.js';
+import { Bullet, getStageByLevel, getTintForWeapon } from './Bullet.js';
 import { Enemy } from './Enemy.js';
 import { Gold } from './Gold.js';
 import { DamageText } from './DamageText.js';
@@ -354,7 +354,7 @@ class Game {
         ctx.shadowBlur = 0;
 
         // RANK
-        ctx.font = 'bold 180px "Share Tech Mono", monospace';
+        ctx.font = 'bold 180px "Orbitron", sans-serif';
         let rankColor = '#fff';
         if (result.rank === 'SSS') rankColor = '#ffed00'; // Gold
         else if (result.rank.startsWith('S')) rankColor = '#ffaa00'; // Orange
@@ -395,7 +395,7 @@ class Game {
         ctx.fillStyle = '#ffffff'; // 値は純白にして際立たせる
         ctx.shadowColor = '#00ffff';
         ctx.shadowBlur = 20; // グローを強める
-        ctx.font = 'bold 22px "Share Tech Mono", monospace'; // 数字は見やすく太いフォントに
+        ctx.font = 'bold 22px "Orbitron", sans-serif'; // 数字は見やすく太いフォントに
 
         ctx.fillText(result.kills, cx + 40, startY);
         ctx.fillText(result.gold, cx + 40, startY + lineHeight);
@@ -986,13 +986,51 @@ class Game {
         }
     }
 
+    /**
+     * レーザー（PIERCE）のレベル別チューニングを取得
+     */
+    getLaserTuning(lv) {
+        const t = {
+            widthMul: 1.0,
+            burstFrames: 0,
+            burstDamageMul: 1.0
+        };
+
+        // Lv10-19: 幅 +10%
+        if (lv >= 10) t.widthMul = 1.10;
+
+        // Lv20-29: 貫通減衰なし (現状も無しなので維持)
+
+        // Lv30: 撃ち始め 0.2秒間 高出力
+        if (lv >= 30) {
+            t.burstFrames = 12;      // 0.2秒相当 (60fps想定)
+            t.burstDamageMul = 1.5;  // ダメージ ×1.5
+        }
+
+        return t;
+    }
+
     shoot() {
         if (this.bullets.length >= CONSTANTS.BULLET_LIMIT) return;
         const weaponType = this.player.currentWeapon;
         const stats = this.player.getWeaponStats();
+        const level = this.player.getWeaponLevel();
+        const stage = getStageByLevel(level);
+        const tintColor = getTintForWeapon(weaponType, level);
+
+        // 見た目だけの微差
+        const visualScale = (stage === 1) ? 1.00 : (stage === 2) ? 1.08 : (stage === 3) ? 1.16 : 1.22;
+        const flashFrames = (level >= 30) ? 5 : 0;
+
+        const extraStats = {
+            ...stats,
+            tintColor,
+            visualScale,
+            flashFrames
+        };
 
         if (weaponType === CONSTANTS.WEAPON_TYPES.SHOT) {
-            const count = (this.player.weapons.shot.level >= 30) ? 4 : 3;
+            const count = (level >= 30) ? 4 : 3;
             const spread = stats.shotAngle || 0.2;
             const startAngle = this.player.angle - (spread * (count - 1) / 2);
 
@@ -1000,22 +1038,162 @@ class Game {
                 if (this.bullets.length < CONSTANTS.BULLET_LIMIT) {
                     const b = this.bulletPool.get();
                     const angle = startAngle + spread * i;
-                    b.init(this.player.x, this.player.y, angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, stats);
+                    b.init(this.player.x, this.player.y, angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, extraStats);
                     this.bullets.push(b);
                 }
             }
-        } else if (weaponType === CONSTANTS.WEAPON_TYPES.PIERCE && this.player.weapons.pierce.level >= 30) {
-            // Lv30でレーザーが太くなる
+        } else if (weaponType === CONSTANTS.WEAPON_TYPES.PIERCE) {
+            // レーザーの進化チューニング
+            const tune = this.getLaserTuning(level);
+            const laserExtra = {
+                ...extraStats,
+                bulletWidth: (extraStats.bulletWidth || 1.0) * tune.widthMul,
+                hitWidth: (extraStats.hitWidth || 1.0) * tune.widthMul,
+                burstFrames: tune.burstFrames,
+                burstDamageMul: tune.burstDamageMul
+            };
+
             const b = this.bulletPool.get();
-            b.init(this.player.x, this.player.y, this.player.angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, { ...stats, hitWidthMul: 2.0 });
+            b.init(this.player.x, this.player.y, this.player.angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, laserExtra);
             this.bullets.push(b);
         } else {
             const b = this.bulletPool.get();
-            b.init(this.player.x, this.player.y, this.player.angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, stats);
+            b.init(this.player.x, this.player.y, this.player.angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, extraStats);
             this.bullets.push(b);
         }
 
         this.audio.play('shoot', { variation: 0.1, priority: 'low' });
+    }
+
+    /**
+     * ショットガンのヒット時爆発処理
+     */
+    applyShotgunExplosion(x, y, baseDamage, level) {
+        let radius = 0;
+        let ratio = 0;
+        let maxHits = 0;
+
+        if (level >= 30) {
+            radius = 70;
+            ratio = 1.0;
+            maxHits = 3;
+        } else if (level >= 20) {
+            radius = 60;
+            ratio = 0.5;
+            maxHits = 3;
+        } else if (level >= 10) {
+            radius = 40;
+            ratio = 0.3;
+            maxHits = 2;
+        } else {
+            return;
+        }
+
+        // 視覚エフェクト
+        Effects.createShotgunExplosion(x, y, radius, level >= 30);
+
+        const candidates = this.grid.queryEnemiesNear(x, y, radius);
+        let hitCount = 0;
+
+        const globalMarkActive = this.globalMarkTimer > 0;
+
+        for (const enemy of candidates) {
+            if (!enemy.active || enemy.hp <= 0) continue;
+            if (hitCount >= maxHits) break;
+
+            const dx = enemy.x - x;
+            const dy = enemy.y - y;
+            const distSq = dx * dx + dy * dy;
+
+            if (distSq <= radius * radius) {
+                const damage = baseDamage * ratio;
+                enemy.takeDamage(damage, {
+                    globalBuffActive: globalMarkActive,
+                    isAuraProtected: enemy.isShielded
+                });
+
+                if (enemy.hp <= 0) {
+                    enemy.destroy('explosion', this);
+                }
+                hitCount++;
+            }
+        }
+    }
+
+    /**
+     * 近くの敵を探索（跳弾用）
+     */
+    findNearestEnemy(excludeSet, x, y, radius) {
+        const candidates = this.grid.queryEnemiesNear(x, y, radius);
+        let best = null;
+        let bestDistSq = radius * radius;
+
+        for (const e of candidates) {
+            if (!e.active || e.hp <= 0) continue;
+            if (excludeSet.has(e)) continue;
+
+            const dx = e.x - x;
+            const dy = e.y - y;
+            const distSq = dx * dx + dy * dy;
+
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                best = e;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * 跳弾弾の生成
+     */
+    spawnRicochetBullet(fromX, fromY, targetEnemy, damage, speed, ricochetCount, ricochetExcludes, weaponType, baseExtra) {
+        const dx = targetEnemy.x - fromX;
+        const dy = targetEnemy.y - fromY;
+        const angle = Math.atan2(dy, dx);
+
+        const b = this.bulletPool.get();
+
+        // 跳弾用の見た目調整（わずかに発光を強める）
+        const extra = {
+            ...baseExtra,
+            ricochetCount: ricochetCount - 1,
+            ricochetExcludes: new Set(ricochetExcludes),
+            isRicochet: true,
+            isRicochetInitiated: true
+        };
+        extra.ricochetExcludes.add(targetEnemy);
+
+        // 跳弾は見た目を少しだけ強調（発光強化のためflashFramesを1にするなど）
+        extra.flashFrames = 2;
+
+        // 跳弾はわずかに彩度/輝度を上げる演出
+        if (extra.tintColor) {
+            // 色味を少し明るく（簡易的にalphaを上げるなどで代用可能な構造か確認が必要だが、一旦そのまま）
+        }
+
+        b.init(fromX, fromY, angle, speed, damage, 0, CONSTANTS.BULLET_LIFETIME_MS, weaponType, extra);
+        this.bullets.push(b);
+
+        // 跳弾発生時の軌跡エフェクト（始点から終点へ向かって短い火花 + 一瞬の線）
+        Effects.list.push({
+            type: 'line',
+            x: fromX, y: fromY,
+            tx: targetEnemy.x, ty: targetEnemy.y,
+            life: 0.15, maxLife: 0.15,
+            color: extra.tintColor || 'rgba(255, 255, 255, 0.5)',
+            width: 2,
+            composite: 'lighter'
+        });
+
+        for (let i = 0; i < 3; i++) {
+            const ratio = i / 3;
+            // ターゲット方向へ少し火花を飛ばす
+            const px = fromX + (targetEnemy.x - fromX) * ratio * 0.2;
+            const py = fromY + (targetEnemy.y - fromY) * ratio * 0.2;
+            Effects.createSpark(px, py, extra.tintColor || '#fff');
+        }
+        Effects.createRing(fromX, fromY, extra.tintColor || '#fff');
     }
 
     spawnDamageText(x, y, text, color) {
@@ -1105,13 +1283,24 @@ class Game {
         this.bullets.forEach(b => b.update());
         Profiler.end('bullet_update');
 
+        const activeEnemies = this.enemies.filter(e => e.active);
+        const activeCount = activeEnemies.length;
+        const totalRemaining = activeCount + this.enemiesRemaining;
+
+        // 全てのスポーンが終了し、かつ画面上に EVASIVE しかいないかチェック
+        const onlyEvasiveLeft = this.enemiesRemaining <= 0 &&
+            activeCount > 0 &&
+            activeEnemies.every(e => e.type === CONSTANTS.ENEMY_TYPES.EVASIVE);
+
         Profiler.start('enemy_update');
         this.enemies.forEach(e => {
             if (e.active) {
                 e.update(this.player.x, this.player.y, this.player.angle, dt, {
                     globalGuardBuffActive,
                     globalMarkActive,
-                    isFrozen: this.freezeTimer > 0
+                    isFrozen: this.freezeTimer > 0,
+                    totalRemaining: totalRemaining,
+                    onlyEvasiveLeft: onlyEvasiveLeft
                 });
                 if (e.didMark) {
                     this.globalMarkTimer = Math.max(this.globalMarkTimer, CONSTANTS.OBSERVER.globalBuffDurationMs);
@@ -1204,6 +1393,7 @@ class Game {
             const candidates = this.grid.queryEnemiesNear(b.x, b.y);
 
             for (let j = 0; j < candidates.length; j++) {
+                if (!b.active) break;
                 const e = candidates[j];
                 if (!e.active || b.hitEnemies.has(e)) continue;
 
@@ -1223,6 +1413,11 @@ class Game {
                 if (distSq < minDist * minDist) {
                     const affinityMul = CONSTANTS.AFFINITY_DAMAGE_MATRIX[b.weaponType][e.affinity] || 1.0;
                     let damage = b.damage * affinityMul;
+
+                    // LASER Lv30 バースト補正
+                    if (b.weaponType === CONSTANTS.WEAPON_TYPES.PIERCE && b.burstFrames > 0) {
+                        damage *= b.burstDamageMul;
+                    }
 
                     // キャッシュされたシールド状態を参照 (some を排除)
                     // options.isAuraProtected は Shielder のオーラのみを指すように修正
@@ -1244,9 +1439,56 @@ class Game {
                     const knockMulBase = CONSTANTS.AFFINITY_KNOCK_MATRIX[b.weaponType][e.affinity] || 1.0;
                     let knockPower = CONSTANTS.ENEMY_KNOCKBACK_POWER * weaponConfig.knockMul * knockMulBase;
 
-                    if (b.weaponType === CONSTANTS.WEAPON_TYPES.SHOT && this.player.weapons.shot.level > 10) {
-                        const stats = this.player.getWeaponStats();
-                        knockPower *= (stats.knockMul || 1.0);
+                    if (b.weaponType === CONSTANTS.WEAPON_TYPES.STANDARD) {
+                        const rifleLevel = this.player.weapons.standard.level;
+                        if (rifleLevel >= 10) {
+                            // 跳弾情報の初期化（1ヒット目）
+                            if (!b.isRicochetInitiated) {
+                                let limit = (rifleLevel >= 20) ? 2 : 1;
+                                b.ricochetCount = limit;
+                                b.isRicochetInitiated = true;
+                            }
+
+                            // 今回当たった敵を確実に「次の跳弾ターゲット」から除外する
+                            b.ricochetExcludes.add(e);
+
+                            if (b.ricochetCount > 0) {
+                                const nextTarget = this.findNearestEnemy(b.ricochetExcludes, b.x, b.y, 220);
+                                if (nextTarget) {
+                                    const ricochetLimit = (rifleLevel >= 30) ? 2 : (rifleLevel >= 20 ? 2 : 1);
+                                    const bounceIndex = ricochetLimit - b.ricochetCount + 1;
+                                    let ratio = 1.0;
+                                    if (rifleLevel < 30) {
+                                        ratio = (bounceIndex === 1) ? 0.8 : 0.7;
+                                    }
+
+                                    const stats = this.player.getWeaponStats();
+                                    const tintColor = getTintForWeapon(b.weaponType, rifleLevel);
+
+                                    this.spawnRicochetBullet(
+                                        b.x, b.y, nextTarget,
+                                        b.damage * ratio, stats.speed,
+                                        b.ricochetCount, b.ricochetExcludes,
+                                        b.weaponType,
+                                        { ...stats, tintColor, visualScale: b.visualScale }
+                                    );
+                                }
+                                // この弾インスタンスからの跳弾発生は1回のみとする（連鎖は次弾が担当）
+                                b.ricochetCount = 0;
+                                // ユーザーの要望により、跳弾発生（ヒット）した元の弾は消去する
+                                b.active = false;
+                            }
+                        }
+                    }
+
+                    if (b.weaponType === CONSTANTS.WEAPON_TYPES.SHOT) {
+                        const shotgunLevel = this.player.weapons.shot.level;
+                        if (shotgunLevel >= 10) {
+                            this.applyShotgunExplosion(b.x, b.y, b.damage, shotgunLevel);
+
+                            const stats = this.player.getWeaponStats();
+                            knockPower *= (stats.knockMul || 1.0);
+                        }
                     } else if (b.weaponType === CONSTANTS.WEAPON_TYPES.PIERCE && this.player.weapons.pierce.level > 25) {
                         knockPower = 1.0;
                     }
@@ -1275,7 +1517,12 @@ class Game {
             const dx = this.player.x - e.renderX;
             const dy = this.player.y - e.renderY;
             const distSq = dx * dx + dy * dy;
-            const size = e.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+            let size = CONSTANTS.ENEMY_SIZE;
+            if (e.isBoss) {
+                size = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL;
+            } else if (e.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                size = CONSTANTS.ENEMY_SIZE * CONSTANTS.ELITE_SIZE_MUL;
+            }
             const minDist = CONSTANTS.PLAYER_SIZE + size;
 
             Profiler.counts.enemyBarrierChecks++;
@@ -1283,7 +1530,7 @@ class Game {
                 if (now - e.lastContactTime > CONSTANTS.ENEMY_CONTACT_COOLDOWN_MS) {
                     this.player.takeDamage(CONSTANTS.ENEMY_DAMAGE_RATIO);
                     this.audio.play('damage', { priority: 'high' });
-                    this.spawnDamageText(this.player.x, this.player.y, '!', '#ff0000');
+                    // this.spawnDamageText(this.player.x, this.player.y, '!', '#ff0000');
                     e.lastContactTime = now;
                 }
             }
@@ -1303,7 +1550,7 @@ class Game {
                     this.player.barrierCharges--;
                     this.player.barrierKillConsumedThisFrame = true;
                     this.audio.play('barrier_hit', { variation: 0.1 });
-                    this.spawnDamageText(e.renderX, e.renderY, "PURIFY", "#ffffff");
+                    // this.spawnDamageText(e.renderX, e.renderY, "PURIFY", "#ffffff");
                     e.destroy('barrier', this);
                 } else {
                     if (Math.random() < 0.1) {
@@ -1604,7 +1851,7 @@ class Game {
 
                 e.applyKnockback(vx, vy, knockPower);
                 e.pulseOutlineTimer = vfx.OUTLINE_MS;
-                this.spawnDamageText(e.renderX, e.renderY, "PUSH!", "#ff8800");
+                // this.spawnDamageText(e.renderX, e.renderY, "PUSH!", "#ff8800");
             }
         });
     }
@@ -1621,17 +1868,23 @@ class Game {
             const config = CONSTANTS.WEAPON_CONFIG[type];
             const lvSpan = btn.querySelector('.up-slot-lv');
             const costSpan = btn.querySelector('.up-slot-cost');
+
             btn.classList.toggle('active', this.player.currentWeapon === type);
 
             if (!data.unlocked) {
                 lvSpan.textContent = 'LOCK';
-                costSpan.textContent = `${config.unlockCost} G`;
+                costSpan.textContent = config.unlockCost;
                 btn.classList.toggle('disabled', this.goldCount < config.unlockCost);
+                btn.classList.remove('max');
             } else {
                 const cost = this.getUpgradeCost(CONSTANTS.UPGRADE_WEAPON_BASE, data.level);
-                lvSpan.textContent = `Lv.${data.level}`;
-                costSpan.textContent = data.level < CONSTANTS.UPGRADE_LV_MAX ? `${cost} G` : 'MAX';
-                btn.classList.toggle('disabled', this.goldCount < cost && data.level < CONSTANTS.UPGRADE_LV_MAX);
+                const isMax = data.level >= CONSTANTS.UPGRADE_LV_MAX;
+
+                lvSpan.textContent = isMax ? '∞' : data.level;
+                costSpan.textContent = isMax ? '' : cost;
+
+                btn.classList.toggle('disabled', !isMax && this.goldCount < cost);
+                btn.classList.toggle('max', isMax);
             }
         });
 
@@ -1640,20 +1893,31 @@ class Game {
 
     updateUpgradeUI() {
         const cur = this.player.weapons[this.player.currentWeapon];
-        const weaponCost = this.getUpgradeCost(CONSTANTS.UPGRADE_WEAPON_BASE, cur.level);
         const spdCost = this.getUpgradeCost(CONSTANTS.UPGRADE_ATK_SPEED_BASE, cur.atkSpeedLv);
+        const isSpdMax = cur.atkSpeedLv >= CONSTANTS.UPGRADE_LV_MAX;
 
-        document.getElementById('speed-up-lv').textContent = cur.atkSpeedLv < CONSTANTS.UPGRADE_LV_MAX ? `Lv.${cur.atkSpeedLv}` : 'MAX';
-        document.getElementById('cost-speed').textContent = cur.atkSpeedLv < CONSTANTS.UPGRADE_LV_MAX ? `${spdCost} G` : 'MAX';
-        document.getElementById('btn-up-speed').classList.toggle('disabled', this.goldCount < spdCost || cur.atkSpeedLv >= CONSTANTS.UPGRADE_LV_MAX);
+        const spdLvSpan = document.getElementById('speed-up-lv');
+        const spdCostSpan = document.getElementById('cost-speed');
+        const btnSpd = document.getElementById('btn-up-speed');
+
+        spdLvSpan.textContent = isSpdMax ? '∞' : cur.atkSpeedLv;
+        spdCostSpan.textContent = isSpdMax ? '' : spdCost;
+
+        btnSpd.classList.toggle('disabled', !isSpdMax && (this.goldCount < spdCost));
+        btnSpd.classList.toggle('max', isSpdMax);
 
         // パルスUI更新
         const btnPulse = document.getElementById('btn-pulse');
         if (btnPulse) {
-            btnPulse.classList.toggle('disabled', this.pulseCooldownTimer > 0);
+            const isReady = this.pulseCooldownTimer <= 0;
+            btnPulse.classList.toggle('disabled', false); // disabled属性制御は止め、見た目のクラスで制御
+            btnPulse.classList.toggle('ready', isReady);
+            btnPulse.classList.toggle('charging', !isReady);
+
             const fill = document.getElementById('pulse-cd-fill');
-            const percent = (this.pulseCooldownTimer / CONSTANTS.PULSE_COOLDOWN_MS) * 100;
-            fill.style.width = Math.max(0, percent) + '%';
+            const ratio = this.pulseCooldownTimer / CONSTANTS.PULSE_COOLDOWN_MS;
+            const percent = (1 - Math.max(0, Math.min(1, ratio))) * 100;
+            fill.style.width = percent + '%';
         }
 
         this.updateDebugHUD();
@@ -1744,7 +2008,12 @@ class Game {
         this.ctx.strokeRect(0, 0, CONSTANTS.TARGET_WIDTH, CONSTANTS.TARGET_HEIGHT);
 
         Profiler.start('render');
-        this.bullets.forEach(b => b.draw(this.ctx));
+        const bAssets = {
+            [CONSTANTS.WEAPON_TYPES.STANDARD]: this.assetLoader.get('BULLET_RIFLE'),
+            [CONSTANTS.WEAPON_TYPES.SHOT]: this.assetLoader.get('BULLET_SHOT'),
+            [CONSTANTS.WEAPON_TYPES.PIERCE]: this.assetLoader.get('BULLET_LASER')
+        };
+        this.bullets.forEach(b => b.draw(this.ctx, bAssets[b.weaponType]));
         this.enemies.forEach(e => e.draw(this.ctx));
         if (this.itemManager) this.itemManager.draw(this.ctx);
         const goldAsset = this.assetLoader.get('GOLD');

@@ -329,8 +329,8 @@ export class Enemy {
         if (Math.abs(this.knockVY) < 0.05) this.knockVY = 0;
 
         // タイプ別の特殊挙動と描画座標の決定
-        if (this.type === CONSTANTS.ENEMY_TYPES.ZIGZAG) {
-            // Type B: ジグザグ
+        if (this.type === CONSTANTS.ENEMY_TYPES.ZIGZAG || this.type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) {
+            // Type B or Splitter Child: ジグザグ
             const elapsed = now - this.spawnTime;
             const offset = Math.sin(elapsed * CONSTANTS.ZIGZAG_FREQ) * CONSTANTS.ZIGZAG_AMP;
 
@@ -356,7 +356,23 @@ export class Enemy {
             this.renderY = this.y + oy;
         } else if (this.type === CONSTANTS.ENEMY_TYPES.EVASIVE) {
             // Type C: 回避
-            if (this.evasionTimer <= 0) {
+            const totalRemaining = options.totalRemaining || 999;
+            const onlyEvasiveLeft = options.onlyEvasiveLeft || false;
+            const isLastStand = totalRemaining <= 2 || onlyEvasiveLeft;
+
+            if (isLastStand) {
+                this.isEvading = false;
+                this.evadeTime = 0;
+                this.evasionTimer = 0; // クールダウンもリセット
+
+                // 強制的にプレイヤーへ向ける
+                const dx = playerX - this.x;
+                const dy = playerY - this.y;
+                const targetAngle = Math.atan2(dy, dx);
+                this.vx = Math.cos(targetAngle) * this.currentSpeed;
+                this.vy = Math.sin(targetAngle) * this.currentSpeed;
+                this.baseAngle = targetAngle;
+            } else if (this.evasionTimer <= 0) {
                 const evadeThreshold = 80;
                 const playerToEnemyX = this.x - playerX;
                 const playerToEnemyY = this.y - playerY;
@@ -519,7 +535,12 @@ export class Enemy {
 
         if (asset) {
             // アセットがある場合：スプライト描画
-            const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL * 2.5 : CONSTANTS.ENEMY_SIZE * 2.5;
+            let size = CONSTANTS.ENEMY_SIZE * 2.5;
+            if (this.isBoss) {
+                size = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL * 2.5;
+            } else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                size = CONSTANTS.ENEMY_SIZE * CONSTANTS.ELITE_SIZE_MUL * 2.5;
+            }
             ctx.drawImage(asset, -size / 2, -size / 2, size, size);
 
             // パルス時のアウトライン (画像の場合は矩形枠を表示)
@@ -864,11 +885,19 @@ export class Enemy {
         // SPLITTER の分裂処理 (バリア即死時は分裂しない)
         if (reason !== 'barrier' && this.type === CONSTANTS.ENEMY_TYPES.SPLITTER && this.generation === 0) {
             const stageData = CONSTANTS.STAGE_DATA[game.currentStage];
+
+            // 進行方向に対して垂直なベクトルを計算 (出現位置を横にずらす)
+            const perpAngle = Math.atan2(this.vy, this.vx) + Math.PI / 2;
+            const sideDist = 20;
+
             for (let k = 0; k < CONSTANTS.SPLITTER.splitCount; k++) {
                 const child = game.enemyPool.get();
                 if (child) {
-                    const ox = (Math.random() - 0.5) * 20;
-                    const oy = (Math.random() - 0.5) * 20;
+                    // 1体目は左、2体目は右（あるいはその逆）にオフセット
+                    const side = (k % 2 === 0) ? 1 : -1;
+                    const ox = Math.cos(perpAngle) * sideDist * side;
+                    const oy = Math.sin(perpAngle) * sideDist * side;
+
                     child.init(this.x + ox, this.y + oy, game.player.x, game.player.y,
                         CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD,
                         stageData.hpMul, stageData.speedMul, this.affinity);

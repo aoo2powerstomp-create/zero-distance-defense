@@ -149,6 +149,51 @@ export class Effects {
         });
     }
 
+    static createSpark(x, y, color) {
+        this.list.push({
+            type: 'spark',
+            x, y,
+            radius: 12,
+            life: 0.15,
+            maxLife: 0.15,
+            color: color || '#fff',
+            lines: 4,
+            angle: Math.random() * Math.PI
+        });
+    }
+
+    /**
+     * ショットガン用の軽量爆発エフェクト
+     */
+    static createShotgunExplosion(x, y, radius, isLv30 = false) {
+        // メインの衝撃波リング (不透明度を下げて目に優しく調整)
+        this.list.push({
+            type: 'ring',
+            x, y,
+            radius: 5,
+            targetRadius: radius,
+            life: 0.2,
+            maxLife: 0.2,
+            color: isLv30 ? 'rgba(0, 255, 255, 0.4)' : 'rgba(180, 240, 255, 0.3)',
+            composite: 'lighter'
+        });
+
+        // LV30用の追加閃光 (不透明度を下げて目に優しく調整)
+        if (isLv30) {
+            this.list.push({
+                type: 'circle',
+                x, y,
+                radius: radius * 0.5,
+                life: 0.1,
+                maxLife: 0.1,
+                color: 'rgba(255, 255, 255, 0.25)',
+                scale: 1.0,
+                grow: 2.0,
+                composite: 'lighter'
+            });
+        }
+    }
+
     static update(dt) {
         for (let i = this.list.length - 1; i >= 0; i--) {
             const e = this.list[i];
@@ -181,6 +226,12 @@ export class Effects {
             ctx.fillStyle = e.color;
             ctx.lineWidth = 2;
 
+            if (e.composite) {
+                ctx.globalCompositeOperation = e.composite;
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+            }
+
             if (e.type === 'circle') {
                 ctx.beginPath();
                 ctx.arc(e.x, e.y, e.radius * e.scale, 0, Math.PI * 2);
@@ -201,8 +252,15 @@ export class Effects {
                 ctx.stroke();
             } else if (e.type === 'particle') {
                 ctx.fillRect(e.x - e.size / 2, e.y - e.size / 2, e.size, e.size);
+            } else if (e.type === 'line') {
+                ctx.lineWidth = e.width || 2;
+                ctx.beginPath();
+                ctx.moveTo(e.x, e.y);
+                ctx.lineTo(e.tx, e.ty);
+                ctx.stroke();
             }
         }
+        ctx.globalCompositeOperation = 'source-over'; // 念のため戻す
         ctx.restore();
     }
 }

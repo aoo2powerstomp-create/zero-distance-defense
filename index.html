@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Syncopate:wght@400;700&family=Megrim&family=Audiowide&family=Inter:wght@400;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Syncopate:wght@400;700&family=Audiowide&family=Inter:wght@400;700&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -44,33 +44,32 @@
 
         <div id="controls">
             <div class="controls-row">
-                <div class="gold-display">GOLD: <span id="gold-count">0</span></div>
+                <div class="gold-display"><span id="gold-count">0</span></div>
             </div>
             <div class="upgrade-group">
                 <div id="weapon-upgrade-slots">
                     <button class="weapon-up-btn" data-up-weapon="standard">
-                        <span class="up-slot-name">RIFLE</span>
-                        <span class="up-slot-lv">Lv.1</span>
-                        <span class="up-slot-cost">0 G</span>
+                        <img src="assets/ui/ui_icon_rifle.png" class="up-slot-icon" alt="RIFLE">
+                        <span class="up-slot-lv">1</span>
+                        <span class="up-slot-cost">0</span>
                     </button>
                     <button class="weapon-up-btn" data-up-weapon="shot">
-                        <span class="up-slot-name">SHOTGUN</span>
+                        <img src="assets/ui/ui_icon_shotgun.png" class="up-slot-icon" alt="SHOTGUN">
                         <span class="up-slot-lv">LOCK</span>
-                        <span class="up-slot-cost">500 G</span>
+                        <span class="up-slot-cost">500</span>
                     </button>
                     <button class="weapon-up-btn" data-up-weapon="pierce">
-                        <span class="up-slot-name">LASER</span>
+                        <img src="assets/ui/ui_icon_laser.png" class="up-slot-icon" alt="LASER">
                         <span class="up-slot-lv">LOCK</span>
-                        <span class="up-slot-cost">1000 G</span>
+                        <span class="up-slot-cost">1000</span>
                     </button>
                     <button id="btn-up-speed" class="upgrade-btn">
-                        <span class="up-slot-name">SPEED</span>
-                        <span id="speed-up-lv" class="up-slot-lv">Lv.1</span>
-                        <span id="cost-speed" class="up-slot-cost">80 G</span>
+                        <img src="assets/ui/ui_icon_speed.png" class="up-slot-icon" alt="SPEED">
+                        <span id="speed-up-lv" class="up-slot-lv">1</span>
+                        <span id="cost-speed" class="up-slot-cost">80</span>
                     </button>
-                    <!-- スキルボタン -->
                     <button id="btn-pulse" class="skill-btn">
-                        <span class="skill-name">PULSE</span>
+                        <img src="assets/ui/ui_icon_pulse.png" class="up-slot-icon" alt="PULSE">
                         <div class="skill-cd-bar">
                             <div id="pulse-cd-fill"></div>
                         </div>

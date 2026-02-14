@@ -32,6 +32,9 @@ export class Player {
         // レアアイテム効果用ステート
         this.overdriveUntilMs = 0;
         this.invincibleUntilMs = 0;
+
+        // 演出用
+        this.damageFlashTimer = 0;
     }
 
     getWeaponConfig() {
@@ -77,9 +80,7 @@ export class Player {
             // LASER Lv11-30 でさらに微増
             if (level > 10) pierce += Math.floor((level - 10) / 5);
         } else if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.STANDARD) {
-            pierce = config.pierceBase + Math.floor(level / 3);
-            // RIFLE (STANDARD) Lv11-15 で貫通 +1
-            if (level >= 15) pierce += growth.PIERCE_EXTRA;
+            pierce = 0; // 跳弾実装に伴い、貫通性能を廃止
         } else if (this.currentWeapon === CONSTANTS.WEAPON_TYPES.SHOT) {
             // SHOTGUN は貫通を抑える (Lv30で3回程度)
             pierce = config.pierceBase + Math.floor(level / 10);
@@ -166,9 +167,16 @@ export class Player {
         if (this.game) {
             this.game.recordDamage();
         }
+
+        // 被弾フラッシュ (300ms)
+        this.damageFlashTimer = 300;
     }
 
     update(dt) {
+        if (this.damageFlashTimer > 0) {
+            this.damageFlashTimer = Math.max(0, this.damageFlashTimer - dt);
+        }
+
         // ターゲット角度の取得 (Math.atan2 は -PI..PI)
         const targetAngle = Math.atan2(this.targetY - this.y, this.targetX - this.x);
 
@@ -239,6 +247,35 @@ export class Player {
 
             // 中心を回転軸にして描画
             ctx.drawImage(asset, -drawW / 2, -drawH / 2 + yOffset, drawW, drawH);
+
+            // 被弾フラッシュ演出
+            if (this.damageFlashTimer > 0) {
+                // オフスクリーンキャンバスを使用して透過部分に影響を与えないように着色する
+                if (!this.tintCanvas) {
+                    this.tintCanvas = document.createElement('canvas');
+                    this.tintCtx = this.tintCanvas.getContext('2d');
+                }
+
+                // サイズが変更された場合や初回
+                if (this.tintCanvas.width !== asset.width || this.tintCanvas.height !== asset.height) {
+                    this.tintCanvas.width = asset.width;
+                    this.tintCanvas.height = asset.height;
+                }
+
+                // オフスクリーンに着色済みのイメージを作成
+                const tCtx = this.tintCtx;
+                tCtx.clearRect(0, 0, this.tintCanvas.width, this.tintCanvas.height);
+                tCtx.drawImage(asset, 0, 0);
+
+                tCtx.globalCompositeOperation = 'source-atop';
+                const alpha = Math.min(0.8, (this.damageFlashTimer / 300) * 1.0);
+                tCtx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                tCtx.fillRect(0, 0, this.tintCanvas.width, this.tintCanvas.height);
+                tCtx.globalCompositeOperation = 'source-over';
+
+                // メインキャンバスに重ねる
+                ctx.drawImage(this.tintCanvas, -drawW / 2, -drawH / 2 + yOffset, drawW, drawH);
+            }
         } else {
             // 自機 (円と向きを示す線) - フォールバック
             ctx.beginPath();
@@ -265,6 +302,75 @@ export class Player {
         }
 
         ctx.restore();
+        this.drawBuffHUD(ctx);
+    }
+
+    drawBuffHUD(ctx) {
+        const buffs = [];
+        const now = Date.now();
+
+        // 1. OVERDRIVE
+        if (this.overdriveUntilMs > now) {
+            const total = CONSTANTS.ITEM_DEFS.overdrive.durationMs;
+            const remaining = this.overdriveUntilMs - now;
+            buffs.push({
+                label: '攻撃力UP',
+                color: '#ff0055',
+                ratio: Math.min(1.0, remaining / total)
+            });
+        }
+
+        // 2. INVINCIBLE
+        if (this.invincibleUntilMs > now) {
+            const total = CONSTANTS.ITEM_DEFS.invincible.durationMs;
+            const remaining = this.invincibleUntilMs - now;
+            buffs.push({
+                label: '無敵',
+                color: '#ffd700',
+                ratio: Math.min(1.0, remaining / total)
+            });
+        }
+
+        // 3. FREEZE
+        if (this.game && this.game.freezeTimer > 0) {
+            const total = CONSTANTS.ITEM_CONFIG.freezeDurationMs;
+            const remaining = this.game.freezeTimer;
+            buffs.push({
+                label: '速度低下',
+                color: '#00ccff',
+                ratio: Math.min(1.0, remaining / total)
+            });
+        }
+
+        if (buffs.length === 0) return;
+
+        ctx.save();
+        ctx.translate(this.x, this.y);
+
+        const barW = 60;
+        const barH = 4;
+        const spacing = 14;
+        let yOffset = -CONSTANTS.PLAYER_SIZE * 3.5;
+
+        buffs.forEach(buff => {
+            // Text
+            ctx.font = 'bold 10px Orbitron, sans-serif';
+            ctx.fillStyle = buff.color;
+            ctx.textAlign = 'center';
+            ctx.fillText(buff.label, 0, yOffset);
+
+            // Bar
+            const bx = -barW / 2;
+            const by = yOffset + 4;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(bx, by, barW, barH);
+            ctx.fillStyle = buff.color;
+            ctx.fillRect(bx, by, barW * buff.ratio, barH);
+
+            yOffset -= spacing;
+        });
+
+        ctx.restore();
     }
 
     drawBarrier(ctx) {
@@ -273,7 +379,10 @@ export class Player {
 
         // HP連動カラー (1.0: Cyan, 0.5: Purple, 0.25: Red)
         let r, g, b;
-        if (hpRatio > 0.5) {
+        if (this.damageFlashTimer > 0) {
+            // 被弾時は強制的に明るい赤
+            r = 255; g = 50; b = 50;
+        } else if (hpRatio > 0.5) {
             // Cyan (0, 255, 255) to Purple (180, 0, 255)
             const t = (hpRatio - 0.5) * 2; // 0 to 1
             r = Math.floor(180 * (1 - t) + 0 * t);

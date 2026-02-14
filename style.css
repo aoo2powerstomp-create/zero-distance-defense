@@ -64,8 +64,8 @@ body {
 
 #stage-info,
 #wave-info {
-    font-family: 'Syncopate', 'Orbitron', sans-serif;
-    font-weight: bold;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
     font-size: 1.1rem;
     color: #00ffff;
     text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
@@ -101,12 +101,29 @@ body {
 
 .gold-display {
     font-family: 'Audiowide', sans-serif;
-    font-size: 1.2rem;
-    color: #ffd700;
+    font-size: 1.1rem;
+    /* 1.4rem -> 1.1rem */
+    color: #ffcc00;
+    /* 少し彩度を落とした金 */
     font-weight: bold;
     white-space: nowrap;
-    text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
-    letter-spacing: 1px;
+    text-shadow: 0 0 10px rgba(255, 204, 0, 0.3);
+    letter-spacing: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.gold-display::before {
+    content: '';
+    display: inline-block;
+    width: 16px;
+    /* 20px -> 16px */
+    height: 16px;
+    /* 20px -> 16px */
+    background: url('assets/item/item_coin.png') no-repeat center center;
+    background-size: contain;
+    filter: drop-shadow(0 0 5px rgba(255, 215, 0, 0.5));
 }
 
 .controls-row {
@@ -128,112 +145,169 @@ body {
 }
 
 .weapon-up-btn,
-.upgrade-btn {
+.upgrade-btn,
+.skill-btn {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 6px 2px;
-    background: #111;
+    padding: 0;
+    background: #050505;
     color: #fff;
-    border: 1px solid #444;
+    border: 1px solid #333;
     border-radius: 8px;
     cursor: pointer;
-    transition: all 0.2s;
-    min-height: 58px;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    aspect-ratio: 1 / 1;
+    position: relative;
+    overflow: hidden;
+    min-height: auto;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
 }
 
-.weapon-up-btn .up-slot-name,
-.upgrade-btn .up-slot-name {
+.up-slot-icon {
+    width: 70%;
+    height: 70%;
+    object-fit: contain;
+    opacity: 0.8;
+    filter: drop-shadow(0 0 5px rgba(0, 255, 255, 0.2));
+    transition: all 0.2s;
+}
+
+.up-slot-lv {
+    position: absolute;
+    top: 4px;
+    right: 6px;
     font-size: 0.7rem;
     font-weight: 900;
-    color: #00ffff;
-    letter-spacing: 0.5px;
-    margin-bottom: 2px;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 0 5px #000;
+    pointer-events: none;
 }
 
-.weapon-up-btn .up-slot-lv,
-.upgrade-btn .up-slot-lv {
-    font-size: 0.7rem;
-    color: #fff;
-    margin-bottom: 2px;
-}
-
-.weapon-up-btn .up-slot-cost,
-.upgrade-btn .up-slot-cost {
-    font-size: 0.7rem;
-    color: #ffd700;
-    font-weight: bold;
+.up-slot-cost {
+    position: absolute;
+    bottom: 6px;
+    left: 8px;
+    font-size: 0.75rem;
+    color: #BFF7FF;
+    /* シアン寄りの白 */
+    font-weight: 900;
+    text-shadow: 0 0 5px #000;
+    pointer-events: none;
+    font-family: 'Audiowide', sans-serif;
+    opacity: 0.9;
 }
 
 .weapon-up-btn:active,
-.upgrade-btn:active {
-    background: #333;
+.upgrade-btn:active,
+.skill-btn:active {
+    background: #111;
+    transform: scale(0.95);
 }
 
+/* 通常 (買える) - シアン発光 */
+.weapon-up-btn,
+.upgrade-btn {
+    border-color: rgba(0, 255, 255, 0.3);
+    box-shadow: inset 0 0 10px rgba(0, 255, 255, 0.05);
+}
+
+/* 買える場合の発光 */
+.weapon-up-btn:not(.disabled),
+.upgrade-btn:not(.disabled) {
+    border-color: rgba(0, 255, 255, 0.5);
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
+}
+
+/* 選択中 / 購入直後 */
 .weapon-up-btn.active,
 .upgrade-btn.active {
-    border: 2px solid #00ffff;
-    background: rgba(0, 255, 255, 0.15);
-    box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+    border: 2px solid #00ffff !important;
+    background: rgba(0, 255, 255, 0.1);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.4), inset 0 0 15px rgba(0, 255, 255, 0.2) !important;
 }
 
+/* 買えない / 暗転 */
 .weapon-up-btn.disabled,
 .upgrade-btn.disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: default;
-    filter: grayscale(0.5);
-    border-color: #333;
+    filter: grayscale(0.8) brightness(0.4);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: none;
 }
 
-/* 繧ｹ繧ｭ繝ｫ繝懊ち繝ｳ */
+.weapon-up-btn.disabled .up-slot-cost,
+.upgrade-btn.disabled .up-slot-cost {
+    color: rgba(181, 194, 196, 0.5);
+    /* 暗いシアン白 */
+    text-shadow: none;
+}
+
+/* MAX - 紫/白発光 */
+.weapon-up-btn.max,
+.upgrade-btn.max {
+    border-color: #ff00ff !important;
+    background: rgba(255, 0, 255, 0.05);
+    box-shadow: 0 0 15px rgba(255, 0, 255, 0.3), inset 0 0 10px rgba(255, 0, 255, 0.1);
+}
+
+/* パルスボタン (スキル) */
 .skill-btn {
-    flex: 0.8;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 6px 2px;
-    background: #200;
-    color: #fff;
-    border: 1px solid #f00;
-    border-radius: 8px;
-    cursor: pointer;
-    min-height: 58px;
-    position: relative;
-    overflow: hidden;
+    border-color: rgba(0, 255, 255, 0.3);
+    background: #050505;
 }
 
-.skill-btn .skill-name {
-    font-size: 0.7rem;
-    font-weight: 900;
-    color: #ff4444;
-    margin-bottom: 4px;
+.skill-btn.charging {
+    border-color: rgba(0, 255, 255, 0.3);
+    filter: brightness(0.6);
+}
+
+.skill-btn.ready {
+    border-color: #ffffff;
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.4), inset 0 0 10px rgba(255, 255, 255, 0.2);
+    animation: readyPulse 2s infinite alternate;
+}
+
+@keyframes readyPulse {
+    from {
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+        border-color: #00ffff;
+    }
+
+    to {
+        box-shadow: 0 0 25px rgba(255, 255, 255, 0.6);
+        border-color: #ffffff;
+    }
 }
 
 .skill-cd-bar {
-    width: 80%;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
     height: 4px;
-    background: #400;
-    border-radius: 2px;
+    background: rgba(0, 255, 255, 0.1);
 }
 
 #pulse-cd-fill {
     width: 0%;
     height: 100%;
-    background: #ff0000;
+    background: #00ffff;
+    box-shadow: 0 0 10px #00ffff;
     transition: width 0.1s linear;
 }
 
-.skill-btn:active {
-    background: #400;
+.skill-btn.ready #pulse-cd-fill {
+    background: #ffffff;
+    box-shadow: 0 0 15px #ffffff;
 }
 
 .skill-btn.disabled {
     opacity: 0.5;
-    filter: grayscale(1);
-    cursor: default;
+    filter: grayscale(0.8) brightness(0.3);
 }
 
 /* 蜈ｱ騾壹が繝ｼ繝舌・繝ｬ繧､蝓ｺ逶､ */
@@ -462,7 +536,7 @@ body {
 }
 
 #countdown-text {
-    font-family: 'Megrim', cursive;
+    font-family: 'Orbitron', sans-serif;
     font-size: 5rem;
     font-weight: 900;
     color: #fff;
@@ -566,14 +640,20 @@ body {
 }
 
 #controls {
-    padding: 15px;
-    background: rgba(20, 20, 20, 0.5);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    padding: 10px 15px 12px 15px;
+    /* 上下パディングを15px/40pxから10px/12pxへ短縮 */
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     display: flex;
     flex-direction: column;
-    gap: 15px;
-    border-top: 1px solid rgba(0, 255, 255, 0.2);
+    gap: 8px;
+    /* 行間を15pxから8pxへ短縮 */
+    border-top: 1px solid rgba(0, 255, 255, 0.15);
     z-index: 10;
 }
 

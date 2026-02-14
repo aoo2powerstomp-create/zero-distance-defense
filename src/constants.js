@@ -32,7 +32,7 @@ export const CONSTANTS = {
 
     // エリート設定
     ELITE_HP_MUL: 3,
-    ELITE_SIZE_MUL: 1.5,
+    ELITE_SIZE_MUL: 2.1,
     ELITE_KB_RESIST: 0.8, // 80%軽減
 
     // ボス設定
@@ -82,6 +82,14 @@ export const CONSTANTS = {
         ITEM_INVINCIBLE: './assets/item/item_invincible.png',
         ITEM_NUKE: './assets/item/item_nuke.png',
         GOLD: './assets/item/item_coin.png',
+        BULLET_RIFLE: './assets/bullet/bullet_Rifle.png',
+        BULLET_SHOT: './assets/bullet/bullet_shotgun.png',
+        BULLET_LASER: './assets/bullet/bullet_laser.png',
+        UI_ICON_RIFLE: './assets/ui/ui_icon_rifle.png',
+        UI_ICON_SHOTGUN: './assets/ui/ui_icon_shotgun.png',
+        UI_ICON_LASER: './assets/ui/ui_icon_laser.png',
+        UI_ICON_SPEED: './assets/ui/ui_icon_speed.png',
+        UI_ICON_PULSE: './assets/ui/ui_icon_pulse.png',
     },
 
     // 武器タイプ
@@ -140,16 +148,16 @@ export const CONSTANTS = {
 
         overdrive: {
             rarity: 'RARE',
-            durationMs: 10000,
+            durationMs: 15000,
             damageMul: 1.5,
             stack: 'extend',
-            maxDurationMs: 20000
+            maxDurationMs: 30000
         },
         invincible: {
             rarity: 'RARE',
-            durationMs: 2000,
+            durationMs: 10000,
             stack: 'extend',
-            maxDurationMs: 4000
+            maxDurationMs: 20000
         },
         nuke: {
             rarity: 'RARE'
@@ -494,7 +502,7 @@ export const CONSTANTS = {
     SPAWN_BUDGET_PER_SEC: 22,          // 1秒あたりのスポーン予算
     PULSE_RADIUS: 200,                 // パルス範囲
     PULSE_COOLDOWN_MS: 3000,           // パルスCD (20000 -> 3000: テストおよび爽快感のため短縮)
-    PULSE_KNOCKBACK: 24,               // パルス強度 (15 -> 24: ベース強化)
+    PULSE_KNOCKBACK: 36,               // パルス強度 (24 * 1.5 = 36)
 
     // PULSE 強化演出設定
     PULSE_VFX: {
