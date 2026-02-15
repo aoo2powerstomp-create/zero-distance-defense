@@ -319,5 +319,22 @@ export class AudioManager {
                 data[i] = (s1 + s2) * 0.2 * env;
             }
         });
+
+        // dash: 重厚な「ゴー」という咆哮・エンジン音
+        await create('dash', 0.5, (data, rate) => {
+            for (let i = 0; i < data.length; i++) {
+                const t = i / data.length;
+                // 立ち上がりは速く、後半に響きを残すエンベロープ
+                const env = Math.pow(1 - t, 1.5) * (t < 0.1 ? t / 0.1 : 1);
+
+                // 低周波の唸り (40Hz - 80Hz)
+                const lowFreq = Math.sin(i * 0.01 + Math.sin(i * 0.005) * 2);
+                // ノイズ成分
+                const noise = (Math.random() * 2 - 1) * 0.4;
+
+                // 混合して重み付け
+                data[i] = (lowFreq * 0.5 + noise * 0.5) * 0.6 * env;
+            }
+        });
     }
 }

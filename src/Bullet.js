@@ -106,6 +106,7 @@ export class Bullet {
         this.homingFrames = 0;
         this.homingTarget = null;
         this.homingLocked = false;
+        this.isReflected = false; // Add isReflected flag
     }
 
     init(x, y, angle, speed, damage, pierce, lifetime, weaponType, extra = {}) {
@@ -149,6 +150,7 @@ export class Bullet {
         }
         this.homingTarget = null;
         this.homingLocked = false;
+        this.isReflected = false;
 
         this.hitEnemies.clear(); // 初期化時にクリア
     }

@@ -13,6 +13,7 @@ export class Enemy {
         this.active = false;
         this.hp = 1;
         this.maxHp = 1;
+        this.isMinion = false;
         this.lastContactTime = 0;
         this.type = CONSTANTS.ENEMY_TYPES.NORMAL;
         this.spawnTime = 0;
@@ -25,6 +26,8 @@ export class Enemy {
         this.lastSummonTime = 0;
         this.onSummon = null;
         this.partner = null; // BARRIER_PAIR 用
+        this.isMinion = false; // Minionフラグ (Splitter子機など、フェーズ進行に関与しない)
+        this.lifespan = 0;     // Minion用寿命 (秒)
 
         // ボス用の安全装置（DPSキャップ）
         this.damageInCurrentSecond = 0;
@@ -39,7 +42,12 @@ export class Enemy {
         this.movementPhase = 0;
         this.repulsionForce = { x: 0, y: 0 };
         this.destroyReason = null;
+        this.deactivateReason = null; // Reason for becoming inactive (kill, oob, timeout, etc.)
         this.oobFrames = 0; // Screen-space OOB counter
+
+        // リフレクター用の状態
+        this.isReflectActive = true;
+        this.reflectCycleTimer = 0;
     }
 
     init(x, y, targetX, targetY, type = CONSTANTS.ENEMY_TYPES.NORMAL, hpMul = 1.0, speedMul = 1.0, affinity = CONSTANTS.ENEMY_AFFINITIES.SWARM) {
@@ -57,6 +65,8 @@ export class Enemy {
         this.type = type;
         this.affinity = affinity;
         this.partner = null; // Stale partner reset
+        this.isMinion = false;
+        this.lifespan = 0;
         this.spawnTime = Date.now();
         this.isEvading = false;
         this.evasiveStartTime = 0;
@@ -73,22 +83,36 @@ export class Enemy {
         this.destroyReason = null;
         this.oobFrames = 0;
 
-        // タイプ別の基本速度倍率
+        // タイプ別の基本速度倍率 (定数ファイルに個別定義がない場合の等倍フォールバック)
         let typeSpeedMul = 1.0;
-        if (type === CONSTANTS.ENEMY_TYPES.ZIGZAG) typeSpeedMul = 1.2;
-        else if (type === CONSTANTS.ENEMY_TYPES.EVASIVE) typeSpeedMul = 1.4;
-        else if (type === CONSTANTS.ENEMY_TYPES.TRICKSTER) typeSpeedMul = 1.3;
-        else if (type === CONSTANTS.ENEMY_TYPES.ORBITER) typeSpeedMul = 2.5;
-        else if (type === CONSTANTS.ENEMY_TYPES.SHIELDER) typeSpeedMul = 2.0;
-        else if (type === CONSTANTS.ENEMY_TYPES.GUARDIAN) typeSpeedMul = 1.5;
-        else if (type === CONSTANTS.ENEMY_TYPES.FLANKER) typeSpeedMul = 1.4;
-        else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER) typeSpeedMul = 1.2;
-        else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) typeSpeedMul = 1.5;
-        else if (type === CONSTANTS.ENEMY_TYPES.DASHER) typeSpeedMul = 1.2;
-        else if (type === CONSTANTS.ENEMY_TYPES.REFLECTOR) typeSpeedMul = 1.0;
+        const enemyCfg = CONSTANTS[Object.keys(CONSTANTS.ENEMY_TYPES).find(key => CONSTANTS.ENEMY_TYPES[key] === type)];
 
+        if (enemyCfg && enemyCfg.speed !== undefined) {
+            typeSpeedMul = enemyCfg.speed;
+            this.baseSpeed = typeSpeedMul * speedMul; // 定数定義があればそれをベースにする
+        } else {
+            // 互換性のためのハードコード倍率
+            if (type === CONSTANTS.ENEMY_TYPES.ZIGZAG) typeSpeedMul = 1.2;
+            else if (type === CONSTANTS.ENEMY_TYPES.EVASIVE) typeSpeedMul = 1.4;
+            else if (type === CONSTANTS.ENEMY_TYPES.TRICKSTER) typeSpeedMul = 1.3;
+            else if (type === CONSTANTS.ENEMY_TYPES.ORBITER) typeSpeedMul = 2.5;
+            else if (type === CONSTANTS.ENEMY_TYPES.SHIELDER) typeSpeedMul = 2.0;
+            else if (type === CONSTANTS.ENEMY_TYPES.GUARDIAN) typeSpeedMul = 1.5;
+            else if (type === CONSTANTS.ENEMY_TYPES.FLANKER) typeSpeedMul = 1.4;
+            else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER) typeSpeedMul = 1.2;
+            else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) typeSpeedMul = 1.5;
+            else if (type === CONSTANTS.ENEMY_TYPES.DASHER) typeSpeedMul = 1.2;
+            else if (type === CONSTANTS.ENEMY_TYPES.REFLECTOR) typeSpeedMul = 1.0;
 
-        this.baseSpeed = CONSTANTS.ENEMY_BASE_SPEED * speedMul * typeSpeedMul;
+            this.baseSpeed = CONSTANTS.ENEMY_BASE_SPEED * speedMul * typeSpeedMul;
+        }
+
+        // リフレクターの初期化
+        if (type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
+            this.isReflectActive = true;
+            this.reflectCycleTimer = CONSTANTS.REFLECTOR.activeDurationMs || 7000;
+        }
+
         // 移動設定の初期化
         this.configureMovement(type);
 
@@ -107,8 +131,10 @@ export class Enemy {
 
         // DASHERの初期化
         if (this.movementMode === 'DASH') {
-            this.dashState = 'normal';
+            this.dashState = 0; // Use integer 0 (Approach) instead of string 'normal'
             this.dashTimer = Math.random() * (CONSTANTS.DASHER.dashCooldownMs || 2000);
+            this.curveDir = (this.id % 2 === 0) ? 1 : -1;
+            this.weavePhase = Math.random() * Math.PI * 2;
         }
 
         this.currentSpeed = this.baseSpeed;
@@ -241,10 +267,23 @@ export class Enemy {
     }
 
     configureMovement(type) {
-        // デフォルト設定
+        // デフォルト設定のリセット
         this.movementMode = 'DIRECT';
         this.turnRate = 0; // 0 = 無制限 (Instant Turn)
         this.orbitRadius = 0;
+        this.subState = 0;
+        this.chargeAngle = 0;
+
+        // サブステートタイマー類の強制リセット（プール再利用対策）
+        this.flankState = undefined;
+        this.flankTimer = 0;
+        this.dashState = undefined;
+        this.dashTimer = 0;
+        this.eliteState = undefined;
+        this.eliteTimer = 0;
+        this.stepTimer = undefined;
+        this.evasionState = 0;
+        this.evasionTimer = 0;
 
         switch (type) {
             case CONSTANTS.ENEMY_TYPES.NORMAL:
@@ -252,20 +291,63 @@ export class Enemy {
                 break;
             case CONSTANTS.ENEMY_TYPES.ZIGZAG:
             case 'ZIGZAG':
-            case 'SPLITTER':
-            case 'SPLITTER_CHILD':
                 this.movementMode = 'ZIGZAG';
-                this.zigzagFreq = (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) ? 0.006 : 0.003;
-                this.zigzagAmp = (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) ? 30 : (type === CONSTANTS.ENEMY_TYPES.SPLITTER ? 40 : 50);
+                this.zigzagFreq = 0.003;
+                this.zigzagAmp = 50;
                 break;
-            case CONSTANTS.ENEMY_TYPES.EVASIVE: // User: ASSAULT
+            case CONSTANTS.ENEMY_TYPES.SPLITTER:
+            case 'SPLITTER':
+                this.movementMode = 'STEP';
+                this.stepTimer = 0;
+                this.stepAxis = Math.random() < 0.5 ? 0 : 1;
+                this.stepDir = Math.random() < 0.5 ? 1 : -1;
+                break;
+            case CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD:
+            case 'SPLITTER_CHILD':
+                // Randomized Movement for children (as requested)
+                const childTypes = [
+                    CONSTANTS.ENEMY_TYPES.NORMAL,  // 'A'
+                    CONSTANTS.ENEMY_TYPES.ZIGZAG,  // 'B'
+                    CONSTANTS.ENEMY_TYPES.EVASIVE, // 'C'
+                    CONSTANTS.ENEMY_TYPES.ORBITER, // 'I'
+                    CONSTANTS.ENEMY_TYPES.FLANKER, // 'M'
+                    CONSTANTS.ENEMY_TYPES.TRICKSTER // 'O'
+                ];
+                const selectedType = childTypes[Math.floor(Math.random() * childTypes.length)];
+
+                // Recursively configure as the selected type's movement pattern
+                this.configureMovement(selectedType);
+
+                // Keep child-specific stats (from constants)
+                const childCfg = CONSTANTS.SPLITTER_CHILD;
+                if (this.movementMode === 'ZIGZAG') {
+                    this.zigzagFreq = childCfg.zigzagFreq || 0.006;
+                    this.zigzagAmp = childCfg.zigzagAmp || 30;
+                }
+                break;
             case CONSTANTS.ENEMY_TYPES.ASSAULT:
-                this.movementMode = 'ASSAULT';
-                this.turnRate = 0.08;
+                this.movementMode = 'ASSAULT_CURVE';
+                this.turnRate = CONSTANTS.ASSAULT_CURVE.turnRateWhileWeaving;
+                this.assaultState = 0; // 0:Weave, 1:Charge
+                this.weavePhase = Math.random() * Math.PI * 2;
+                break;
+            case CONSTANTS.ENEMY_TYPES.EVASIVE:
+                this.movementMode = 'EVASIVE';
+                this.turnRate = 0.12; // High turn rate for recovery
+                this.evasionTimer = Math.random() * 1000 + 500; // Initial delay
+                this.evasionState = 0; // 0:Approach, 1:Evade
+                this.evasionDir = 1;
+                break;
+            case CONSTANTS.ENEMY_TYPES.ELITE:
+                this.movementMode = 'ELITE';
+                this.turnRate = 0.05;
+                this.orbitRadius = 180;
+                this.eliteState = 0; // 0:Orbit, 1:Telegraph, 2:Charge, 3:Cooldown
+                this.eliteTimer = CONSTANTS.ELITE_CHARGE.orbitDuration + Math.random() * 1000;
                 break;
             case CONSTANTS.ENEMY_TYPES.SHIELDER:
             case CONSTANTS.ENEMY_TYPES.GUARDIAN:
-            case CONSTANTS.ENEMY_TYPES.ELITE:
+            // CONSTANTS.ENEMY_TYPES.ELITE (Separated)
             case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
             case CONSTANTS.ENEMY_TYPES.OBSERVER:
                 this.movementMode = 'HOVER';
@@ -287,11 +369,18 @@ export class Enemy {
                 break;
             case CONSTANTS.ENEMY_TYPES.DASHER:
                 this.movementMode = 'DASH';
+                this.turnRate = 0.12; // High turn rate for weaving
+                this.dashState = 0;
+                this.weavePhase = Math.random() * Math.PI * 2;
+                this.hasDirection = true; // Force direction flag
                 break;
             case CONSTANTS.ENEMY_TYPES.FLANKER:
                 this.movementMode = 'FLANK';
                 this.turnRate = 0.06;
                 this.orbitRadius = 220;
+                this.flankState = 0; // Force start from approach
+                this.flankTimer = 0;
+                this.chargeAngle = 0;
                 break;
             case CONSTANTS.ENEMY_TYPES.TRICKSTER:
                 this.movementMode = 'TRICKSTER';
@@ -369,6 +458,11 @@ export class Enemy {
             this.updateObserver(playerX, playerY, dt);
         }
 
+        // Apply Barrier Logic for SHIELDER/GUARDIAN
+        if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER || this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
+            this.updateBarrier(dt);
+        }
+
         // 1. 速度計算 (距離減衰 & バフ)
         const dx = playerX - this.x;
         const dy = playerY - this.y;
@@ -378,7 +472,7 @@ export class Enemy {
         this.updateSpeed(dist, options);
 
         // 2. 移動ロジック (Movement Mode Switch)
-        this.updateMovement(dtMod, playerX, playerY, dist, now, playerAngle);
+        this.updateMovement(dtMod, playerX, playerY, dist, now, playerAngle, dt);
 
         // 3. 共通物理演算 (ノックバック & 位置更新)
         this.x += (this.vx * freezeMul + this.knockVX) * dtMod;
@@ -395,6 +489,18 @@ export class Enemy {
         if (this.evasionTimer > 0) this.evasionTimer -= dt;
         if (this.pulseOutlineTimer > 0) this.pulseOutlineTimer = Math.max(0, this.pulseOutlineTimer - dt);
 
+        // リフレクターの周期更新
+        if (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
+            this.reflectCycleTimer -= dt;
+            if (this.reflectCycleTimer <= 0) {
+                this.isReflectActive = !this.isReflectActive;
+                const cfg = CONSTANTS.REFLECTOR;
+                this.reflectCycleTimer = this.isReflectActive ?
+                    (cfg.activeDurationMs || 7000) :
+                    (cfg.vulnerableDurationMs || 3000);
+            }
+        }
+
         // ボス召喚
         if (this.isBoss && this.onSummon) {
             const hpPercent = this.hp / this.maxHp;
@@ -405,18 +511,38 @@ export class Enemy {
             }
         }
 
+        // Minion寿命チェック
+        if (this.isMinion && this.lifespan > 0) {
+            this.lifespan -= dt / 1000;
+            if (this.lifespan <= 0) {
+                // 時間切れで自然消滅
+                this.destroy('LIFETIME', this.game);
+            }
+        }
+
         // 画面外チェック (main.js 側で統一管理するため不要)
         // this.checkBounds();
     }
 
     updateSpeed(dist, options) {
         let speedRatio = 1.0;
-        // 至近距離での減速
-        if (dist < CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS) {
+        // 至近距離での減速 (FLANKERの背後回り込み〜突進中は無効化して機動力を維持)
+        const isFlankingOrCharging = (this.movementMode === 'FLANK' && this.flankState >= 1);
+        const isDashing = (this.movementMode === 'DASH' && this.dashState === 2);
+
+        if (dist < (CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS || 0) && !isFlankingOrCharging && !isDashing) {
             const t = Math.max(0, dist / CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS);
             speedRatio = CONSTANTS.ENEMY_MIN_SPEED_RATIO + (1.0 - CONSTANTS.ENEMY_MIN_SPEED_RATIO) * t;
         }
-        this.currentSpeed = this.baseSpeed * speedRatio;
+
+        // 突進中などの特殊速度設定を保護するため、1.0未満の時のみ適用orベース速度を元に計算
+        if (this.movementMode === 'FLANK' && this.flankState === 3) {
+            // Already set high speed, don't overwrite
+        } else if (this.movementMode === 'DASH' && this.dashState === 2) {
+            // Already set high speed
+        } else {
+            this.currentSpeed = this.baseSpeed * speedRatio;
+        }
 
         // バフ適用
         this.hasGuardBuff = options.globalGuardBuffActive || false;
@@ -430,7 +556,7 @@ export class Enemy {
         }
     }
 
-    updateMovement(dtMod, px, py, dist, now, playerAngle) {
+    updateMovement(dtMod, px, py, dist, now, playerAngle, dt = 16.6) {
         // 描画座標リセット (Render offset reset)
         this.renderX = this.x;
         this.renderY = this.y;
@@ -467,89 +593,446 @@ export class Enemy {
                 this.vy = Math.sin(this.angle) * this.currentSpeed;
                 break;
 
+            case 'EVASIVE':
+                // Approach & Side-Step Logic
+                if (this.evasionState === 0) {
+                    // Approach Mode
+                    this.turnTowards(targetAngle, (this.turnRate || 0.1) * dtMod);
+                    this.evasionTimer -= dt;
+                    if (this.evasionTimer <= 0) {
+                        // Switch to Evade
+                        this.evasionState = 1;
+                        this.evasionTimer = 600 + Math.random() * 400; // Longer Evade duration (User request)
+                        this.evasionDir = Math.random() < 0.5 ? 1 : -1;
+                    }
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+                } else {
+                    // Evade Mode
+                    // Move perpendicular to player direction (Quick side-step)
+                    const evadeAngle = targetAngle + (Math.PI / 2) * this.evasionDir;
+                    this.turnTowards(evadeAngle, 0.4 * dtMod); // Much faster turn (0.2 -> 0.4)
+
+                    this.evasionTimer -= dt;
+                    if (this.evasionTimer <= 0) {
+                        // Switch back to Approach
+                        this.evasionState = 0;
+                        this.evasionTimer = 800 + Math.random() * 1200; // Next interval
+                    }
+                    // Double speed for "Evade" action
+                    this.vx = Math.cos(this.angle) * this.currentSpeed * 2.0;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed * 2.0;
+
+                    // Jet Thruster Effect
+                    // 噴射は進行方向の逆
+                    const thrusterAngle = this.angle + Math.PI;
+                    // 2つ出す（左右のエンジン感）
+                    const offset = 10;
+                    const p1x = this.renderX + Math.cos(this.angle + Math.PI / 2) * offset;
+                    const p1y = this.renderY + Math.sin(this.angle + Math.PI / 2) * offset;
+                    const p2x = this.renderX + Math.cos(this.angle - Math.PI / 2) * offset;
+                    const p2y = this.renderY + Math.sin(this.angle - Math.PI / 2) * offset;
+
+                    if (Math.random() < 0.8) Effects.createThruster(p1x, p1y, thrusterAngle);
+                    if (Math.random() < 0.8) Effects.createThruster(p2x, p2y, thrusterAngle);
+                }
+                break;
+
+            case 'ELITE':
+                // State Machine: 0:Orbit -> 1:Telegraph -> 2:Charge -> 3:Cooldown
+                this.eliteTimer -= dt;
+
+                if (this.eliteState === 0) {
+                    // ORBIT
+                    // Maintain distance and circle around
+                    let targetDist = this.orbitRadius || 200;
+
+                    // Adjust distance
+                    if (dist < targetDist - 20) targetDist += 50;
+                    if (dist > targetDist + 20) targetDist -= 50;
+
+                    const orbitSpeed = 0.002 * dtMod;
+                    const orbitAngle = now * orbitSpeed + (this.id * 0.5); // Spread out by ID
+
+                    // Target position on orbit
+                    const tx = px + Math.cos(orbitAngle) * targetDist;
+                    const ty = py + Math.sin(orbitAngle) * targetDist;
+
+                    const approachAngle = Math.atan2(ty - this.y, tx - this.x);
+                    this.turnTowards(approachAngle, (this.turnRate || 0.05) * dtMod);
+
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+
+                    if (this.eliteTimer <= 0) {
+                        this.eliteState = 1; // To Telegraph
+                        this.eliteTimer = CONSTANTS.ELITE_CHARGE.telegraphDuration;
+                        this.chargeAngle = targetAngle; // Lock on logic start
+                    }
+
+                } else if (this.eliteState === 1) {
+                    // TELEGRAPH (Pull back / Charge up)
+                    // Slow down and aim strictly at player
+                    this.turnTowards(targetAngle, 0.2 * dtMod); // Fast turn to lock
+                    this.chargeAngle = this.angle; // Keep updating charge vector
+
+                    // Visual shake or pull back? 
+                    // Let's just slow down
+                    this.vx = Math.cos(this.angle) * this.currentSpeed * 0.2;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed * 0.2;
+
+                    if (this.eliteTimer <= 0) {
+                        this.eliteState = 2; // To Charge
+                        this.eliteTimer = CONSTANTS.ELITE_CHARGE.chargeDuration;
+                        this.chargeAngle = this.angle; // Final lock
+                        this.currentSpeed = this.baseSpeed * CONSTANTS.ELITE_CHARGE.chargeSpeedMul;
+
+                        // Effect trigger
+                        Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 2.0);
+                    }
+
+                } else if (this.eliteState === 2) {
+                    // CHARGE
+                    // Move straight in locked direction
+                    // No turning
+                    this.vx = Math.cos(this.chargeAngle) * this.currentSpeed;
+                    this.vy = Math.sin(this.chargeAngle) * this.currentSpeed;
+
+                    // Thruster trail
+                    if (Math.random() < 0.3) {
+                        Effects.createThruster(this.renderX, this.renderY, this.chargeAngle + Math.PI, 1.5);
+                    }
+
+                    if (this.eliteTimer <= 0) {
+                        this.eliteState = 3; // To Cooldown
+                        this.eliteTimer = CONSTANTS.ELITE_CHARGE.cooldownDuration;
+                        this.currentSpeed = this.baseSpeed * 0.5; // Slow down
+                    }
+
+                } else if (this.eliteState === 3) {
+                    // COOLDOWN
+                    // Stop or slow movement, recover
+                    this.vx *= 0.9; // Friction
+                    this.vy *= 0.9;
+                    if (this.eliteTimer <= 0) {
+                        this.eliteState = 0; // Back to Orbit
+                        this.eliteTimer = CONSTANTS.ELITE_CHARGE.orbitDuration;
+                        this.currentSpeed = this.baseSpeed;
+                    }
+                }
+                break;
+
+            case 'ASSAULT_CURVE':
+                if (this.assaultState === 0) {
+                    // Phase 1: Weaving Approach
+                    this.weavePhase += (CONSTANTS.ASSAULT_CURVE.weaveFreq || 0.004) * dt;
+                    const weaveOffset = Math.sin(this.weavePhase) * (CONSTANTS.ASSAULT_CURVE.weaveAmp || 0.7);
+                    const weaveTarget = targetAngle + weaveOffset;
+
+                    this.turnTowards(weaveTarget, this.turnRate * dtMod);
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+
+                    // Trigger Charge
+                    if (dist < (CONSTANTS.ASSAULT_CURVE.triggerDist || 280)) {
+                        this.assaultState = 1;
+                        this.currentSpeed = this.baseSpeed * (CONSTANTS.ASSAULT_CURVE.chargeSpeedMul || 2.5);
+                    }
+                } else {
+                    // Phase 2: Rapid Strike (Charge)
+                    this.turnTowards(targetAngle, 0.02 * dtMod); // Minimal turn
+
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+
+                    // Trail effect
+                    if (Math.random() < 0.5) {
+                        Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 1.2);
+                    }
+                }
+                break;
+
             case 'ZIGZAG':
-                // 物理的な揺動 (SSOT: 描画と当たり判定の一致)
+                // Sine wave weaving
                 this.angle = targetAngle;
-
-                const elapsedZ = now - this.spawnTime;
-                const freqZ = this.zigzagFreq || 0.005;
-                const ampZ = this.zigzagAmp || 80;
-
-                // 揺動速度 (v = A * omega * cos(omega * t))
-                // pixels per frame (16.6ms) ベース
+                const elapsedZ = Date.now() - this.spawnTime;
+                const freqZ = this.zigzagFreq || 0.003;
+                const ampZ = this.zigzagAmp || 50;
                 const oscVelZ = ampZ * freqZ * Math.cos(elapsedZ * freqZ) * 16.6;
-
                 const perpZ = this.angle + Math.PI / 2;
                 this.vx = Math.cos(this.angle) * this.currentSpeed + Math.cos(perpZ) * oscVelZ;
                 this.vy = Math.sin(this.angle) * this.currentSpeed + Math.sin(perpZ) * oscVelZ;
                 break;
 
+            case 'STEP':
+                // ORTHOGONAL STEP MOVEMENT (Kaku-Kaku: Byun-Pita)
+                if (this.stepTimer === undefined) this.stepTimer = 0;
+                if (this.subState === undefined) this.subState = 0; // 0: Pause, 1: Dash
+                this.stepTimer -= dt;
+
+                const cfgS = (this.type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) ?
+                    CONSTANTS.SPLITTER_CHILD : CONSTANTS.SPLITTER;
+
+                if (this.stepTimer <= 0) {
+                    if (this.subState === 0) {
+                        // Switch to DASH
+                        this.subState = 1;
+                        this.stepTimer = cfgS.dashDurationMs || 300;
+
+                        // Pick next direction (orthogonal)
+                        this.stepAxis = 1 - (this.stepAxis || 0);
+                        const rand = Math.random();
+                        const randomness = 0.2; // Constant bias
+
+                        if (this.stepAxis === 0) {
+                            const towardsP = (px > this.x) ? 1 : -1;
+                            this.stepDir = (rand > randomness) ? towardsP : -towardsP;
+                        } else {
+                            const towardsP = (py > this.y) ? 1 : -1;
+                            this.stepDir = (rand > randomness) ? towardsP : -towardsP;
+                        }
+                    } else {
+                        // Switch to PAUSE
+                        this.subState = 0;
+                        this.stepTimer = cfgS.pauseDurationMs || 600;
+                        this.vx = 0;
+                        this.vy = 0;
+                    }
+                }
+
+                // Apply Physics depending on subState
+                if (this.subState === 1) {
+                    // DASH phase
+                    const spd = this.baseSpeed * (cfgS.dashSpeedMultiplier || 4.0);
+                    if (this.stepAxis === 0) {
+                        this.vx = this.stepDir * spd;
+                        this.vy = 0;
+                        this.angle = (this.stepDir > 0) ? 0 : Math.PI;
+                    } else {
+                        this.vx = 0;
+                        this.vy = this.stepDir * spd;
+                        this.angle = (this.stepDir > 0) ? Math.PI / 2 : -Math.PI / 2;
+                    }
+                    // Dash trail
+                    if (Math.random() < 0.6) {
+                        Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 1.2);
+                    }
+                } else {
+                    // PAUSE phase
+                    this.vx = 0;
+                    this.vy = 0;
+                    // Keep looking forward
+                }
+                break;
+
             case 'HOVER':
             case 'ORBIT':
-                // 周回・維持挙動
                 this.orbitAngle += (this.type === CONSTANTS.ENEMY_TYPES.ORBITER ? 0.02 : 0.01) * dtMod;
+                let tDist = this.orbitRadius || 200;
+                if (dist < tDist - 50) tDist += 50;
+                if (dist > tDist + 50) tDist -= 50;
 
-                let targetDist = this.orbitRadius || 200;
-                // 距離維持補正
-                if (dist < targetDist - 50) targetDist += 50; // 近すぎたら離れる目標
-                if (dist > targetDist + 50) targetDist -= 50; // 遠すぎたら近づく目標
+                const tPosX = px + Math.cos(this.orbitAngle) * tDist;
+                const tPosY = py + Math.sin(this.orbitAngle) * tDist;
 
-                const tx = px + Math.cos(this.orbitAngle) * targetDist;
-                const ty = py + Math.sin(this.orbitAngle) * targetDist;
-
-                const hoverAngle = Math.atan2(ty - this.y, tx - this.x);
-                this.turnTowards(hoverAngle, (this.turnRate || 0.03) * dtMod);
+                const hAngle = Math.atan2(tPosY - this.y, tPosX - this.x);
+                this.turnTowards(hAngle, (this.turnRate || 0.03) * dtMod);
 
                 this.vx = Math.cos(this.angle) * this.currentSpeed;
                 this.vy = Math.sin(this.angle) * this.currentSpeed;
                 break;
 
             case 'FLANK':
-                // 背後に回り込む (Spiral Inward logic)
-                // ターゲット：プレイヤーの背後 (backDist離れた位置)
-                const flankConfig = CONSTANTS.FLANKER || {};
-                const backDist = flankConfig.backDist || 180;
+                // FLANKER State Machine (Assassin: Approach -> Flank -> Maintain -> Assassinate)
+                // 0: Approach (Move directly towards player until close)
+                // 1: Agile Flank (Move to the back with high speed/turn)
+                // 2: Maintain position (Wait 2 sec)
+                // 3: Super Fast Charge (12x, Guaranteed hit accuracy)
 
-                // プレイヤーの向きを取得 (Player classがないため、Playerの移動情報が必要だが、
-                // ここでは簡易的に「プレイヤーから見て現在位置の反対側」ではなく、
-                // 「プレイヤーの現在進行方向の逆」や「ランダムな背後」などが理想。
-                // 引数の playerAngle (マウス方向) を利用する。
-                const pRotation = playerAngle; // Mouse direction
-                const targetsBackAngle = pRotation + Math.PI;
+                if (this.flankState === undefined) {
+                    this.flankState = 0;
+                    this.flankTimer = 0;
+                }
 
-                // 目標地点
-                const txFlank = px + Math.cos(targetsBackAngle) * backDist;
-                const tyFlank = py + Math.sin(targetsBackAngle) * backDist;
+                const cfgF = CONSTANTS.FLANKER;
+                const pRot = playerAngle;
+                const tBackAngle = pRot + Math.PI;
 
-                const angleToFlank = Math.atan2(tyFlank - this.y, txFlank - this.x);
+                // Current polar relative to player
+                const dX = this.x - px;
+                const dY = this.y - py;
+                let cAngle = Math.atan2(dY, dX);
+                let cDist = Math.sqrt(dX * dX + dY * dY);
 
-                // 旋回制限付きで目標へ
-                this.turnTowards(angleToFlank, (this.turnRate || 0.06) * dtMod);
+                // Shortest angular difference to rear
+                let aDiff = tBackAngle - cAngle;
+                while (aDiff <= -Math.PI) aDiff += Math.PI * 2;
+                while (aDiff > Math.PI) aDiff -= Math.PI * 2;
 
-                // 速度適用
-                let flankSpeed = this.currentSpeed;
-                // 目標に近づきすぎたら減速
-                const dFlank = Math.sqrt(Math.pow(txFlank - this.x, 2) + Math.pow(tyFlank - this.y, 2));
-                if (dFlank < 50) flankSpeed *= 0.5;
+                if (this.flankState === 0) {
+                    // PHASE 0: DIRECT APPROACH
+                    this.turnTowards(targetAngle, 0.1 * dtMod);
+                    if (cDist < (cfgF.approachDist || 350)) {
+                        this.flankState = 1;
+                    }
+                } else if (this.flankState === 1) {
+                    // PHASE 1: AGILE FLANKING
+                    const oSpeed = (cfgF.flankTurnRate || 0.15) * dtMod;
+                    if (Math.abs(aDiff) < oSpeed) {
+                        cAngle = tBackAngle;
+                    } else {
+                        cAngle += (aDiff > 0) ? oSpeed : -oSpeed;
+                    }
 
-                this.vx = Math.cos(this.angle) * flankSpeed;
-                this.vy = Math.sin(this.angle) * flankSpeed;
+                    const iDist = cfgF.orbitRadius || 220;
+                    if (cDist > iDist) cDist -= this.currentSpeed * 1.0 * dtMod;
+                    else if (cDist < iDist - 20) cDist += this.currentSpeed * 1.0 * dtMod;
+
+                    const tX = px + Math.cos(cAngle) * cDist;
+                    const tY = py + Math.sin(cAngle) * cDist;
+                    this.turnTowards(Math.atan2(tY - this.y, tX - this.x), (cfgF.flankTurnRate || 0.15) * dtMod);
+
+                    // Check if reached position (behind player)
+                    if (Math.abs(aDiff) < 0.2) {
+                        this.flankState = 2;
+                        this.flankTimer = cfgF.maintainDurationMs || 2000;
+                    }
+                } else if (this.flankState === 2) {
+                    // PHASE 2: MAINTAIN POSITION (Assassin's Focus)
+                    this.flankTimer -= dt;
+
+                    // Stick strictly to back
+                    const oSpeed = (cfgF.flankTurnRate || 0.2) * dtMod;
+
+                    // 中断チェック：背後から大幅に外れた場合（自機が急旋回した場合など）は回り込みに戻る
+                    if (Math.abs(aDiff) > 0.7) {
+                        this.flankState = 1;
+                        this.flankTimer = 0;
+                        return;
+                    }
+
+                    cAngle += aDiff * 0.2; // Aggressive snap to back
+
+                    const iDist = cfgF.orbitRadius || 220;
+                    const tX = px + Math.cos(cAngle) * iDist;
+                    const tY = py + Math.sin(cAngle) * iDist;
+                    this.turnTowards(Math.atan2(tY - this.y, tX - this.x), (cfgF.flankTurnRate || 0.2) * dtMod);
+
+                    // Visual charge-up effect (Pulsing outline)
+                    if (this.flankTimer < 1000) {
+                        this.pulseOutlineTimer = 100; // Keep pulsing just before charge
+                    }
+
+                    if (this.flankTimer <= 0) {
+                        this.flankState = 3;
+                        // ATOMIC LOCK-ON: Set everything NOW to avoid 1-frame mismatch
+                        this.chargeAngle = targetAngle;
+                        this.angle = this.chargeAngle;
+                        this.currentSpeed = this.baseSpeed * (cfgF.chargeSpeedMul || 12.0);
+                        this.vx = Math.cos(this.chargeAngle) * this.currentSpeed;
+                        this.vy = Math.sin(this.chargeAngle) * this.currentSpeed;
+
+                        Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 4.0);
+                        if (this.game && this.game.audio) this.game.audio.play('dash', { volume: 0.6, pitch: 1.2 });
+                    }
+                } else if (this.flankState === 3) {
+                    // PHASE 3: SUPER CHARGE (12x)
+                    // Keep moving in the locked direction
+                    this.vx = Math.cos(this.chargeAngle) * this.currentSpeed;
+                    this.vy = Math.sin(this.chargeAngle) * this.currentSpeed;
+                    this.angle = this.chargeAngle;
+
+                    if (Math.random() < 0.7) {
+                        Effects.createThruster(this.renderX, this.renderY, this.chargeAngle + Math.PI, 2.5);
+                    }
+                }
+
+                // Apply physics ONLY for non-charging states (already set in state 3)
+                if (this.flankState !== 3) {
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+                }
                 break;
 
             case 'DASH':
-                // DASHER Logic
-                if (this.dashState === 'dash') {
-                    // 直進
-                    // 突進中は angle 更新しない
-                    this.vx = Math.cos(this.angle) * this.currentSpeed * (CONSTANTS.DASHER.dashSpeedMultiplier || 3.0);
-                    this.vy = Math.sin(this.angle) * this.currentSpeed * (CONSTANTS.DASHER.dashSpeedMultiplier || 3.0);
-                } else {
-                    // 回避/様子見 (-PI/2 or +PI/2 slide)
-                    // 常に横滑り
-                    const slideTarget = targetAngle + Math.PI / 2;
-                    this.turnTowards(slideTarget, 0.1 * dtMod);
-                    this.vx = Math.cos(this.angle) * this.currentSpeed * 0.5;
-                    this.vy = Math.sin(this.angle) * this.currentSpeed * 0.5;
+                // DASHER State Machine (Designed for broad curve)
+                // 0: Broad Curve Approach (No stop)
+                // 1: Snapping Telegraph (Speed up/turn fast)
+                // 2: Final Dash (Burst)
+                // 3: Cooldown Glide
+
+                if (this.dashState === undefined) {
+                    this.dashState = 0;
+                    this.dashTimer = 0;
+                }
+                if (this.curveDir === undefined) {
+                    this.curveDir = (this.id % 2 === 0) ? 1 : -1;
+                }
+                this.dashTimer -= dt;
+
+                if (this.dashState === 0) {
+                    // BROAD CURVE APPROACH
+                    const triggerDist = 220; // Lowered from 320 to stay in curve longer
+
+                    if (dist < triggerDist && this.dashTimer <= 0) {
+                        this.dashState = 1; // To Snapping Telegraph
+                        this.dashTimer = (CONSTANTS.DASHER.windupMs || 500) * 1.6; // Extended telegraph
+                        this.currentSpeed *= 1.3; // Slight surge during lock-on
+                    } else {
+                        // Dynamic Curve: Offset decreases as distance increases to ensure convergence
+                        // If dist > 500, move more directly. If dist is 350, curve more.
+                        const curveIntensity = Math.max(0, Math.min(1, 450 / dist));
+                        const baseOffset = (Math.PI / 180) * 55; // Up to 55 deg
+                        const curveOffset = baseOffset * curveIntensity * this.curveDir;
+                        const finalTarget = targetAngle + curveOffset;
+
+                        const turnSpeed = (this.turnRate || 0.08) * 0.8 * dtMod; // Softer turn for longer curve
+                        this.turnTowards(finalTarget, turnSpeed);
+
+                        this.vx = Math.cos(this.angle) * this.currentSpeed;
+                        this.vy = Math.sin(this.angle) * this.currentSpeed;
+                        this.hasDirection = true;
+                    }
+
+                } else if (this.dashState === 1) {
+                    // SNAPPING TELEGRAPH (No Stop)
+                    // High rotation to lock onto player while keeping momentum
+                    const lockSpeed = (this.turnRate || 0.12) * 2.0 * dtMod;
+                    this.turnTowards(targetAngle, lockSpeed);
+                    this.chargeAngle = this.angle; // Keep updating until the very last frame
+
+                    // Trail / Warning effect
+                    if (Math.random() < 0.3) {
+                        Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 1.2);
+                    }
+
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+
+                    if (this.dashTimer <= 0) {
+                        this.dashState = 2; // To Final Dash
+                        this.dashTimer = CONSTANTS.DASHER.dashDurationMs || 600;
+                        this.currentSpeed = this.baseSpeed * (CONSTANTS.DASHER.dashSpeedMultiplier || 4.0);
+                        Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 3.0);
+                        if (this.game && this.game.audio) {
+                            this.game.audio.play('dash', { volume: 0.5 });
+                        }
+                    }
+
+                } else if (this.dashState === 3) {
+                    // COOLDOWN GLIDE
+                    // Slowly recovering, slide away but start turning back
+                    this.vx *= 0.95;
+                    this.vy *= 0.95;
+
+                    // Start turning back towards player even in cooldown
+                    this.turnTowards(targetAngle, (this.turnRate || 0.05) * 0.5 * dtMod);
+
+                    if (this.dashTimer <= 0) {
+                        this.dashState = 0; // Back to Start
+                        this.currentSpeed = this.baseSpeed;
+                        this.dashTimer = 100; // Snap to ready
+                    }
                 }
                 break;
 
@@ -597,23 +1080,49 @@ export class Enemy {
                 break;
 
             case 'REFLECT':
-                // 正面を向きつつ横移動 (Strafe)
-                // 常にPlayerを向く
-                this.angle = targetAngle;
-
-                // 横移動
-                const strafePhase = now * 0.002;
-                const strafeDir = Math.sin(strafePhase) > 0 ? 1 : -1;
-                const strafeAngle = targetAngle + (Math.PI / 2) * strafeDir;
-
-                this.vx = Math.cos(strafeAngle) * this.currentSpeed * 0.5; // 少し遅く
-                this.vy = Math.sin(strafeAngle) * this.currentSpeed * 0.5;
-
-                // 距離が遠ければ近づく成分も足す
-                if (dist > (this.orbitRadius || 200)) {
-                    this.vx += Math.cos(targetAngle) * this.currentSpeed * 0.5;
-                    this.vy += Math.sin(targetAngle) * this.currentSpeed * 0.5;
+                // 高度なリフレクト移動: 多彩な動き + 自機非接触
+                if (this.reflectTimer === undefined) {
+                    this.reflectTimer = 0;
+                    this.reflectStrafeDir = Math.random() < 0.5 ? 1 : -1;
+                    this.reflectOrbitPhase = Math.random() * Math.PI * 2;
                 }
+
+                this.reflectTimer -= dt;
+                if (this.reflectTimer <= 0) {
+                    // 2〜4秒ごとに旋回方向を検討
+                    this.reflectStrafeDir = Math.random() < 0.7 ? this.reflectStrafeDir : -this.reflectStrafeDir;
+                    this.reflectTimer = 2000 + Math.random() * 2000;
+                }
+
+                // 距離の伸縮 (200 - 350px)
+                this.reflectOrbitPhase += 0.01 * dtMod;
+                const baseOrbit = 260;
+                const orbitAmp = 80;
+                const targetOrbitDist = baseOrbit + Math.sin(this.reflectOrbitPhase) * orbitAmp;
+
+                // 旋回運動
+                this.orbitAngle += 0.015 * this.reflectStrafeDir * dtMod;
+
+                // 目標座標の計算
+                const txR = px + Math.cos(this.orbitAngle) * targetOrbitDist;
+                const tyR = py + Math.sin(this.orbitAngle) * targetOrbitDist;
+
+                const moveAngleR = Math.atan2(tyR - this.y, txR - this.x);
+                this.turnTowards(moveAngleR, 0.08 * dtMod);
+
+                // 速度適用
+                this.vx = Math.cos(this.angle) * this.currentSpeed;
+                this.vy = Math.sin(this.angle) * this.currentSpeed;
+
+                // 強制的な自機回避 (180px 以内に入りそうなら外へ逃げる)
+                if (dist < 180) {
+                    const fleeAngle = Math.atan2(this.y - py, this.x - px);
+                    this.vx = Math.cos(fleeAngle) * this.currentSpeed * 1.5;
+                    this.vy = Math.sin(fleeAngle) * this.currentSpeed * 1.5;
+                }
+
+                // 常に向きはプレイヤーを固定
+                this.renderAngle = targetAngle;
                 break;
 
             case 'TRICKSTER':
@@ -734,13 +1243,53 @@ export class Enemy {
 
             // (Barrier Line removed from here to follow rotation-free context below)
 
-            // REFLECTOR の金縁風エフェクト
-            if (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
-                ctx.strokeStyle = "#ffd700";
-                ctx.lineWidth = 2;
+            // REFLECTOR のゴージャスな半円シールド演出
+            if (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR && this.isReflectActive) {
+                ctx.save();
+                const r = size / 2.2;
+
+                // 正面（自機側）を向く半円の範囲 (-90度〜90度)
+                const startAngle = -Math.PI / 2;
+                const endAngle = Math.PI / 2;
+
+                // 1. 強力な外光グロー (Super Outer Glow)
+                ctx.shadowBlur = 35;
+                ctx.shadowColor = "rgba(255, 215, 0, 0.9)";
+
+                ctx.strokeStyle = "rgba(255, 230, 100, 0.4)";
+                ctx.lineWidth = 4;
+                ctx.lineCap = "round"; // 端を丸める
                 ctx.beginPath();
-                ctx.arc(0, 0, size / 2.2, 0, Math.PI * 2);
+                ctx.arc(0, 0, r, startAngle, endAngle);
                 ctx.stroke();
+
+                // 2. メインのグラデーション弧 (Main Gradient Arc)
+                ctx.shadowBlur = 20;
+                const grad = ctx.createLinearGradient(0, -r, 0, r);
+                grad.addColorStop(0, "#ffd700");
+                grad.addColorStop(0.5, "#fff8dc");
+                grad.addColorStop(1, "#b8860b");
+
+                ctx.strokeStyle = grad;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(0, 0, r, startAngle, endAngle);
+                ctx.stroke();
+
+                // 3. 回転する光沢、ただしシールドの範囲内のみ表示 (Specular Highlight clamped to arc)
+                ctx.shadowBlur = 0;
+                let highlightAngle = ((Date.now() * 0.005) % (Math.PI * 2)) - Math.PI; // -PI 〜 PI
+
+                // 表示範囲内にあれば描画
+                if (highlightAngle > startAngle && highlightAngle < endAngle) {
+                    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, r, highlightAngle, Math.min(highlightAngle + 0.8, endAngle));
+                    ctx.stroke();
+                }
+
+                ctx.restore();
             }
 
             /* 
@@ -803,44 +1352,71 @@ export class Enemy {
             }
         }
 
-        // シールダー・ガーディアンのバリア/弱点演出
-        if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER || this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
-            const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+        // シールダーのバリア/弱点演出 (HEX GRID VERSION) - GUARDIAN removed
+        if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER) {
+            const baseSize = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+
             if (this.barrierState === 'windup') {
                 // 予兆: 点滅
-                if (Math.floor(Date.now() / 50) % 2 === 0) {
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 3;
+                const flash = Math.sin(Date.now() * 0.02);
+                if (flash > 0) {
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${flash})`;
+                    ctx.lineWidth = 2;
                     ctx.beginPath();
-                    ctx.arc(0, 0, size * 1.2, 0, Math.PI * 2); // 簡易的な点滅枠
+                    ctx.arc(0, 0, baseSize * 1.5, 0, Math.PI * 2);
                     ctx.stroke();
                 }
             } else if (this.barrierState === 'active') {
-                // バリア中
-                if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER) {
-                    // オーラ型: 円形防壁
-                    ctx.beginPath();
-                    ctx.arc(0, 0, CONSTANTS.SHIELDER.auraRadius, 0, Math.PI * 2);
-                    ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-                    ctx.fillStyle = 'rgba(0, 255, 255, 0.05)';
-                    ctx.fill();
+                const now = Date.now();
+                const radius = CONSTANTS.SHIELDER.auraRadius || (baseSize * 1.8);
+                const color = '0, 255, 255';
 
-                    // 足元のコア
-                    ctx.beginPath();
-                    ctx.arc(0, 0, size * 1.5, 0, Math.PI * 2);
-                    // ボスは少し大きく脈動
-                    const pulseScale = 1 + Math.sin(Date.now() / 200) * 0.1;
-                    if (this.isBoss) ctx.scale(pulseScale, pulseScale);
+                // HEX GRID TILING
+                // No outer circle, just filled hexes
+                const hexSize = 10;
+                const gridRadius = Math.ceil(radius / (hexSize * 1.5));
+
+                ctx.save();
+                ctx.strokeStyle = `rgba(${color}, 0.5)`;
+                ctx.fillStyle = `rgba(${color}, 0.15)`;
+                ctx.lineWidth = 1;
+
+                // Pulsing effect
+                const pulse = Math.sin(now * 0.005);
+
+                for (let q = -gridRadius; q <= gridRadius; q++) {
+                    for (let r = -gridRadius; r <= gridRadius; r++) {
+                        const x = hexSize * 1.5 * q;
+                        const y = hexSize * Math.sqrt(3) * (r + q / 2);
+
+                        // Check if inside barrier radius
+                        if (Math.sqrt(x * x + y * y) < radius - 5) {
+                            // Draw small hex
+                            ctx.beginPath();
+                            // Rotate individual hexes
+                            for (let i = 0; i < 6; i++) {
+                                const angle = (Math.PI / 3) * i + (now * 0.001);
+                                const hx = x + Math.cos(angle) * (hexSize * 0.9);
+                                const hy = y + Math.sin(angle) * (hexSize * 0.9);
+                                if (i === 0) ctx.moveTo(hx, hy);
+                                else ctx.lineTo(hx, hy);
+                            }
+                            ctx.closePath();
+
+                            // Wave flicker
+                            const distVal = Math.sqrt(x * x + y * y);
+                            const wave = Math.sin(distVal * 0.1 - now * 0.01);
+                            if (wave > 0.5) ctx.stroke();
+                            if (wave > 0.8) ctx.fill(); // Fill only strongest wave parts
+                        }
+                    }
                 }
+                ctx.restore();
             }
         }
 
-        // バリア状態の描画 (Shielder/Guardian)
-        if (this.barrierState === 'active') {
-            this.drawBarrier(ctx);
-        }
+        // バリア状態の描画 (統合済みのため削除)
+        // if (this.barrierState === 'active') { this.drawBarrier(ctx); }
 
         // パルスヒット時のアウトライン
         if (this.pulseOutlineTimer > 0) {
@@ -852,38 +1428,100 @@ export class Enemy {
             ctx.stroke();
         }
 
-        // 全体バフのエフェクト (Guardian/Observer)
+        // Gorgeous Guardian Mandala Effect (When Active)
         if (this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN && this.barrierState === 'active') {
-            ctx.strokeStyle = `rgba(0, 255, 100, 0.3)`;
-            ctx.lineWidth = 1;
+            const nowTime = Date.now();
+            const radius = 60;
+
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+
+            // Layer 1: Outer glowing ring
+            ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 + Math.sin(nowTime * 0.003) * 0.2})`;
+            ctx.lineWidth = 3;
+            ctx.setLineDash([]);
             ctx.beginPath();
-            ctx.arc(0, 0, CONSTANTS.GUARDIAN.buffRadius, 0, Math.PI * 2);
+            ctx.arc(0, 0, radius * 1.5, 0, Math.PI * 2);
             ctx.stroke();
+
+            // Layer 2: Rotating Magic Circle (Mandala)
+            ctx.save();
+            ctx.rotate(nowTime * 0.001);
+            ctx.strokeStyle = 'rgba(0, 255, 150, 0.6)';
+            ctx.lineWidth = 1.5;
+
+            for (let j = 0; j < 2; j++) {
+                ctx.rotate(Math.PI / 4);
+                ctx.beginPath();
+                const sides = 4 + j * 2;
+                for (let i = 0; i < sides; i++) {
+                    const theta = (i / sides) * Math.PI * 2;
+                    const x = Math.cos(theta) * radius * 1.3;
+                    const y = Math.sin(theta) * radius * 1.3;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.stroke();
+            }
+            ctx.restore();
+
+            // Layer 3: Inner fast-rotating gear
+            ctx.save();
+            ctx.rotate(-nowTime * 0.002);
+            ctx.strokeStyle = 'rgba(200, 255, 200, 0.8)';
+            ctx.beginPath();
+            const points = 12;
+            for (let i = 0; i < points; i++) {
+                const r = i % 2 === 0 ? radius * 0.8 : radius * 0.4;
+                const theta = (i / points) * Math.PI * 2;
+                const x = Math.cos(theta) * r;
+                const y = Math.sin(theta) * r;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.restore();
+
+            // Rising Particles
+            const pCount = 5;
+            for (let i = 0; i < pCount; i++) {
+                const seed = (nowTime + i * 500) * 0.001;
+                const px = Math.sin(seed * 4) * radius * 0.8;
+                const py = (seed % 1) * -radius * 2 + radius;
+                const pAlpha = 1 - (Math.abs(py) / (radius * 2));
+                ctx.fillStyle = `rgba(0, 255, 100, ${pAlpha * 0.5})`;
+                ctx.beginPath();
+                ctx.arc(px, py, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
         }
 
-        // 本体描画終了 (回転を解除)
-        ctx.restore();
+        // --- END OF ROTATABLE SECTION ---
+        ctx.restore(); // Ends rotation save at line 1000
 
-        // BARRIER_PAIR のバリア線描画 (非回転コンテキストで実行: ワールド座標同期)
+        // BARRIER_PAIR Line
         if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner && this.partner.active &&
             this.partner.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner.partner === this) {
             if (this.id < this.partner.id) {
                 ctx.save();
-                ctx.strokeStyle = "rgba(0, 255, 255, 0.6)"; // 透明度アップ
+                ctx.strokeStyle = "rgba(0, 255, 255, 0.6)";
                 ctx.lineWidth = CONSTANTS.BARRIER_PAIR.barrierWidth || 6;
-                ctx.setLineDash([12, 6]); // よりはっきりした破線
+                ctx.setLineDash([12, 6]);
                 ctx.shadowBlur = 15;
                 ctx.shadowColor = "#00ffff";
                 ctx.beginPath();
-                ctx.moveTo(0, 0); // translating to (this.renderX, this.renderY)
+                ctx.moveTo(0, 0);
                 ctx.lineTo(this.partner.x - this.x, this.partner.y - this.y);
                 ctx.stroke();
                 ctx.restore();
             }
         }
 
-        // HPバー
-        // ボスは画面上部に別枠表示するので頭上には出さない
+        // HP Bar
         if (!this.isBoss && this.hp < this.maxHp) {
             const barW = 40;
             const barH = 4;
@@ -894,7 +1532,71 @@ export class Enemy {
             ctx.fillRect(-barW / 2, yOff, barW * (this.hp / this.maxHp), barH);
         }
 
-        ctx.restore();
+        // Apply Shadow to the main body drawing
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#00ffaa';
+
+        ctx.restore(); // Final balance for Save at line 996 (Translation Context)
+
+        // GLOBAL GUARDIAN BUFF (Applied to all enemies)
+        // This is separate because it needs its own translation if the above one is closed
+        if (this.game && this.game.globalGuardianActive) {
+            const buffSize = (this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE) * 1.6;
+            const nowTime = Date.now();
+            ctx.save();
+            ctx.translate(this.renderX, this.renderY);
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.shadowBlur = 0; // Clear any leaking shadow
+
+            // Pulsing Background Glow
+            const glowAlpha = 0.15 + Math.sin(nowTime * 0.005) * 0.05;
+            const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, buffSize);
+            grad.addColorStop(0, `rgba(0, 255, 150, ${glowAlpha})`);
+            grad.addColorStop(1, 'rgba(0, 255, 150, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(0, 0, buffSize, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Layer 1: Outer Rotating Hex
+            ctx.strokeStyle = 'rgba(0, 255, 150, 0.7)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            const sides = 6;
+            const angle1 = nowTime * 0.0015 + (this.id * 0.1);
+            for (let i = 0; i < sides; i++) {
+                const theta = (i / sides) * Math.PI * 2 + angle1;
+                ctx.lineTo(Math.cos(theta) * buffSize, Math.sin(theta) * buffSize);
+            }
+            ctx.closePath();
+            ctx.stroke();
+
+            // Layer 2: Pulse Ring
+            const pulse = (Math.sin(nowTime * 0.005) + 1) * 0.5;
+            if (pulse > 0.5) {
+                ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 * (pulse - 0.5)})`;
+                ctx.beginPath();
+                ctx.arc(0, 0, buffSize * pulse, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // Layer 3: Inner floating hex
+            ctx.save();
+            const floatY = Math.sin(nowTime * 0.004 + this.id) * 5;
+            ctx.translate(0, -buffSize * 0.8 + floatY);
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.9)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const theta = (i / 6) * Math.PI * 2 + (nowTime * 0.002);
+                ctx.lineTo(Math.cos(theta) * 8, Math.sin(theta) * 8);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.restore();
+        }
     }
 
     updateObserver(playerX, playerY, dt) {
@@ -1065,6 +1767,7 @@ export class Enemy {
     destroy(reason = 'damage', game) {
         if (!this.active) return;
         this.active = false;
+        this.deactivateReason = reason;
         this.destroyReason = reason;
 
         // 破壊エフェクト
@@ -1079,9 +1782,6 @@ export class Enemy {
             game.killCount++;
             this.killed = true;
             this.destroyReason = 'DEAD';
-            if (game.debugEnabled) {
-                // console.log(`[ENEMY KILLED] id:${this.id} type:${this.type} totalKills:${game.totalKills}`);
-            }
         }
 
         // バリアペアの片割れが死んだ場合、もう片方の挙動を変える
@@ -1103,6 +1803,71 @@ export class Enemy {
             // アイテムドロップ
             if (game.itemManager) {
                 game.itemManager.spawnDrop(this.renderX, this.renderY, this.type, game);
+            }
+        }
+
+        // Splitter 分裂処理 (A案: Minion化)
+        if (this.type === CONSTANTS.ENEMY_TYPES.SPLITTER && reason !== 'LIFETIME' && reason !== 'OOB' && reason !== 'return') {
+            const childrenCount = CONSTANTS.SPLITTER.splitCount || 2;
+
+            // Safe Stage Data Access
+            let stageData = CONSTANTS.STAGE_DATA[game.currentStage];
+            if (!stageData) {
+                // Fallback for Debug Stage or Error
+                stageData = { hpMul: 1.0, speedMul: 1.0 };
+            }
+
+            for (let i = 0; i < childrenCount; i++) {
+                const child = game.enemyPool.get();
+                if (child) {
+                    const offsetAngle = (Math.PI * 2 / childrenCount) * i + Math.random();
+                    const dist = 30;
+                    const cx = this.x + Math.cos(offsetAngle) * dist;
+                    const cy = this.y + Math.sin(offsetAngle) * dist;
+
+                    // SPLITTER_CHILD を生成
+                    child.init(cx, cy, game.player.x, game.player.y, CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD, stageData.hpMul * 0.5, stageData.speedMul);
+
+                    // Minion設定
+                    child.isMinion = true;
+                    child.lifespan = 10.0; // 10秒で消滅
+
+                    // 少し散らす
+                    child.vx = Math.cos(offsetAngle) * child.baseSpeed * 1.5;
+                    child.vy = Math.sin(offsetAngle) * child.baseSpeed * 1.5;
+
+                    game.enemies.push(child);
+                    // Minionなので enemiesRemaining は減らさない (フェーズ生成数に含まれないため)
+                }
+            }
+        }
+    }
+
+    updateBarrier(dt) {
+        if (this.barrierState === 'idle') {
+            this.barrierTimer -= dt;
+            if (this.barrierTimer <= 0) {
+                // Activate barrier
+                this.barrierState = 'active';
+                const config = this.type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER : CONSTANTS.GUARDIAN;
+                this.barrierTimer = (config.barrierDurationMs || 3000) * 2.0; // Double Duration
+                // Sound effect could go here
+            }
+        } else if (this.barrierState === 'active') {
+            this.barrierTimer -= dt;
+            if (this.barrierTimer <= 0) {
+                // Deactivate barrier (cooldown / vulnerable)
+                this.barrierState = 'vulnerable';
+                const config = this.type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER : CONSTANTS.GUARDIAN;
+                this.barrierTimer = config.vulnerableDurationMs || 2000;
+            }
+        } else if (this.barrierState === 'vulnerable') {
+            this.barrierTimer -= dt;
+            if (this.barrierTimer <= 0) {
+                // Back to idle
+                this.barrierState = 'idle';
+                const config = this.type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER : CONSTANTS.GUARDIAN;
+                this.barrierTimer = config.barrierCooldownMs || 3000;
             }
         }
     }

@@ -52,7 +52,14 @@ export class Player {
 
     getRotationSpeed() {
         // 旋回速度（固定に変更）
-        return CONSTANTS.PLAYER_BASE_ROTATION_SPEED;
+        let speed = CONSTANTS.PLAYER_BASE_ROTATION_SPEED;
+
+        // デバッグ倍速時は操作性を確保するために旋回速度を上げる
+        if (this.game && this.game.debugEnabled && this.game.timeScale > 1.0) {
+            speed *= 5.0;
+        }
+
+        return speed;
     }
 
     // 弾速・ダメージ計算用の補正値を返す

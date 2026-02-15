@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Enemy Reference</title>
+    <style>
+        body {
+            background: #222;
+            color: #fff;
+            font-family: sans-serif;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+
+        .card {
+            background: #333;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        canvas {
+            background: #000;
+            border: 1px solid #555;
+            margin-bottom: 10px;
+        }
+
+        .name {
+            font-weight: bold;
+            color: #00ffcc;
+            margin-bottom: 5px;
+        }
+
+        .key {
+            font-size: 0.8em;
+            color: #888;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Enemy Reference (Embedded)</h1>
+    <div class="grid" id="grid"></div>
+
+    <script>
+        // --- 1. MINIMAL CONSTANTS ---
+        const CONSTANTS = {
+            ENEMY_SIZE: 15,
+            BOSS_SIZE_MUL: 6,
+            ELITE_SIZE_MUL: 1.8,
+            TRICKSTER: { sizeMul: 0.7 },
+            ENEMY_TYPES: {
+                NORMAL: 'A', ZIGZAG: 'B', EVASIVE: 'C', ELITE: 'D', ASSAULT: 'E',
+                SHIELDER: 'F', GUARDIAN: 'G', DASHER: 'H', ORBITER: 'I',
+                SPLITTER: 'J', SPLITTER_CHILD: 'K', OBSERVER: 'L',
+                BARRIER_PAIR: 'N', TRICKSTER: 'O', ATTRACTOR: 'P', REFLECTOR: 'Q', FLANKER: 'M'
+            },
+            SHIELDER: { auraRadius: 90 },
+            GUARDIAN: { buffRadius: 220 },
+            BARRIER_PAIR: { barrierWidth: 6 },
+            BOSS_DAMAGE_LIMIT_MIN_DPS: 10,
+            BOSS_DAMAGE_LIMIT_RATIO_PER_SEC: 0.1
+        };
+
+        // --- 2. MOCK EFFECTS to prevent crash ---
+        const Effects = {
+            spawnHitEffect: () => { },
+            createExplosion: () => { },
+            createDeathExplosion: () => { },
+            createRing: () => { },
+            createSpark: () => { },
+            list: []
+        };
+
+        // --- 3. MINIMAL ENEMY CLASS (Extracted & Simplified) ---
+        class Enemy {
+            constructor(game) {
+                this.game = game;
+                this.active = false;
+                this.x = 0; this.y = 0;
+                this.renderX = 0; this.renderY = 0;
+                this.type = 'A';
+                this.id = Math.random();
+                this.hp = 10; this.maxHp = 10;
+
+                this.isBoss = false;
+                this.barrierState = 'inactive';
+                this.obsState = 'idle';
+                this.pulseOutlineTimer = 0;
+            }
+
+            draw(ctx) {
+                if (!this.active) return;
+
+                ctx.save();
+
+                // For reference view, we draw at (0,0) because canvas is translated
+                // Also, no rotation needed for icon view
+
+                // Shadow
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.getShadowColor();
+
+                // Draw based on type (Logic copied from src/Enemy.js draw())
+                switch (this.type) {
+                    case 'A': // NORMAL
+                        this.drawShape(ctx, 3, '#ff4444'); // Triangle
+                        break;
+                    case 'B': // ZIGZAG
+                        this.drawShape(ctx, 4, '#ffaa00'); // Square (Diamond)
+                        break;
+                    case 'C': // EVASIVE
+                    case 'E': // ASSAULT
+                        this.drawShape(ctx, 5, '#00ff88'); // Pentagon
+                        break;
+                    case 'D': // ELITE
+                        this.drawShape(ctx, 6, '#ff00ff'); // Hexagon
+                        break;
+                    case 'F': // SHIELDER
+                        this.drawShape(ctx, 8, '#00ffff'); // Octagon
+                        break;
+                    case 'G': // GUARDIAN
+                        this.drawShape(ctx, 8, '#00ff44'); // Green Octagon
+                        break;
+                    case 'H': // DASHER
+                        this.drawShape(ctx, 3, '#ff8800'); // Orange Triangle
+                        break;
+                    case 'I': // ORBITER
+                        this.drawShape(ctx, 4, '#0088ff'); // Blue Diamond
+                        break;
+                    case 'J': // SPLITTER
+                        this.drawShape(ctx, 5, '#ffff00'); // Yellow Pentagon
+                        break;
+                    case 'K': // SPLITTER_CHILD
+                        this.drawShape(ctx, 3, '#ffff88'); // Pale Yellow Triangle
+                        break;
+                    case 'L': // OBSERVER
+                        this.drawShape(ctx, 3, '#aa00ff'); // Purple Triangle (Eye-like?)
+                        break;
+                    case 'N': // BARRIER_PAIR
+                        this.drawShape(ctx, 4, '#00ffff', false); // Cyan Square
+                        break;
+                    case 'O': // TRICKSTER
+                        this.drawShape(ctx, 4, '#ffff44'); // Yellow Square
+                        break;
+                    case 'P': // ATTRACTOR
+                        this.drawShape(ctx, 6, '#44ff44'); // Green Hexagon
+                        break;
+                    case 'Q': // REFLECTOR
+                        this.drawShape(ctx, 8, '#ff0044'); // Red Octagon
+                        break;
+                    default:
+                        this.drawShape(ctx, 3, '#ffffff');
+                        break;
+                }
+
+                // Barrier Visuals
+                if (this.barrierState === 'active') {
+                    ctx.strokeStyle = 'cyan';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, CONSTANTS.ENEMY_SIZE * 1.5, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
+            getShadowColor() {
+                switch (this.type) {
+                    case 'A': return '#f00';
+                    case 'B': return '#fa0';
+                    case 'C': case 'E': return '#0f8';
+                    case 'F': return '#0ff';
+                    default: return '#fff';
+                }
+            }
+
+            drawShape(ctx, sides, color, useStroke = true) {
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+                for (let i = 0; i < sides; i++) {
+                    const angle = (i / sides) * Math.PI * 2 - Math.PI / 2;
+                    const x = Math.cos(angle) * size;
+                    const y = Math.sin(angle) * size;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.fill();
+
+                if (useStroke) {
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // --- 4. MAIN SCRIPT ---
+        const mockGame = {
+            player: { x: 400, y: 400 },
+            // ... minimal mock
+        };
+
+        const grid = document.getElementById('grid');
+
+        const types = [
+            { id: 'A', name: 'NORMAL' },
+            { id: 'B', name: 'ZIGZAG' },
+            { id: 'C', name: 'EVASIVE' },
+            { id: 'D', name: 'ELITE' },
+            { id: 'E', name: 'ASSAULT' },
+            { id: 'F', name: 'SHIELDER' },
+            { id: 'G', name: 'GUARDIAN' },
+            { id: 'H', name: 'DASHER' },
+            { id: 'I', name: 'ORBITER' },
+            { id: 'J', name: 'SPLITTER' },
+            { id: 'K', name: 'SPLITTER_CHILD' },
+            { id: 'L', name: 'OBSERVER' },
+            { id: 'N', name: 'BARRIER_PAIR' },
+            { id: 'O', name: 'TRICKSTER' },
+            { id: 'P', name: 'ATTRACTOR' },
+            { id: 'Q', name: 'REFLECTOR' }
+        ];
+
+        types.forEach((t) => {
+            const card = document.createElement('div');
+            card.className = 'card';
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 100;
+            canvas.height = 100;
+            const ctx = canvas.getContext('2d');
+
+            // Grid
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(50, 0); ctx.lineTo(50, 100);
+            ctx.moveTo(0, 50); ctx.lineTo(100, 50);
+            ctx.stroke();
+
+            // Draw
+            const enemy = new Enemy(mockGame);
+            enemy.type = t.id;
+            enemy.active = true;
+
+            // State defaults
+            if (t.name === 'SHIELDER' || t.name === 'GUARDIAN') enemy.barrierState = 'active';
+
+            ctx.save();
+            ctx.translate(50, 50);
+            try {
+                enemy.draw(ctx);
+            } catch (e) {
+                console.error(e);
+                ctx.fillStyle = 'red';
+                ctx.fillText('ERR', -10, 0);
+            }
+            ctx.restore();
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'name';
+            nameEl.textContent = t.name;
+
+            const keyEl = document.createElement('div');
+            keyEl.className = 'key';
+            keyEl.textContent = `Type: ${t.id}`;
+
+            card.appendChild(canvas);
+            card.appendChild(nameEl);
+            card.appendChild(keyEl);
+            grid.appendChild(card);
+        });
+    </script>
+</body>
+
+</html>

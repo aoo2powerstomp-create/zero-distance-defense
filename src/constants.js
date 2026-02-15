@@ -4,6 +4,9 @@ export const CONSTANTS = {
     TARGET_HEIGHT: 800,
     BG_Y_OFFSET: 53, // 背景画像の垂直位置微調整 (炉心と自機の重なり用)
 
+    // デバッグステージID
+    STAGE_DEBUG: 999,
+
     // プレイヤー設定
     PLAYER_MAX_HP: 100,
     PLAYER_REGEN_PER_SEC: 0.005, // 0.5%
@@ -25,15 +28,23 @@ export const CONSTANTS = {
     ENEMY_BASE_SPEED: 0.96,
     ENEMY_DAMAGE_RATIO: 0.03, // 3%
     ENEMY_CONTACT_COOLDOWN_MS: 250,
-    ENEMY_LIMIT: 300,
+
     ENEMY_KNOCKBACK_POWER: 4.0,
     ENEMY_KNOCKBACK_DAMP: 0.9,
     ENEMY_KNOCKBACK_MAX: 15,
 
     // エリート設定
-    ELITE_HP_MUL: 3,
+    ELITE_HP_MUL: 8, // 3 -> 8 (User confirmed "High HP")
     ELITE_SIZE_MUL: 1.8,
-    ELITE_KB_RESIST: 0.8, // 80%軽減
+    ELITE_KB_RESIST: 0.9, // 90%軽減 (Stronger resist)
+    ELITE_DAMAGE_MUL: 2.0, // New: Contact damage multiplier
+    ELITE_CHARGE: {
+        orbitDuration: 3000,
+        telegraphDuration: 1000,
+        chargeDuration: 1500,
+        cooldownDuration: 1000,
+        chargeSpeedMul: 3.5
+    },
 
     // ボス設定
     BOSS_HP_MUL: 60, // 12 -> 60 (5倍に強化)
@@ -278,6 +289,24 @@ export const CONSTANTS = {
         REFLECTOR: 'Q'        // 反射殻 (Red)
     },
 
+    // --- ACTIVE LAYER (Balance Test) ---
+    // 検証用: 以下のリストに含まれる敵のみ出現する
+    ACTIVE_ENEMY_TYPES: [
+        'A', // NORMAL
+        'D', // ELITE
+        'I', // ORBITER
+        'N'  // BARRIER_PAIR
+    ],
+    // 検証用: 以下の陣形のみ使用する
+    ACTIVE_FORMATIONS: [
+        'LINEAR',
+        'PINCER',
+        'GRID'
+    ],
+    // 検証用: 固定ハードキャップ
+    TEST_HARD_CAP: 12,
+    // -----------------------------------
+
     // 敵の役割分類 (SpawnDirector用)
     ENEMY_ROLES: {
         A: 'CORE',      // NORMAL
@@ -360,11 +389,16 @@ export const CONSTANTS = {
 
     // 新敵タイプ設定
     FLANKER: {
-        speedMul: 1.4,
-        backDist: 180, // プレイヤーの背後に回ろうとする際の基準距離
-        orbitRadius: 220, // 回り込み中の半径
+        maxHp: 2,
+        speed: 2.8,               // 基本速度を大幅アップ (1.4 -> 2.8)
+        backDist: 180,            // プレイヤーの背後に回る際の基準距離
+        approachDist: 350,        // 回り込みを開始する距離
+        orbitRadius: 220,         // 回り込み中の半径
+        chargeSpeedMul: 12.0,     // 超高速突進 (7.0 -> 12.0)
+        maintainDurationMs: 2000, // 2秒間背後を維持
+        flankTurnRate: 0.15,      // 回り込み時の俊敏な旋回性能
         spawnRate: 0.05,
-        unlockStage: 3 // Stage 4
+        unlockStage: 3
     },
     BARRIER_PAIR: {
         maxDist: 200, // ペアが離れすぎないようにする距離 (300 -> 200)
@@ -390,8 +424,10 @@ export const CONSTANTS = {
         unlockStage: 4 // Stage 5
     },
     REFLECTOR: {
-        reflectAngle: Math.PI / 3, // 前方60度
+        reflectAngle: Math.PI / 2, // 前方180度 (半円ビジュアルと同期)
         orbitRadius: 200, // 弾を防ぎやすい距離を維持
+        activeDurationMs: 7000,   // 反射有効時間
+        vulnerableDurationMs: 3000, // 解除（脆弱）時間
         spawnRate: 0.07,
         unlockStage: 6 // Stage 7
     },
@@ -433,10 +469,12 @@ export const CONSTANTS = {
         NORMAL: { mode: 'DIRECT', turnRate: 0 }, // 0=無限
         // B
         ZIGZAG: { mode: 'ZIGZAG', freq: 0.005, amp: 80 },
-        // C (Old EVASIVE -> ASSAULT)
-        EVASIVE: { mode: 'ASSAULT', turnRate: 0.08 }, // 旋回制限
+        // C
+        EVASIVE: { mode: 'ASSAULT', turnRate: 0.08 }, // Old EVASIVE const, kept for compat if needed, but EVASIVE type uses EVASIVE mode now
         // D
-        ELITE: { mode: 'HOVER', turnRate: 0.04 },
+        ELITE: { mode: 'ELITE', turnRate: 0.04 },
+        // E (ASSAULT -> ASSAULT_CURVE)
+        ASSAULT: { mode: 'ASSAULT_CURVE', turnRate: 0.1 },
         // E (Splitter)
         SPLITTER: { mode: 'ZIGZAG', freq: 0.008, amp: 60 },
         // F
@@ -460,6 +498,7 @@ export const CONSTANTS = {
     },
 
     ENEMY_MIN_SPEED_RATIO: 0.6,     // 最至近での速度比率 (40%減)
+    ENEMY_SPEED_ADJUST_RADIUS: 180, // 減速を開始する距離 (px)
 
     // インベーダー(Type Invader)設定
     INVADER_STRAFE_AMP: 60,      // 横揺れの振幅(px)
@@ -472,6 +511,16 @@ export const CONSTANTS = {
     EVASIVE_ANGLE: 20 * (Math.PI / 180), // 回避時にずらす角度 (20度)
     EVASIVE_TRIGGER_ARC: 15 * (Math.PI / 180), // 射線付近とみなす角度 (15度)
     EVASIVE_DURATION_MS: 1200, // 回避行動を続ける時間
+
+    // アサルト設定
+    ASSAULT_CURVE: {
+        weaveFreq: 0.004,
+        weaveAmp: 65 * (Math.PI / 180), // 45 -> 65度 (More snake)
+        triggerDist: 180, // 280 -> 180 (Close range charge)
+        telegraphDuration: 600, // 予兆スキ（溜め）
+        chargeSpeedMul: 2.5,
+        turnRateWhileWeaving: 0.08
+    },
 
     // シールダー(Shielder)設定
     SHIELDER: {
@@ -525,12 +574,12 @@ export const CONSTANTS = {
     // 新敵設定
     DASHER: {
         maxHp: 3,
-        speed: 1.2,               // 通常時は並
-        windupMs: 500,            // 予兆時間
-        dashSpeedMultiplier: 4.0, // 突進倍率
-        dashCooldownMs: 3000,     // サイクル
-        dashDurationMs: 600,      // 突進時間
-        windupVulnerableMultiplier: 1.5 // 予兆中は被弾1.5倍
+        speed: 1.1,
+        windupMs: 800,
+        dashSpeedMultiplier: 6.0, // Increased from 3.0 to 6.0 for real speed
+        dashCooldownMs: 3200,
+        dashDurationMs: 400,      // Shorter duration for high-speed burst
+        windupVulnerableMultiplier: 1.6
     },
     ORBITER: {
         maxHp: 2,
@@ -542,13 +591,18 @@ export const CONSTANTS = {
     },
     SPLITTER: {
         maxHp: 4,
-        speed: 1.2,
-        splitCount: 2
+        speed: 1.0,               // ベース速度
+        splitCount: 2,
+        dashSpeedMultiplier: 5.0, // 「ビュン」の速さ
+        dashDurationMs: 300,      // 移動時間
+        pauseDurationMs: 600      // 「ピタ」の停止時間
     },
     SPLITTER_CHILD: {
         maxHp: 1,
         speedMultiplier: 1.5,
-        sizeMul: 0.7
+        sizeMul: 0.7,
+        zigzagFreq: 0.006,
+        zigzagAmp: 30
     },
     OBSERVER: {
         speedMul: 1.0,
@@ -754,5 +808,24 @@ export const CONSTANTS = {
         9: 150,
         10: 180
     },
-    DEFAULT_TARGET_TIME_SEC: 90
+    DEFAULT_TARGET_TIME_SEC: 90,
+    ENEMY_DESCRIPTIONS: {
+        'A': '【NORMAL】標準的なエネミー。まっすぐ自機に向かって進みます。',
+        'B': '【ZIGZAG】蛇行しながら接近するエネミー。狙いを定めるのが少し難しい。',
+        'C': '【EVASIVE】回避型。自機にある程度近づくと、左右に避ける動きを見せます。',
+        'D': '【ELITE】精鋭。高いHPを持ち、周囲を旋回してから強力な突撃を仕掛けます。',
+        'E': '【ASSAULT】突撃型。一定距離まで近づくと、直線的に加速して体当たりを狙います。',
+        'F': '【SHIELDER】盾持ち。周囲の敵を保護するエネルギーバリアを展開します。',
+        'G': '【GUARDIAN】守護者。周囲の敵の攻撃力や速度を強化するバフを付与します。',
+        'H': '【DASHER】高速蛇行型。不規則に素早く揺れながら接近し、幻惑します。',
+        'I': '【ORBITER】軌道周回型。自機の周囲を一定距離で回り続け、隙を伺います。',
+        'J': '【SPLITTER】分裂型。倒されると複数の小型エネミー（K）に分裂します。',
+        'K': '【CHILD】分裂後の小型個体。非常に弱いが数で攻めてきます。',
+        'L': '【OBSERVER】観測者。一定距離で停止し、じっと自機を観察（威圧）します。',
+        'M': '【FLANKER】暗殺型。側面や背後に回り込んで潜伏し、一瞬の隙を突いて超高速突撃します。',
+        'N': '【BARRIER_PAIR】連結型。2体1組で現れ、その間に破壊不可能なレーザーバリアを張ります。',
+        'O': '【TRICKSTER】幻惑型。テレポートや急な方向転換でプレイヤーを翻弄します。',
+        'P': '【ATTRACTOR】追加型。周囲の敵を自身に引き寄せ、盾のような役割を果たします。',
+        'Q': '【REFLECTOR】反射型。一部の攻撃を弾き返したり、高い防御力を持ちます。'
+    }
 };

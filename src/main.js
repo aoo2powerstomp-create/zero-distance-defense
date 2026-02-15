@@ -20,6 +20,8 @@ class Game {
         // console.log("[INITIALIZING GAME]");
         this.canvas = document.getElementById('game-canvas');
         this.ctx = this.canvas.getContext('2d');
+        this.overlayCanvas = document.getElementById('overlay-canvas');
+        this.overlayCtx = this.overlayCanvas ? this.overlayCanvas.getContext('2d') : null;
 
         // キャンバスサイズ設定
         this.resize();
@@ -44,6 +46,7 @@ class Game {
         this.damageTexts = [];
 
         this.goldCount = 0;
+        this.displayGoldCount = 0; // 表示用カウンター（アニメーション用）
 
         // 統計データ
         this.totalKills = 0;
@@ -115,8 +118,13 @@ class Game {
 
     resize() {
         const parent = this.canvas.parentElement;
+        if (!parent) return;
         this.canvas.width = parent.clientWidth;
         this.canvas.height = parent.clientHeight;
+        if (this.overlayCanvas) {
+            this.overlayCanvas.width = parent.clientWidth;
+            this.overlayCanvas.height = parent.clientHeight;
+        }
     }
 
     triggerFade(type, duration = 1000) {
@@ -433,83 +441,9 @@ class Game {
     }
 
     drawResultScreen(ctx) {
-        this.resultTimer = (this.resultTimer || 0) + 16.6; // dt概算
-
-        // 背景
+        // 背景を暗くするだけで、文字は描画しない（DOMに任せる）
         ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
         ctx.fillRect(0, 0, CONSTANTS.TARGET_WIDTH, CONSTANTS.TARGET_HEIGHT);
-
-        const cx = CONSTANTS.TARGET_WIDTH / 2;
-        const result = this.lastResult;
-        if (!result) return;
-
-        // STAGE CLEAR
-        ctx.shadowColor = '#00ffff';
-        ctx.shadowBlur = 20;
-        ctx.fillStyle = '#fff';
-        ctx.textAlign = 'center';
-        ctx.font = 'bold 36px "Syncopate", sans-serif'; // 50 -> 36: Syncopateは横に広いため
-        ctx.fillText(`STAGE ${this.currentStage + 1} CLEAR`, cx, 120);
-        ctx.shadowBlur = 0;
-
-        // RANK
-        ctx.font = 'bold 180px "Orbitron", sans-serif';
-        let rankColor = '#fff';
-        if (result.rank === 'SSS') rankColor = '#ffed00'; // Gold
-        else if (result.rank.startsWith('S')) rankColor = '#ffaa00'; // Orange
-        else if (result.rank.startsWith('A')) rankColor = '#ff44aa'; // Pink
-        else if (result.rank === 'B') rankColor = '#4488ff'; // Blue
-        else if (result.rank === 'C') rankColor = '#44ff88'; // Green
-        else rankColor = '#888';
-
-        ctx.fillStyle = rankColor;
-        ctx.shadowColor = rankColor;
-        ctx.shadowBlur = 30;
-        ctx.fillText(result.rank.padEnd(1, ' '), cx, 300); // 1文字なら中央、SSSならそのまま
-        ctx.shadowBlur = 0;
-
-        // BEST record logic
-        if (result.isBest) {
-            ctx.fillStyle = '#ffed00';
-            ctx.font = 'bold 20px "Syncopate", sans-serif';
-            ctx.fillText("- NEW RECORD -", cx, 350);
-        }
-
-        // Stats
-        ctx.fillStyle = '#00ffff'; // 蛍光の緑/銀味のあるシアン
-        ctx.shadowColor = '#00ffff';
-        ctx.shadowBlur = 10;
-        ctx.font = '16px "Syncopate", sans-serif';
-        const startY = 400;
-        const lineHeight = 35;
-
-        ctx.textAlign = 'right';
-        ctx.fillText("ELIMINATED:", cx - 40, startY);
-        ctx.fillText("GOLD EARNED:", cx - 40, startY + lineHeight);
-        ctx.fillText("TIME:", cx - 40, startY + lineHeight * 2);
-        ctx.fillText("DAMAGE:", cx - 40, startY + lineHeight * 3);
-        ctx.fillText("ITEM:", cx - 40, startY + lineHeight * 4);
-
-        ctx.textAlign = 'left';
-        ctx.fillStyle = '#ffffff'; // 値は純白にして際立たせる
-        ctx.shadowColor = '#00ffff';
-        ctx.shadowBlur = 20; // グローを強める
-        ctx.font = 'bold 22px "Orbitron", sans-serif'; // 数字は見やすく太いフォントに
-
-        ctx.fillText(result.kills, cx + 40, startY);
-        ctx.fillText(result.gold, cx + 40, startY + lineHeight);
-        const timeStr = (result.time / 1000).toFixed(2);
-        ctx.fillText(timeStr, cx + 40, startY + lineHeight * 2);
-        ctx.fillText(result.damage, cx + 40, startY + lineHeight * 3);
-        ctx.fillText(result.item, cx + 40, startY + lineHeight * 4);
-        ctx.shadowBlur = 0;
-
-        // Buttons
-        const btnY = 620;
-        const btnOffset = 100; // 150 -> 100 (中央に寄せる)
-
-        this.drawButton(ctx, cx - btnOffset, btnY, "RETRY", '#00ffff'); // ピンク(#ff44aa)からシアンへ
-        this.drawButton(ctx, cx + btnOffset, btnY, "TITLE", '#888');
     }
 
     drawButton(ctx, x, y, text, color) {
@@ -562,12 +496,35 @@ class Game {
                 this.audio.play('menu_select', { priority: 'high' });
                 const titleScreen = document.getElementById('title-screen');
                 if (titleScreen) titleScreen.classList.add('hidden');
+
                 this.currentStage = index;
                 this.startCountdown();
             });
 
             list.appendChild(btn);
         });
+
+        // Debug Stage Button
+        if (DEBUG_ENABLED) {
+            const btn = document.createElement('button');
+            btn.className = 'btn-stage';
+            btn.textContent = 'DEBUG STAGE';
+            btn.style.width = '200px'; // Slightly wider
+            btn.style.borderColor = '#ff00ff';
+            btn.style.color = '#ff00ff';
+
+            btn.addEventListener('click', async () => {
+                await this.audio.init();
+                this.audio.play('menu_select', { priority: 'high' });
+                const titleScreen = document.getElementById('title-screen');
+                if (titleScreen) titleScreen.classList.add('hidden');
+
+                this.currentStage = CONSTANTS.STAGE_DEBUG;
+                this.startCountdown();
+            });
+
+            list.appendChild(btn);
+        }
     }
 
     getUpgradeCost(base, level) {
@@ -575,7 +532,29 @@ class Game {
     }
 
     startWave() {
-        const stageData = CONSTANTS.STAGE_DATA[this.currentStage];
+        // Debug Stage Check
+        this.isDebugStage = (this.currentStage === CONSTANTS.STAGE_DEBUG);
+
+        let stageData;
+        if (this.isDebugStage) {
+            // Mock Stage Data for Debug
+            stageData = {
+                enemyCount: 9999, // Infinite
+                spawnMul: 1.0,
+                hpMul: 1.0,
+                speedMul: 1.0
+            };
+            // Default Debug Values
+            if (this.debugTargetType === undefined) this.debugTargetType = CONSTANTS.ENEMY_TYPES.NORMAL;
+            if (this.debugSpawnCount === undefined) this.debugSpawnCount = 1;
+            if (this.debugSpeedMul === undefined) this.debugSpeedMul = 1.0;
+            if (this.debugHpMul === undefined) this.debugHpMul = 1.0;
+            if (this.debugShowHitbox === undefined) this.debugShowHitbox = false;
+            if (this.debugShowKnockback === undefined) this.debugShowKnockback = false;
+            if (this.debugShowVector === undefined) this.debugShowVector = false;
+        } else {
+            stageData = CONSTANTS.STAGE_DATA[this.currentStage];
+        }
 
         this.enemies.forEach(e => this.enemyPool.release(e));
         this.enemies = [];
@@ -590,7 +569,7 @@ class Game {
         this.killCount = 0;
         this.stageGoldEarned = 0;
 
-        if ((this.currentStage + 1) % 5 === 0) {
+        if (!this.isDebugStage && (this.currentStage + 1) % 5 === 0) {
             this.enemiesRemaining = 0; // ボスステージは追加スポーンなし、ボス撃破＝クリアとする
             this.spawnBoss();
         }
@@ -767,6 +746,16 @@ class Game {
     }
 
     startCountdown() {
+        // デバッグステージの場合はカウントダウンなしで即開始
+        if (DEBUG_ENABLED && this.currentStage === CONSTANTS.STAGE_DEBUG) {
+            const hud = document.getElementById('hud');
+            if (hud) hud.classList.remove('hidden');
+            const controls = document.getElementById('controls');
+            if (controls) controls.classList.remove('hidden');
+            this.startWave();
+            return;
+        }
+
         this.gameState = CONSTANTS.STATE.COUNTDOWN;
         const overlay = document.getElementById('countdown');
         const text = document.getElementById('countdown-text');
@@ -852,11 +841,8 @@ class Game {
         const isFinalStage = this.currentStage >= CONSTANTS.STAGE_DATA.length - 1;
 
         if (isFinalStage) {
-            this.gameState = CONSTANTS.STATE.RESULT;
-            this.resultTimer = 0;
-            // HUDを一時的に隠してリザルトに集中させる
-            document.getElementById('hud').classList.add('hidden');
-            document.getElementById('controls').classList.add('hidden');
+            // 統一されたオーバーレイを使用
+            this.showOverlay('GAME CLEAR', '全ステージクリア！', 'result');
         } else {
             // 中間ステージはカットイン後に次へ
             this.gameState = CONSTANTS.STATE.WAVE_CLEAR_CUTIN;
@@ -932,6 +918,17 @@ class Game {
             if (damageEl) damageEl.textContent = totalResult.damage;
             const itemEl = document.getElementById('stat-item');
             if (itemEl) itemEl.textContent = totalResult.item;
+
+            // HUD等を隠す
+            document.getElementById('hud').classList.add('hidden');
+            document.getElementById('controls').classList.add('hidden');
+
+            // ボタンテキスト調整
+            const btnNext = document.getElementById('btn-next');
+            if (btnNext) {
+                // GAME OVER や 全クリア時はタイトルに戻るのが基本挙動
+                btnNext.textContent = "TITLE";
+            }
         }
     }
 
@@ -1196,7 +1193,18 @@ class Game {
 
     update(dt) {
         this.optimizationFrameCount++;
-        // if (this.optimizationFrameCount % 600 === 0) console.log(`[LOOP TICK] state: ${this.gameState}`);
+
+        // ゴールドカウンターのアニメーション
+        if (this.displayGoldCount < this.goldCount) {
+            // 1桁ずつ増えるような演出（差分の一定割合か、最低1ずつ増やす）
+            const diff = this.goldCount - this.displayGoldCount;
+            const speed = Math.max(1, Math.ceil(diff * 0.15));
+            this.displayGoldCount = Math.min(this.goldCount, this.displayGoldCount + speed);
+        } else if (this.displayGoldCount > this.goldCount) {
+            // 減少時（アップグレード時など）は即座、または高速に更新
+            this.displayGoldCount = this.goldCount;
+        }
+
         if (this.gameState === CONSTANTS.STATE.TITLE || this.gameState === CONSTANTS.STATE.COUNTDOWN || this.gameState === CONSTANTS.STATE.RESULT) return;
 
         // 1. フレームデータのキャッシュ構築
@@ -1281,6 +1289,14 @@ class Game {
             activeCount > 0 &&
             activeEnemies.every(e => e.type === CONSTANTS.ENEMY_TYPES.EVASIVE);
 
+        // スポーン制御 (SpawnDirector)
+        if (this.spawnDirector) {
+            this.spawnDirector.update(dt);
+        } else {
+            // Legacy Spawner fallback (disabled)
+            // this.updateSpawner(dt); 
+        }
+
         Profiler.start('enemy_update');
         for (let i = 0; i < activeCount; i++) {
             const e = activeEnemies[i];
@@ -1360,7 +1376,13 @@ class Game {
         }
         Profiler.end('enemy_repulsion');
 
-        this.golds.forEach(g => g.update(this.player.x, this.player.y));
+        // コインの吸引先を画面端のUIアイコン(DOM)に正確に合わせる
+        const { scale, offsetX, offsetY } = this.getRenderTransform();
+        // スクリーン座標: アイコン中央 (左から約23px, 下から約106px [26+80])
+        const goldTargetX = (23 - offsetX) / scale;
+        const goldTargetY = (this.canvas.height - 106 - offsetY) / scale;
+
+        this.golds.forEach(g => g.update(goldTargetX, goldTargetY));
         this.damageTexts.forEach(d => d.update());
 
         // パルスCDとエフェクト更新 (多層対応)
@@ -1460,19 +1482,25 @@ class Game {
                     }
 
                     // REFLECTOR
-                    if (e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
+                    if (e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR && e.isReflectActive) {
                         const edx = e.x - this.player.x;
                         const edy = e.y - this.player.y;
                         const angleToEnemy = Math.atan2(edy, edx);
                         const bulletAngle = Math.atan2(b.vy, b.vx);
-                        let diff = bulletAngle - (angleToEnemy + Math.PI);
+                        let diff = bulletAngle - angleToEnemy;
                         while (diff < -Math.PI) diff += Math.PI * 2;
                         while (diff > Math.PI) diff -= Math.PI * 2;
 
                         if (Math.abs(diff) < CONSTANTS.REFLECTOR.reflectAngle) {
-                            b.vx *= -1.2;
-                            b.vy *= -1.2;
-                            b.active = false;
+                            // 跳ね返り処理: 速度を反転し、フラグを立てる
+                            const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+                            const reflectAngle = angleToEnemy + (Math.random() - 0.5) * 0.4; // 少しバラけさせる
+                            b.vx = -Math.cos(reflectAngle) * speed * 0.8; // 速度を少し落とす
+                            b.vy = -Math.sin(reflectAngle) * speed * 0.8;
+                            b.angle = Math.atan2(b.vy, b.vx);
+                            b.isReflected = true;
+                            b.hitEnemies.clear(); // 再びエネミーに当たる可能性（または自分に当たる）
+
                             this.audio.play('hit', { variation: 0.5, priority: 'low' });
                             this.spawnDamageText(e.renderX, e.renderY, "REFLECT!", "#ffd700");
                             bulletConsumed = true;
@@ -1576,6 +1604,7 @@ class Game {
             const dx = this.player.x - e.renderX;
             const dy = this.player.y - e.renderY;
             const distSq = dx * dx + dy * dy;
+
             let size = CONSTANTS.ENEMY_SIZE;
             if (e.isBoss) size = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL;
             else if (e.type === CONSTANTS.ENEMY_TYPES.ELITE) size = CONSTANTS.ENEMY_SIZE * CONSTANTS.ELITE_SIZE_MUL;
@@ -1584,7 +1613,13 @@ class Game {
             if (distSq < minDist * minDist) {
                 if (!frameTouchHitApplied && this.player.invincibleFrames <= 0) {
                     if (now - e.lastContactTime > CONSTANTS.ENEMY_CONTACT_COOLDOWN_MS) {
-                        this.player.takeDamage(CONSTANTS.ENEMY_DAMAGE_RATIO);
+                        let damageRatio = CONSTANTS.ENEMY_DAMAGE_RATIO;
+                        if (e.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                            damageRatio *= (CONSTANTS.ELITE_DAMAGE_MUL || 1.0);
+                        } else if (e.type === CONSTANTS.ENEMY_TYPES.FLANKER) {
+                            damageRatio *= 4.0; // High damage for Flanker charge
+                        }
+                        this.player.takeDamage(damageRatio);
                         this.player.invincibleFrames = 18;
                         frameTouchHitApplied = true;
                         this.audio.play('damage', { priority: 'high' });
@@ -1619,6 +1654,23 @@ class Game {
             }
         });
 
+        // 3) 反射弾 vs プレイヤー
+        for (let i = this.bullets.length - 1; i >= 0; i--) {
+            const b = this.bullets[i];
+            if (b.active && b.isReflected) {
+                const dx = b.x - this.player.x;
+                const dy = b.y - this.player.y;
+                const distSq = dx * dx + dy * dy;
+                const playerHitR = CONSTANTS.PLAYER_SIZE || 20;
+                if (distSq < playerHitR * playerHitR) {
+                    this.player.takeDamage(0.1); // 反射弾ダメージ (10%)
+                    this.audio.play('damage', { priority: 'high' });
+                    b.active = false;
+                    Effects.spawnHitEffect(b.x, b.y, 0);
+                }
+            }
+        }
+
         // ステージクリア判定
         const isBossStage = (this.currentStage + 1) % 5 === 0;
 
@@ -1635,18 +1687,30 @@ class Game {
             }
         }
 
+        const { scale: curScale, offsetX: curOffX, offsetY: curOffY } = this.getRenderTransform();
+        const goldTargetX = (23 - curOffX) / curScale;
+        const goldTargetY = (this.canvas.height - 106 - curOffY) / curScale;
+
+        // 数値表示(GOLD)の位置 (左から約60px)
+        const textTargetX = (60 - curOffX) / curScale;
+
         for (let k = this.golds.length - 1; k >= 0; k--) {
             const g = this.golds[k];
-            const dx = this.player.x - g.x;
-            const dy = this.player.y - g.y;
+            const dx = goldTargetX - g.x;
+            const dy = goldTargetY - g.y;
             const distSq = dx * dx + dy * dy;
-            const minDist = CONSTANTS.PLAYER_SIZE + CONSTANTS.GOLD_SIZE / 2;
+            const minDist = 30;
             if (distSq < minDist * minDist) {
                 const val = (typeof g.value === 'number' && !isNaN(g.value)) ? g.value : 10;
                 this.goldCount = (this.goldCount || 0) + val;
                 this.totalGoldEarned = (this.totalGoldEarned || 0) + val;
                 this.stageGoldEarned = (this.stageGoldEarned || 0) + val;
-                this.audio.play('gold_collect', { variation: 0.1, priority: 'low' });
+
+                // 獲得ポップアップ演出 (+いくら)
+                // 数値表示の真上に浮かび上がるように調整 (吸引位置が上がったため相対的に調整)
+                this.spawnDamageText(textTargetX, goldTargetY - 40, `+${val}`, "#ffcc00");
+
+                this.audio.play('gold_collect', { volume: 0.5 });
                 this.goldPool.release(this.golds.splice(k, 1)[0]);
             }
         }
@@ -1660,6 +1724,7 @@ class Game {
         const globalGuardBuffActive = this.enemies.some(p =>
             p.active && p.type === CONSTANTS.ENEMY_TYPES.GUARDIAN && p.barrierState === 'active'
         );
+        this.globalGuardianActive = globalGuardBuffActive; // Store for drawing access
         const globalBuffActive = globalGuardBuffActive || globalMarkActive;
 
         const auraRadiusSq = Math.pow(CONSTANTS.SHIELDER.auraRadius + CONSTANTS.ENEMY_SIZE, 2);
@@ -1710,16 +1775,12 @@ class Game {
                 // console.log(`[OOB DEBUG] id:${e.id} type:${e.type} world:(${e.x.toFixed(0)},${e.y.toFixed(0)}) screen:(${sx.toFixed(0)},${sy.toFixed(0)}) scale:${scale.toFixed(4)} offset:(${offsetX.toFixed(1)},${offsetY.toFixed(1)}) view:${viewW}x${viewH}`);
             }
 
-            if (!e.active || e.oobFrames >= 30) {
-                if (this.debugEnabled) {
-                    let reason = e.destroyReason || (e.oobFrames >= 30 ? "OOB" : "UNKNOWN");
-                    if (!Number.isFinite(e.x) || !Number.isFinite(e.y)) reason = "INVALID";
+            if (!e.active || e.oobFrames >= 60) {
+                if (e.oobFrames >= 60) e.deactivateReason = 'oob';
 
-                    if (reason === "OOB") {
-                        // console.log(`[ENEMY REMOVED] id:${e.id} type:${e.type} reason:${reason} world:(${e.x.toFixed(0)},${e.y.toFixed(0)}) screen:(${sx.toFixed(0)},${sy.toFixed(0)}) transform:[s:${scale.toFixed(2)} ox:${offsetX.toFixed(0)} oy:${offsetY.toFixed(0)}] view:${viewW}x${viewH}`);
-                    } else {
-                        // console.log(`[ENEMY REMOVED] id:${e.id} type:${e.type} reason:${reason}`);
-                    }
+                if (this.debugEnabled) {
+                    const reason = e.deactivateReason || "unknown";
+                    console.log(`[ENEMY REMOVED] id:${e.id} type:${e.type} reason:${reason} pos:(${e.x.toFixed(0)},${e.y.toFixed(0)})`);
                 }
                 this.enemyPool.release(this.enemies.splice(i, 1)[0]);
             }
@@ -1802,7 +1863,7 @@ class Game {
         hpFill.classList.toggle('damage', isDamaged);
         hpContainer.classList.toggle('damage', isDamaged);
 
-        document.getElementById('gold-count').textContent = this.goldCount;
+        document.getElementById('gold-count').textContent = Math.floor(this.displayGoldCount);
         document.getElementById('stage-info').textContent = `STAGE ${this.currentStage + 1}`;
 
         document.querySelectorAll('.weapon-up-btn').forEach(btn => {
@@ -1885,8 +1946,203 @@ class Game {
         const pStr = `${pSec}:${pMs.toString().padStart(2, '0')}`;
 
         const dbState = document.getElementById('db-state');
-        dbState.textContent = `${this.spawnPhase} (${pStr})`;
-        dbState.classList.toggle('cool', this.spawnPhase === 'COOL');
+        if (dbState) {
+            dbState.textContent = `${this.spawnPhase} (${pStr})`;
+            dbState.classList.toggle('cool', this.spawnPhase === 'COOL');
+        }
+
+        // Debug Stage UI (Canvas Overlay or just simple DOM if possible)
+        // Here we just ensure the debug info is shown in the HUD if needed
+        // Debug Stage UI
+        if (this.isDebugStage) {
+            let container = document.getElementById('debug-ui-container');
+            if (!container) {
+                // Main Container
+                container = document.createElement('div');
+                container.id = 'debug-ui-container';
+                container.style.position = 'absolute';
+                container.style.top = '120px';
+                container.style.left = '10px';
+                container.style.display = 'flex';
+                container.style.flexDirection = 'column';
+                container.style.gap = '10px';
+                container.style.pointerEvents = 'auto';
+                container.style.zIndex = '1000';
+                container.style.backgroundColor = 'rgba(0,0,0,0.8)';
+                container.style.padding = '10px';
+                container.style.border = '1px solid #0f0';
+                container.style.color = '#0f0';
+                container.style.fontFamily = 'monospace';
+                document.body.appendChild(container);
+
+                // Title
+                const div = document.createElement('div');
+                div.textContent = 'DEBUG MODE';
+                div.style.fontWeight = 'bold';
+                div.style.borderBottom = '1px solid #0f0';
+                div.style.marginBottom = '5px';
+                container.appendChild(div);
+
+                // 1. Enemy Select
+                const selDiv = document.createElement('div');
+                selDiv.textContent = 'TYPE: ';
+                const select = document.createElement('select');
+                select.id = 'debug-enemy-select';
+                select.style.backgroundColor = '#000';
+                select.style.color = '#fff';
+                select.style.border = '1px solid #0f0';
+
+                Object.entries(CONSTANTS.ENEMY_TYPES).forEach(([key, val]) => {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = `${val} / ${key}`;
+                    if (val === this.debugTargetType) opt.selected = true;
+                    select.appendChild(opt);
+                });
+
+                select.addEventListener('change', (e) => {
+                    this.debugTargetType = e.target.value;
+                    this.enemies.forEach(e => e.active = false); // Clear
+                    if (this.spawnDirector) this.spawnDirector.spawnIntervalTimer = 0;
+
+                    // 解説文の更新
+                    const descDiv = document.getElementById('debug-enemy-desc');
+                    if (descDiv) {
+                        descDiv.textContent = CONSTANTS.ENEMY_DESCRIPTIONS[this.debugTargetType] || '解説なし';
+                    }
+                });
+                selDiv.appendChild(select);
+                container.appendChild(selDiv);
+
+                // 1.1 Enemy Description Panel [NEW]
+                const descDiv = document.createElement('div');
+                descDiv.id = 'debug-enemy-desc';
+                descDiv.style.marginTop = '5px';
+                descDiv.style.padding = '5px';
+                descDiv.style.fontSize = '12px';
+                descDiv.style.color = '#aaa';
+                descDiv.style.borderLeft = '2px solid #0f0';
+                descDiv.style.width = '200px';
+                descDiv.style.whiteSpace = 'normal';
+                descDiv.style.lineHeight = '1.4';
+                descDiv.textContent = CONSTANTS.ENEMY_DESCRIPTIONS[this.debugTargetType] || '解説なし';
+                container.appendChild(descDiv);
+
+                // 2. Spawn Count Slider
+                const cntDiv = document.createElement('div');
+                const cntLabel = document.createElement('div');
+                cntLabel.textContent = `COUNT: ${this.debugSpawnCount}`;
+                const cntRange = document.createElement('input');
+                cntRange.type = 'range';
+                cntRange.min = '1';
+                cntRange.max = '20';
+                cntRange.value = this.debugSpawnCount;
+                cntRange.style.width = '100%';
+                cntRange.addEventListener('input', (e) => {
+                    this.debugSpawnCount = parseInt(e.target.value);
+                    cntLabel.textContent = `COUNT: ${this.debugSpawnCount}`;
+                });
+                cntDiv.appendChild(cntLabel);
+                cntDiv.appendChild(cntRange);
+                container.appendChild(cntDiv);
+
+                // 3. Speed Multiplier
+                const spdDiv = document.createElement('div');
+                const spdLabel = document.createElement('div');
+                spdLabel.textContent = `SPEED: x${this.debugSpeedMul.toFixed(1)}`;
+                const spdRange = document.createElement('input');
+                spdRange.type = 'range';
+                spdRange.min = '0.5';
+                spdRange.max = '2.0';
+                spdRange.step = '0.5';
+                spdRange.value = this.debugSpeedMul;
+                spdRange.style.width = '100%';
+                spdRange.addEventListener('input', (e) => {
+                    this.debugSpeedMul = parseFloat(e.target.value);
+                    spdLabel.textContent = `SPEED: x${this.debugSpeedMul.toFixed(1)}`;
+                });
+                spdDiv.appendChild(spdLabel);
+                spdDiv.appendChild(spdRange);
+                container.appendChild(spdDiv);
+
+                // 4. HP Multiplier
+                const hpDiv = document.createElement('div');
+                const hpLabel = document.createElement('span');
+                hpLabel.textContent = 'HP: ';
+                const hpSel = document.createElement('select');
+                hpSel.style.backgroundColor = '#000';
+                hpSel.style.color = '#fff';
+                [1, 3, 5, 10, 50].forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v;
+                    opt.textContent = `x${v}`;
+                    if (v === this.debugHpMul) opt.selected = true;
+                    hpSel.appendChild(opt);
+                });
+                hpSel.addEventListener('change', (e) => {
+                    this.debugHpMul = parseInt(e.target.value);
+                });
+                hpDiv.appendChild(hpLabel);
+                hpDiv.appendChild(hpSel);
+                container.appendChild(hpDiv);
+
+                // 5. Toggles
+                const createToggle = (label, key) => {
+                    const div = document.createElement('div');
+                    const chk = document.createElement('input');
+                    chk.type = 'checkbox';
+                    chk.checked = this[key];
+                    chk.addEventListener('change', (e) => {
+                        this[key] = e.target.checked;
+                    });
+                    const lbl = document.createElement('span');
+                    lbl.textContent = ` ${label}`;
+                    div.appendChild(chk);
+                    div.appendChild(lbl);
+                    return div;
+                };
+
+                container.appendChild(createToggle('Show Hitbox', 'debugShowHitbox'));
+                container.appendChild(createToggle('Show Knockback', 'debugShowKnockback'));
+
+                // Info
+                const infoDiv = document.createElement('div');
+                infoDiv.id = 'debug-enemy-info';
+                infoDiv.style.whiteSpace = 'pre-wrap';
+                infoDiv.style.fontSize = '12px';
+                infoDiv.style.borderTop = '1px solid #0f0';
+                infoDiv.style.marginTop = '5px';
+                container.appendChild(infoDiv);
+
+                // Back Button
+                const btn = document.createElement('button');
+                btn.textContent = 'BACK TO TITLE';
+                btn.style.marginTop = '10px';
+                btn.onclick = () => this.goToTitle();
+                container.appendChild(btn);
+
+            } else {
+                container.style.display = 'flex';
+                // Update Info Display
+                const infoDiv = document.getElementById('debug-enemy-info');
+                if (infoDiv) {
+                    const target = this.enemies.find(e => e.active);
+                    if (target) {
+                        const hpP = ((target.hp / target.maxHp) * 100).toFixed(1);
+                        infoDiv.textContent = `HP: ${Math.floor(target.hp)}/${Math.floor(target.maxHp)} (${hpP}%) \nPOS: ${Math.floor(target.x)}, ${Math.floor(target.y)} \nSTATE: ${target.movementMode || 'N/A'}`;
+                    } else {
+                        const activeCount = this.enemies.filter(e => e.active).length;
+                        infoDiv.textContent = `Active: ${activeCount}\nTarget: ${this.debugTargetType}`;
+                    }
+                }
+            }
+        } else {
+            // Hide if not debug stage
+            const container = document.getElementById('debug-ui-container');
+            if (container) container.style.display = 'none';
+        }
+
+
 
         // 武器DPSの表示
         const dbWeapon = document.getElementById('db-weapon-dps');
@@ -1914,6 +2170,9 @@ class Game {
 
     draw() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        if (this.overlayCtx) {
+            this.overlayCtx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
+        }
 
         this.ctx.save();
 
@@ -1975,11 +2234,73 @@ class Game {
         this.bullets.forEach(b => b.draw(this.ctx, bAssets[b.weaponType]));
         this.enemies.forEach(e => e.draw(this.ctx));
         if (this.itemManager) this.itemManager.draw(this.ctx);
-        const goldAsset = this.assetLoader.get('GOLD');
-        this.golds.forEach(g => g.draw(this.ctx, goldAsset));
-        this.damageTexts.forEach(d => d.draw(this.ctx));
+
+        // ゴールドとダメージテキストはオーバーレイキャンバス（前面）に描画
+        if (this.overlayCtx) {
+            this.overlayCtx.save();
+            this.overlayCtx.translate(offsetX, offsetY);
+            this.overlayCtx.scale(scale, scale);
+            const goldAsset = this.assetLoader.get('GOLD');
+            this.golds.forEach(g => g.draw(this.overlayCtx, goldAsset));
+            this.damageTexts.forEach(d => d.draw(this.overlayCtx));
+            this.overlayCtx.restore();
+        } else {
+            // フォールバック（通常キャンバス）
+            const goldAsset = this.assetLoader.get('GOLD');
+            this.golds.forEach(g => g.draw(this.ctx, goldAsset));
+            this.damageTexts.forEach(d => d.draw(this.ctx));
+        }
+
         Effects.draw(this.ctx);
         this.player.draw(this.ctx);
+
+        // --- DEBUG VISUALIZATION ---
+        if (this.debugShowHitbox || this.debugShowKnockback) {
+            this.ctx.save();
+            this.enemies.forEach(e => {
+                if (!e.active) return;
+
+                // Hitbox
+                if (this.debugShowHitbox) {
+                    let size = CONSTANTS.ENEMY_SIZE;
+                    if (e.isBoss) size *= CONSTANTS.BOSS_SIZE_MUL;
+                    else if (e.type === CONSTANTS.ENEMY_TYPES.ELITE) size *= CONSTANTS.ELITE_SIZE_MUL;
+                    else if (e.type === CONSTANTS.ENEMY_TYPES.TRICKSTER) size *= (CONSTANTS.TRICKSTER.sizeMul || 0.7);
+                    else if (e.type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) size *= (CONSTANTS.SPLITTER_CHILD.sizeMul || 0.7);
+
+                    this.ctx.strokeStyle = '#00ffff';
+                    this.ctx.lineWidth = 1;
+                    this.ctx.beginPath();
+                    this.ctx.arc(e.renderX, e.renderY, size, 0, Math.PI * 2);
+                    this.ctx.stroke();
+                }
+
+                // Knockback Vector
+                if (this.debugShowKnockback) {
+                    if (Math.abs(e.knockVX) > 0.1 || Math.abs(e.knockVY) > 0.1) {
+                        this.ctx.strokeStyle = '#ff0000';
+                        this.ctx.lineWidth = 2;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(e.renderX, e.renderY);
+                        this.ctx.lineTo(e.renderX + e.knockVX * 15, e.renderY + e.knockVY * 15); // Scale up for visibility
+                        this.ctx.stroke();
+
+                        // Arrowhead
+                        const angle = Math.atan2(e.knockVY, e.knockVX);
+                        const tipX = e.renderX + e.knockVX * 15;
+                        const tipY = e.renderY + e.knockVY * 15;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(tipX, tipY);
+                        this.ctx.lineTo(tipX - Math.cos(angle - Math.PI / 6) * 8, tipY - Math.sin(angle - Math.PI / 6) * 8);
+                        this.ctx.lineTo(tipX - Math.cos(angle + Math.PI / 6) * 8, tipY - Math.sin(angle + Math.PI / 6) * 8);
+                        this.ctx.lineTo(tipX, tipY);
+                        this.ctx.fillStyle = '#ff0000';
+                        this.ctx.fill();
+                    }
+                }
+            });
+            this.ctx.restore();
+        }
 
         // パルスエフェクト描画
         this.pulseEffects.forEach(fx => {
@@ -2080,6 +2401,12 @@ class Game {
         } else {
             overlay.style.display = 'none';
         }
+    }
+    // --- Helper for Debug ---
+    goToTitle() {
+        this.triggerFade('out', 500).then(() => {
+            location.reload();
+        });
     }
 }
 

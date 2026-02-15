@@ -156,7 +156,8 @@ body {
     letter-spacing: 2px;
 }
 
-#game-canvas {
+#game-canvas,
+#overlay-canvas {
     position: absolute;
     top: 0;
     left: 0;
@@ -164,6 +165,13 @@ body {
     height: 100%;
     background: #000;
     z-index: 1;
+}
+
+#overlay-canvas {
+    background: transparent !important;
+    pointer-events: none;
+    z-index: 15;
+    /* UI(z-index: 10)より前面 */
 }
 
 #controls {

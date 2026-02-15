@@ -226,6 +226,27 @@ export class Effects {
         }
     }
 
+    static createThruster(x, y, angle, size = 1.0) {
+        // ジェット噴射エフェクト
+        // angle: 噴射方向（移動の逆）
+        const speed = 3 + Math.random() * 2;
+        const spread = (Math.random() - 0.5) * 0.5; // 少しばらつき
+        const dir = angle + spread;
+
+        this.list.push({
+            type: 'particle',
+            x: x,
+            y: y,
+            vx: Math.cos(dir) * speed,
+            vy: Math.sin(dir) * speed,
+            size: (2 + Math.random() * 2) * size,
+            life: 0.15,
+            maxLife: 0.15,
+            color: Math.random() < 0.5 ? '#ffaa00' : '#ffff00', // Orange/Yellow
+            composite: 'lighter'
+        });
+    }
+
     static update(dt) {
         for (let i = this.list.length - 1; i >= 0; i--) {
             const e = this.list[i];
