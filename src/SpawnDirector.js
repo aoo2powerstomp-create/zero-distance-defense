@@ -59,6 +59,15 @@ export class SpawnDirector {
         this.log('SYSTEM', 'Reset', `Stage ${this.game.currentStage + 1} Started`);
     }
 
+    getCurrentSpawnCap() {
+        const stage = this.game.currentStage + 1;
+        // Curve: Low start (manageable) -> High end (swarm)
+        // Stage 1: ~13
+        // Stage 5: ~37
+        // Stage 9: ~77
+        return 10 + Math.floor(stage * 3) + Math.floor(Math.pow(stage, 2) * 0.5);
+    }
+
     getUnlockedEnemyTypes() {
         const stage = this.game.currentStage + 1;
         const types = [];
@@ -122,6 +131,11 @@ export class SpawnDirector {
         // --- ステートマシン ---
         switch (this.state) {
             case 'GENERATING':
+                // Budget Check: If no enemies left to spawn, wait for clear
+                if (this.game.enemiesRemaining <= 0) {
+                    this.state = 'WAITING';
+                    break;
+                }
                 this.generateNextPhase();
                 this.state = 'SPAWNING';
                 break;
@@ -130,13 +144,7 @@ export class SpawnDirector {
                 // Queue消化
                 if (this.spawnQueue.length > 0) {
                     // 同時湧き制限 (Hard Cap)
-                    let cap = 8; // Stage 1
-                    const st = this.game.currentStage + 1;
-                    if (st === 2) cap = 10;
-                    else if (st === 3) cap = 12;
-                    else if (st === 4) cap = 14;
-                    else if (st === 5) cap = 16;
-                    else if (st >= 6) cap = 18;
+                    let cap = this.getCurrentSpawnCap();
 
                     if (this.game.enemies.length < cap) {
                         this.spawnIntervalTimer -= dt;
@@ -156,12 +164,32 @@ export class SpawnDirector {
                 }
                 break;
 
+
+
+
+
+
             case 'WAITING':
                 this.phaseTimer += dt;
 
-                // Check for phase completion (all enemies defeated)
+                // Check for phase completion
                 const aliveCount = this.game.enemies.filter(e => e.active && !e.isMinion).length;
+
+                // 次フェーズへの移行条件（緩和）
+                // 1. 全滅している
+                // 2. 残り敵数が少なく、かつ強敵（Commander格）が1体以下
+                //    ユーザー要望: "シールダー ガーディアンが画面1匹になったら次の湧き"
+                const strongCount = this.game.enemies.filter(e => e.active && this.isStrongType(e.type)).length;
+
+                let isReady = false;
                 if (aliveCount === 0) {
+                    isReady = true;
+                } else if (aliveCount <= 4 && strongCount <= 1) {
+                    // 雑魚が少し残っていても、強敵が1体以下なら次へ行く
+                    isReady = true;
+                }
+
+                if (isReady) {
                     this.state = 'COOLDOWN';
                     this.cooldownTimer = this.currentPhase ? this.currentPhase.cooldownMs : 1000;
                 }
@@ -177,6 +205,8 @@ export class SpawnDirector {
     }
 
     generateNextPhase() {
+
+
         const stage = this.game.currentStage + 1;
 
         // --- フェーズ種別の決定 ---
@@ -217,6 +247,14 @@ export class SpawnDirector {
     // --- 各フェーズ生成メソッド ---
 
     generateRecoveryPhase() {
+        // 全滅または休憩後の小休止フェーズ
+        // 少数のみ湧く
+        const cap = this.getCurrentSpawnCap();
+        // Capの 20% 程度、最低3体、ただし残り数を超えないように
+        let count = Math.max(3, Math.floor(cap * 0.2));
+        count = Math.min(count, this.game.enemiesRemaining);
+        if (count <= 0) count = 0;
+
         // 強敵の次は必ず休憩 (COREのみ, 小規模)
         const stage = this.game.currentStage + 1;
         let coreTypes = [CONSTANTS.ENEMY_TYPES.NORMAL];
@@ -237,18 +275,35 @@ export class SpawnDirector {
         this.currentPhase = {
             type: 'RECOVERY',
             mainType: type,
-            count: 4 + Math.floor(Math.random() * 3), // 少なめ
+            count: count,
             interval: 600,
             cooldownMs: 2000,
             maxDurationMs: 8000
         };
 
-        this.currentPlan = { mainType: type, pattern: 'NONE' }; // Compatibility
+        // --- ESCORT / COMMANDER LOGIC ---
+        // Commander判定: Unfrozen または 強敵 または 複数同時不可
+        // ただし DebugStage は除外
+        let isCommander = false;
+        if (!this.game.isDebugStage) {
+            const isUnfrozen = (CONSTANTS.UNFROZEN_ENEMY_TYPES || []).includes(type);
+            if (isUnfrozen || this.isStrongType(type) || !this.canSpawnMultiple(type)) {
+                isCommander = true;
+            }
+        }
+
+        const spawnType = isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type; // 部下はNORMAL
+        // -------------------------------
+
+        this.currentPlan = { mainType: type, pattern: 'NONE' };
 
         // 生成
         for (let i = 0; i < this.currentPhase.count; i++) {
+            // Leader Injection: 先頭だけ Commander にする
+            const currentType = (isCommander && i === 0) ? type : spawnType;
+
             this.spawnQueue.push({
-                type: type,
+                type: currentType,
                 pattern: 'NONE',
                 x: null, y: null,
                 nextDelay: 600 + Math.random() * 400 // バラけさせる
@@ -296,14 +351,29 @@ export class SpawnDirector {
         if (!this.checkPhaseHardCaps(type)) type = CONSTANTS.ENEMY_TYPES.NORMAL;
 
         // 数
-        let count = 6;
-        if (stage >= 3) count = 8;
-        if (stage >= 6) count = 12;
+        let count = Math.floor(this.getCurrentSpawnCap() * 0.6);
+        count = Math.max(6, count);
+        count = Math.min(count, this.game.enemiesRemaining);
+        if (count <= 0) count = 0;
 
         // --- ACTIVE LAYER CAP Override (Optional) ---
         if (CONSTANTS.TEST_HARD_CAP) {
             count = Math.min(count, CONSTANTS.TEST_HARD_CAP);
         }
+
+        // --- ESCORT / COMMANDER LOGIC ---
+        let isCommander = false;
+        if (!this.game.isDebugStage) {
+            const isUnfrozen = (CONSTANTS.UNFROZEN_ENEMY_TYPES || []).includes(type);
+            if (isUnfrozen || this.isStrongType(type) || !this.canSpawnMultiple(type)) {
+                isCommander = true;
+            }
+        }
+
+        // Commanderなら部下(Escort)をセット、本人はリーダーとして注入
+        const leaderType = isCommander ? type : null;
+        const memberType = isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type; // 部下はNORMAL固定（改良可）
+        // -------------------------------
 
         this.currentPhase = {
             type: 'FORMATION',
@@ -314,7 +384,16 @@ export class SpawnDirector {
             maxDurationMs: 15000
         };
 
-        this.queueFormation(pattern, type, count);
+        // queueFormation を拡張して leaderType を渡す必要があるが、
+        // 既存の queueFormation は type を全員に適用する。
+        // ここでは queueFormation 呼び出し後に spawnQueue の先頭を書き換える方式をとる（簡易実装）
+        const preQueueLen = this.spawnQueue.length;
+        this.queueFormation(pattern, memberType, count);
+
+        if (isCommander && this.spawnQueue.length > preQueueLen) {
+            // 先頭（リーダー）を Commander に書き換え
+            this.spawnQueue[preQueueLen].type = leaderType;
+        }
 
         // 強敵フラグ更新
         this.wasStrongPhase = this.isStrongType(type);
@@ -324,8 +403,9 @@ export class SpawnDirector {
 
     generateMixedPhase() {
         // 小波状攻撃 (Waves)
-        // 2〜3回の小グループを投入する
         const stage = this.game.currentStage + 1;
+        const cap = this.getCurrentSpawnCap();
+
         const subWaves = 2 + Math.floor(Math.random() * 2); // 2 or 3
 
         this.currentPhase = {
@@ -336,8 +416,10 @@ export class SpawnDirector {
         };
 
         const candidates = this.buildCandidateList();
+        let budget = this.game.enemiesRemaining;
 
         for (let i = 0; i < subWaves; i++) {
+            if (budget <= 0) break;
             // 各Waveでタイプを変えることも可能だが、今回は混ぜる
             let type = this.pickTypeWeighted(candidates) || CONSTANTS.ENEMY_TYPES.NORMAL;
             // HardCap: 強敵は1フェーズ1回まで -> wasStrongPhase ではなく ローカルでチェックが必要だが
@@ -351,12 +433,30 @@ export class SpawnDirector {
             }
             if (!this.checkPhaseHardCaps(type)) type = CONSTANTS.ENEMY_TYPES.NORMAL;
 
-            const subCount = 2 + Math.floor(Math.random() * 3); // 2-4体
+            let subCount = Math.floor(cap * 0.15); // 15% per wave
+            subCount = Math.max(2, subCount);
+            subCount = Math.min(subCount, budget);
+            budget -= subCount;
+
+            // --- ESCORT / COMMANDER LOGIC ---
+            let isCommander = false;
+            if (!this.game.isDebugStage) {
+                const isUnfrozen = (CONSTANTS.UNFROZEN_ENEMY_TYPES || []).includes(type);
+                if (isUnfrozen || this.isStrongType(type) || !this.canSpawnMultiple(type)) {
+                    isCommander = true;
+                    // Mixedでは数は減らさない（護衛をつける）
+                }
+            }
+            // -------------------------------
+
             const interval = 600 + Math.random() * 400; // 0.6 - 1.0s
 
             for (let j = 0; j < subCount; j++) {
+                // Leader Injection
+                const currentType = (isCommander && j === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
+
                 this.spawnQueue.push({
-                    type: type, // マッピング不要、直接IDが入るはず
+                    type: currentType, // マッピング不要、直接IDが入るはず
                     pattern: 'NONE',
                     x: null, y: null,
                     nextDelay: (j === subCount - 1) ? 1500 : interval // Waveの最後は少し間隔を空ける
@@ -372,7 +472,12 @@ export class SpawnDirector {
     generatePressurePhase() {
         // Pressure: 五月雨 (Streaming)
         // 0.5秒間隔で一定数を流し込む
-        const count = 5 + Math.floor(Math.random() * 4); // 5-8体
+        const cap = this.getCurrentSpawnCap();
+        let rate = 0.5 + Math.random() * 0.3;
+        let count = Math.floor(cap * rate);
+        count = Math.max(5, count);
+        count = Math.min(count, this.game.enemiesRemaining);
+        if (count <= 0) count = 0;
 
         // Pressureは主にCore/Harasserで行う
         let type = CONSTANTS.ENEMY_TYPES.NORMAL;
@@ -411,9 +516,32 @@ export class SpawnDirector {
             maxDurationMs: 12000
         };
 
-        for (let i = 0; i < count; i++) {
+        // --- ESCORT / COMMANDER LOGIC ---
+        let isCommander = false;
+        if (!this.game.isDebugStage) {
+            const isUnfrozen = (CONSTANTS.UNFROZEN_ENEMY_TYPES || []).includes(type);
+            if (isUnfrozen || this.isStrongType(type) || !this.canSpawnMultiple(type)) {
+                isCommander = true;
+            }
+        }
+        // PressureでCommanderが選ばれた場合、数が多すぎるので
+        // Commander自体は1体にし、残りをNormalにする（あるいはPressureではCommanderを禁止する手もあるが、今回は混ぜる）
+        // -------------------------------
+
+        this.currentPhase = {
+            type: 'PRESSURE',
+            mainType: type,
+            count: count,
+            cooldownMs: 1000,
+            maxDurationMs: 12000
+        };
+
+        for (let i = 0; i < this.currentPhase.count; i++) {
+            // Leader Injection
+            const currentType = (isCommander && i === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
+
             this.spawnQueue.push({
-                type: type,
+                type: currentType,
                 pattern: 'NONE',
                 x: null, y: null,
                 nextDelay: 400 + Math.random() * 200 // 0.4-0.6s
@@ -428,7 +556,12 @@ export class SpawnDirector {
     generateStandardPhase() {
         // 従来の「パターンなし」ランダム湧きに近いが、まとめて投入
         // バラバラと一度に出す
-        const count = 5 + Math.floor(Math.random() * 4);
+        const cap = this.getCurrentSpawnCap();
+        let rate = 0.4 + Math.random() * 0.3;
+        let count = Math.floor(cap * rate);
+        count = Math.max(5, count);
+        count = Math.min(count, this.game.enemiesRemaining);
+        if (count <= 0) count = 0;
         const candidates = this.buildCandidateList();
         let type = this.pickTypeWeighted(candidates) || CONSTANTS.ENEMY_TYPES.NORMAL;
         if (!this.checkPhaseHardCaps(type)) type = CONSTANTS.ENEMY_TYPES.NORMAL;
@@ -441,10 +574,23 @@ export class SpawnDirector {
             maxDurationMs: 15000
         };
 
+        // --- ESCORT / COMMANDER LOGIC ---
+        let isCommander = false;
+        if (!this.game.isDebugStage) {
+            const isUnfrozen = (CONSTANTS.UNFROZEN_ENEMY_TYPES || []).includes(type);
+            if (isUnfrozen || this.isStrongType(type) || !this.canSpawnMultiple(type)) {
+                isCommander = true;
+            }
+        }
+        // -------------------------------
+
         // 一気に追加するが、出現自体はランダム位置
-        for (let i = 0; i < count; i++) {
+        for (let i = 0; i < this.currentPhase.count; i++) {
+            // Leader Injection
+            const currentType = (isCommander && i === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
+
             this.spawnQueue.push({
-                type: type,
+                type: currentType,
                 pattern: 'NONE',
                 x: null, y: null, // executeSpawnでランダム決定
                 nextDelay: 100 + Math.random() * 200 // 短い間隔でポンポン出る
@@ -489,40 +635,35 @@ export class SpawnDirector {
     }
 
     buildCandidateList() {
-        // --- ACTIVE LAYER FILTER ---
-        // 検証用: 固定リストからのみ選択
+        // --- 1. 最新の抽選候補リストを取得 (合成) ---
         const activeTypes = CONSTANTS.ACTIVE_ENEMY_TYPES || [];
-        // ---------------------------
+        const unfrozenTypes = CONSTANTS.UNFROZEN_ENEMY_TYPES || [];
+        const combinedCandidatePool = [...activeTypes, ...unfrozenTypes];
+        // ------------------------------------------
 
         const candidates = [];
         const stage = this.game.currentStage + 1;
         const counts = this.game.frameCache.roleCounts;
         const typeCounts = this.game.frameCache.typeCounts;
 
-        const allTypes = Object.values(CONSTANTS.ENEMY_TYPES);
+        for (const type of combinedCandidatePool) {
+            // 絶対ルール: SPLITTER_CHILD(K) は直接抽選しない (Jの分裂のみ)
+            if (type === 'K' || type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) continue;
 
-        for (const type of allTypes) {
-            // Priority Filter: Active Layer Only
-            if (activeTypes.length > 0 && !activeTypes.includes(type)) continue;
-
+            // 2. Unlock Check (基本に従う)
             if (!this.isUnlocked(type)) continue;
 
             const role = CONSTANTS.ENEMY_ROLES[type] || 'CORE';
 
-            // --- LEGACY SYSTEM (Frozen) ---
-            // const cost = CONSTANTS.SPAWN_COSTS[role] || 0;
-            // if (cost > 0 && this.specialBudget < cost) continue; 
-            // ------------------------------
-
-            // 2. Cooldown Check
+            // 3. Cooldown Check (HardCap系)
             if (this.cooldowns[type] && this.cooldowns[type] > 0) continue;
 
-            // 3. Role Limit Check (Legacy check still useful for basic balance)
+            // 4. Type Limit Check (同時出現数制限)
+            if (!this.checkPhaseHardCaps(type)) continue;
+
+            // 5. Role Limit Check (Legacy)
             const roleLimit = CONSTANTS.ROLE_LIMITS[role] || 999;
             if ((counts[role] || 0) >= roleLimit) continue;
-
-            // 4. Type Limit Check
-            if (!this.checkTypeLimit(type, typeCounts)) continue;
 
             candidates.push(type);
         }
@@ -541,21 +682,21 @@ export class SpawnDirector {
 
         // マッピング 
         const unlockMap = {
-            [CONSTANTS.ENEMY_TYPES.ZIGZAG]: 2,
-            [CONSTANTS.ENEMY_TYPES.EVASIVE]: 2,
-            [CONSTANTS.ENEMY_TYPES.TRICKSTER]: 2,
-            [CONSTANTS.ENEMY_TYPES.ELITE]: 2,
-            [CONSTANTS.ENEMY_TYPES.ASSAULT]: 3,
-            [CONSTANTS.ENEMY_TYPES.SPLITTER]: 4,
-            [CONSTANTS.ENEMY_TYPES.FLANKER]: 4,
-            [CONSTANTS.ENEMY_TYPES.SHIELDER]: 5,
-            [CONSTANTS.ENEMY_TYPES.DASHER]: 5,
-            [CONSTANTS.ENEMY_TYPES.ORBITER]: 5, // Active: I
-            [CONSTANTS.ENEMY_TYPES.ATTRACTOR]: 5,
-            [CONSTANTS.ENEMY_TYPES.BARRIER_PAIR]: 6, // Active: N
-            [CONSTANTS.ENEMY_TYPES.OBSERVER]: 6,
-            [CONSTANTS.ENEMY_TYPES.REFLECTOR]: 7,
-            [CONSTANTS.ENEMY_TYPES.GUARDIAN]: 8
+            [CONSTANTS.ENEMY_TYPES.ZIGZAG]: 1,      // B: Stage 1
+            [CONSTANTS.ENEMY_TYPES.EVASIVE]: 1,     // C: Stage 1 (New)
+            [CONSTANTS.ENEMY_TYPES.ELITE]: 1,       // D: Stage 1 (Default)
+            [CONSTANTS.ENEMY_TYPES.ASSAULT]: 2,     // E: Stage 2
+            [CONSTANTS.ENEMY_TYPES.SHIELDER]: 3,    // F: Stage 3
+            [CONSTANTS.ENEMY_TYPES.SPLITTER]: 3,    // J: Stage 3
+            [CONSTANTS.ENEMY_TYPES.DASHER]: 4,      // H: Stage 4
+            [CONSTANTS.ENEMY_TYPES.GUARDIAN]: 5,    // G: Stage 5
+            [CONSTANTS.ENEMY_TYPES.ORBITER]: 5,     // I: Stage 5
+            [CONSTANTS.ENEMY_TYPES.OBSERVER]: 5,    // L: Stage 5
+            [CONSTANTS.ENEMY_TYPES.TRICKSTER]: 5,   // O: Stage 5 (New)
+            [CONSTANTS.ENEMY_TYPES.FLANKER]: 7,     // M: Stage 7
+            [CONSTANTS.ENEMY_TYPES.ATTRACTOR]: 7,   // P: Stage 7
+            [CONSTANTS.ENEMY_TYPES.BARRIER_PAIR]: 8,// N: Stage 8
+            [CONSTANTS.ENEMY_TYPES.REFLECTOR]: 8    // Q: Stage 8
         };
 
         const req = unlockMap[type] || 1;
@@ -563,38 +704,45 @@ export class SpawnDirector {
     }
 
     checkPhaseHardCaps(type) {
-        // --- ACTIVE LAYER OVERRIDE ---
-        // 検証用: 固定合計キャップのみチェックしても良いが、
-        // ここでは個別の「同時出現数」制限（Barrier Pairは1組まで等）は維持したほうが評価しやすい。
-
-        // 追加: グローバルな数制限 (TEST_HARD_CAP)
-        // ただしここは「この敵を出していいか」のチェックなので、全体数はSpawnQueue処理で見るべき。
-        // ここではTypeごとの重複制限を見る。
-
+        // ... (previous logic)
         const typeCounts = this.game.frameCache.typeCounts;
+
+        // キュー内の数も考慮する (これがないと同一フェーズ内で複数追加される)
+        const inQueue = this.spawnQueue.filter(q => q.type === type).length;
+        const total = (typeCounts[type] || 0) + inQueue;
 
         switch (type) {
             case CONSTANTS.ENEMY_TYPES.BARRIER_PAIR:
-                if ((typeCounts[CONSTANTS.ENEMY_TYPES.BARRIER_PAIR] || 0) > 0) return false;
+                if (total > 0) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.SHIELDER:
-                if ((typeCounts[CONSTANTS.ENEMY_TYPES.SHIELDER] || 0) > 0) return false;
+                if (total > 0) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.GUARDIAN:
-                if ((typeCounts[CONSTANTS.ENEMY_TYPES.GUARDIAN] || 0) > 0) return false;
+                if (total > 0) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.OBSERVER:
-                if ((typeCounts[CONSTANTS.ENEMY_TYPES.OBSERVER] || 0) > 0) return false;
+                if (total > 0) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.SPLITTER:
-                if ((typeCounts[CONSTANTS.ENEMY_TYPES.SPLITTER] || 0) >= 2) return false;
+                if (total >= 2) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.DASHER:
-            case CONSTANTS.ENEMY_TYPES.ORBITER: // Active
-                if ((typeCounts[type] || 0) >= 2) return false;
+            case CONSTANTS.ENEMY_TYPES.ORBITER:
+                if (total >= 2) return false;
                 break;
         }
 
+        return true;
+    }
+
+    // ヘルパー: 複数同時スポーン(Formation等)して良いタイプか
+    canSpawnMultiple(type) {
+        // 基本的に HardCap が 1 のものは false
+        if (type === CONSTANTS.ENEMY_TYPES.SHIELDER) return false;
+        if (type === CONSTANTS.ENEMY_TYPES.GUARDIAN) return false;
+        if (type === CONSTANTS.ENEMY_TYPES.OBSERVER) return false;
+        if (type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR) return false;
         return true;
     }
 
@@ -746,7 +894,7 @@ export class SpawnDirector {
     }
 
     setNextSpawnInterval() {
-        const stage = this.game.currentStage + 1;
+        const st = this.game.currentStage + 1;
         let base = 200; // default
 
         // Burst/Lull
@@ -1021,7 +1169,6 @@ export class SpawnDirector {
         // Log system disabled
     }
     // --- DEBUG SPAWN ---
-    // --- DEBUG SPAWN ---
     handleDebugSpawn(dt) {
         // Refined Logic (Debug Tools Support):
         // 1. Target Type from Game (Dropdown)
@@ -1123,3 +1270,4 @@ export class SpawnDirector {
         }
     }
 }
+

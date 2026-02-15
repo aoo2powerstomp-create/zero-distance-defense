@@ -290,21 +290,12 @@ export const CONSTANTS = {
     },
 
     // --- ACTIVE LAYER (Balance Test) ---
-    // 検証用: 以下のリストに含まれる敵のみ出現する
-    ACTIVE_ENEMY_TYPES: [
-        'A', // NORMAL
-        'D', // ELITE
-        'I', // ORBITER
-        'N'  // BARRIER_PAIR
-    ],
-    // 検証用: 以下の陣形のみ使用する
-    ACTIVE_FORMATIONS: [
-        'LINEAR',
-        'PINCER',
-        'GRID'
-    ],
-    // 検証用: 固定ハードキャップ
-    TEST_HARD_CAP: 12,
+    // 検証用: 以下のリストに含まれる敵のみ出現する (空なら全開放)
+    ACTIVE_ENEMY_TYPES: [],
+    // 検証用: 以下の陣形のみ使用する (空なら全開放)
+    ACTIVE_FORMATIONS: [],
+    // 検証用: 固定ハードキャップ (0なら無効)
+    TEST_HARD_CAP: 0,
     // -----------------------------------
 
     // 敵の役割分類 (SpawnDirector用)
@@ -398,7 +389,7 @@ export const CONSTANTS = {
         maintainDurationMs: 2000, // 2秒間背後を維持
         flankTurnRate: 0.15,      // 回り込み時の俊敏な旋回性能
         spawnRate: 0.05,
-        unlockStage: 3
+        unlockStage: 7
     },
     BARRIER_PAIR: {
         maxDist: 200, // ペアが離れすぎないようにする距離 (300 -> 200)
@@ -406,14 +397,14 @@ export const CONSTANTS = {
         barrierWidth: 6,
         orbitRadius: 180, // プレイヤーとの距離を維持 (250 -> 180)
         spawnRate: 0.03,
-        unlockStage: 5 // Stage 6
+        unlockStage: 8 // Stage 8
     },
     TRICKSTER: {
         sizeMul: 0.7,
         zigzagAmp: 80,
         zigzagFreq: 0.005,
         spawnRate: 0.10,
-        unlockStage: 1 // Stage 2
+        unlockStage: 5 // Stage 5
     },
     ATTRACTOR: {
         pullRadius: 200,
@@ -421,7 +412,7 @@ export const CONSTANTS = {
         maxHp: 4,
         orbitRadius: 300, // 遠巻きに維持
         spawnRate: 0.05,
-        unlockStage: 4 // Stage 5
+        unlockStage: 7 // Stage 7
     },
     REFLECTOR: {
         reflectAngle: Math.PI / 2, // 前方180度 (半円ビジュアルと同期)
@@ -429,8 +420,35 @@ export const CONSTANTS = {
         activeDurationMs: 7000,   // 反射有効時間
         vulnerableDurationMs: 3000, // 解除（脆弱）時間
         spawnRate: 0.07,
-        unlockStage: 6 // Stage 7
+        unlockStage: 8 // Stage 8
     },
+
+    // --- 復活管理システム ---
+    // 現在の安定セット（変更しない・基本抽選枠）
+    ACTIVE_ENEMY_TYPES: ['A', 'B', 'D', 'E'], // NORMAL, ZIGZAG, ELITE, ASSAULT
+
+    // 復活枠（ここに1個ずつ追加していく）
+    UNFROZEN_ENEMY_TYPES: [
+        'F', // SHIELDER
+        'C', // EVASIVE
+        'G', // GUARDIAN
+        'H', // DASHER
+        'I', // ORBITER
+        'J', // SPLITTER
+        'L', // OBSERVER
+        'M', // FLANKER
+        'N', // BARRIER_PAIR
+        'O', // TRICKSTER
+        'P', // ATTRACTOR
+        'Q'  // REFLECTOR
+    ],
+
+    // 復活エネミー固有のクールダウン（ミリ秒）
+    UNFROZEN_COOLDOWNS: {
+        'F': 20000, // SHIELDER: 20秒
+        'N': 30000, // BARRIER_PAIR: 30秒 (予定)
+    },
+    // ----------------------
 
     // スポーン同時上限
     SPAWN_LIMITS: {
@@ -525,7 +543,7 @@ export const CONSTANTS = {
     // シールダー(Shielder)設定
     SHIELDER: {
         maxHp: 6,                 // 基本HP
-        unlockStage: 4,           // Stage 5
+        unlockStage: 3,           // Stage 3
         speed: 2.6,               // 基本速度
         orbitRadius: 160,         // 維持する半径 (220 -> 160)
         orbitRadiusMin: 120,      // (170 -> 120)
@@ -550,7 +568,7 @@ export const CONSTANTS = {
     // ガーディアン(Guardian)設定 - 全画面バフ
     GUARDIAN: {
         maxHp: 12,
-        unlockStage: 7,           // Stage 8
+        unlockStage: 5,           // Stage 5
         speed: 1.8,               // シールダーより遅い
         orbitRadius: 220,         // より遠巻きに旋回 (280 -> 220)
         orbitRadiusMin: 180,      // (240 -> 180)
@@ -606,7 +624,7 @@ export const CONSTANTS = {
     },
     OBSERVER: {
         speedMul: 1.0,
-        unlockStage: 5,           // Stage 6
+        unlockStage: 5,           // Stage 5
         maxHp: 5,            // 低め（当てられたら倒せる）
         speed: 0,            // 移動はSNAPで扱う
         observerRadius: 260, // 外周半径
@@ -626,11 +644,11 @@ export const CONSTANTS = {
         { hpMul: 1.3, speedMul: 1.05, spawnMul: 1.3, enemyCount: 100, spawnInterval: 700 }, // Stage 3
         { hpMul: 1.6, speedMul: 1.10, spawnMul: 1.5, enemyCount: 180, spawnInterval: 500 }, // Stage 4
         { hpMul: 2.0, speedMul: 1.15, spawnMul: 1.8, enemyCount: 350, spawnInterval: 300 }, // Stage 5
-        { hpMul: 2.4, speedMul: 1.26, spawnMul: 2.1, enemyCount: 400, spawnInterval: 240 }, // Stage 6 (再緩和: HP 2.8->2.4, Count 500->400, Int 180->240)
-        { hpMul: 3.0, speedMul: 1.30, spawnMul: 2.4, enemyCount: 550, spawnInterval: 200 }, // Stage 7 (再緩和: HP 3.5->3.0, Count 700->550, Int 150->200)
-        { hpMul: 3.8, speedMul: 1.35, spawnMul: 2.7, enemyCount: 750, spawnInterval: 160 }, // Stage 8 (再緩和: HP 4.5->3.8, Count 900->750, Int 120->160)
-        { hpMul: 4.8, speedMul: 1.39, spawnMul: 3.0, enemyCount: 1000, spawnInterval: 130 }, // Stage 9 (再緩和: HP 5.8->4.8, Count 1200->1000, Int 100->130)
-        { hpMul: 6.0, speedMul: 1.43, spawnMul: 3.5, enemyCount: 1500, spawnInterval: 100 }  // Stage 10 (再緩和: HP 7.5->6.0, Count 1800->1500, Int 80->100)
+        { hpMul: 2.4, speedMul: 1.26, spawnMul: 2.1, enemyCount: 400, spawnInterval: 200 }, // Stage 6 (240 -> 200)
+        { hpMul: 3.0, speedMul: 1.30, spawnMul: 2.4, enemyCount: 550, spawnInterval: 150 }, // Stage 7 (200 -> 150)
+        { hpMul: 3.8, speedMul: 1.35, spawnMul: 2.7, enemyCount: 750, spawnInterval: 100 }, // Stage 8 (160 -> 100)
+        { hpMul: 4.8, speedMul: 1.39, spawnMul: 3.0, enemyCount: 1000, spawnInterval: 80 },  // Stage 9 (130 -> 80)
+        { hpMul: 6.0, speedMul: 1.43, spawnMul: 3.5, enemyCount: 1500, spawnInterval: 60 }   // Stage 10 (100 -> 60)
     ],
 
     // アップグレード設定

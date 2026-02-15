@@ -582,6 +582,7 @@ class Game {
         this.spawnPhase = 'BURST';
         this.phaseTimer = CONSTANTS.SPAWN_BURST_TIME_MS;
         this.spawnQueue = 0;
+        this.bossSpawned = false; // ボス出現フラグ初期化
         this.currentSpawnBudget = CONSTANTS.SPAWN_BUDGET_PER_SEC;
         this.pulseCooldownTimer = 0;
         this.pulseEffects = [];
@@ -951,6 +952,7 @@ class Game {
             }
 
             this.enemies.push(boss);
+            this.bossSpawned = true; // ボス出現済み
         }
     }
 
@@ -1675,9 +1677,13 @@ class Game {
         const isBossStage = (this.currentStage + 1) % 5 === 0;
 
         if (isBossStage) {
-            // ボスステージ: ボスが撃破され、かつ敵が残っていない場合
+            // ボスステージ: ボスが出現済みで、かつ現在生存しているボスがいない場合（雑魚は無視）
             const hasActiveBoss = this.enemies.some(e => e.active && e.isBoss);
-            if (!hasActiveBoss && this.enemiesRemaining <= 0 && this.spawnQueue <= 0 && this.enemies.length === 0) {
+
+            // Failsafe: If a boss exists, ensure the flag is true
+            if (hasActiveBoss) this.bossSpawned = true;
+
+            if (this.bossSpawned && !hasActiveBoss) {
                 this.stageClear();
             }
         } else {
@@ -1777,11 +1783,6 @@ class Game {
 
             if (!e.active || e.oobFrames >= 60) {
                 if (e.oobFrames >= 60) e.deactivateReason = 'oob';
-
-                if (this.debugEnabled) {
-                    const reason = e.deactivateReason || "unknown";
-                    console.log(`[ENEMY REMOVED] id:${e.id} type:${e.type} reason:${reason} pos:(${e.x.toFixed(0)},${e.y.toFixed(0)})`);
-                }
                 this.enemyPool.release(this.enemies.splice(i, 1)[0]);
             }
         }
