@@ -1,10 +1,14 @@
 import { CONSTANTS } from './constants.js';
 import { DEBUG_ENABLED } from './utils/env.js';
 import { Enemy } from './Enemy.js';
+import { Formations } from './formations.js';
 
 export class SpawnDirector {
     constructor(game) {
         this.game = game;
+
+        // RNG Injection
+        this.rng = null; // If set, use this instead of this.random()
 
         // Wave/Phase System
         this.state = 'GENERATING'; // GENERATING, SPAWNING, WAITING, COOLDOWN
@@ -42,21 +46,49 @@ export class SpawnDirector {
         this.spawnIntervalTimer = 0;
 
         // Roster保証 (Unlock済みの敵をリストアップ)
-        this.rosterWanted = this.getUnlockedEnemyTypes();
-
         // 重複抑制履歴 (直近8件)
         this.recentTypes = [];
         this.stageStartTime = Date.now();
 
-        this.historyTypes = []; // Last 200
-        this.historyMax = 200;
-
-        // Force Non-A Logic
+        // Reset History / Streak
+        this.recentTypes = [];
+        this.historyTypes = [];
+        this.historyMax = 200; // Keep this property
         this.spawnDecisionCount = 0;
         this.debugForceStatus = { active: false, type: null };
 
+        // Reset Cumulative Stats
+        this.stageSpawnTotalCount = 0;
+        this.stageSpawnByType = {};
+        this.debugForceStats = { activations: 0, picksByType: {} };
+
+        // Stage 9 Wave Sequencer
+        if (this.game.currentStage === 8) { // Stage 9 (0-indexed)
+            this.stage9WaveBag = [];
+            this.refillStage9Bag();
+            this.stage9SpiceTimer = 0;
+
+            // Quota System Init
+            this.initStage9Quota();
+        }
+
+        // Reset Spawn Queue
         this.spawnQueue = [];
         this.spawnIntervalTimer = 0;
+
+        // --- Statistics / History for HUD ---
+        this.historyMax = 200;
+        this.spawnSideHistory = []; // Latest 200
+        this.spawnSideTotal = {};    // { SIDE: count }
+        this.formationHistory = [];  // Latest 200
+        this.formationTotal = {};    // { formationId: count }
+
+        // Bias Prevention
+        this.recentSides = []; // Short memory (e.g. 10) for strict bias rules
+
+        // --- Restored Missing Initializations ---
+        // Roster保証 (Unlock済みの敵をリストアップ)
+        this.rosterWanted = this.getUnlockedEnemyTypes();
 
         // A-Burst Logic
         this.burstTimer = 0;
@@ -68,11 +100,124 @@ export class SpawnDirector {
         this.specialBudget = stageFn * 5; // 初期予算は多めに
         this.budgetTimer = 15000; // 15秒ごとに補充
 
-        // 不要になったプロパティの初期化は削除
-        // formationQueue, cooldowns は残すが、使い方が変わる可能性あり
         this.cooldowns = {};
 
+        this.intensity = 'LULL';
+        this.intensityTimer = 5000;
+        this.phase = 'A';
+        this.spawnTimer = 0;
+
         this.log('SYSTEM', 'Reset', `Stage ${this.game.currentStage + 1} Started`);
+    }
+
+    // --- Phase 1: SpawnSide Logic ---
+    getNextSpawnSide() {
+        const SIDES = ['TOP', 'BOTTOM', 'LEFT', 'RIGHT', 'TOP_LEFT', 'TOP_RIGHT', 'BOTTOM_LEFT', 'BOTTOM_RIGHT'];
+
+        // 1. Calculate weights based on history
+        let totalWeight = 0;
+        const weights = SIDES.map(side => {
+            let w = 1.0;
+
+            // Rule: No more than 3 consecutive same sides
+            const last3 = this.recentSides.slice(-3);
+            if (last3.length === 3 && last3.every(s => s === side)) {
+                w = 0;
+            }
+
+            // Rule: Weight reduction for frequent sides in N=10 history
+            const countN10 = this.recentSides.filter(s => s === side).length;
+            if (countN10 > 0) {
+                w *= (1 - (countN10 / 10) * 0.8);
+            }
+
+            // Rule: Encourage opposites
+            const lastSide = this.recentSides[this.recentSides.length - 1];
+            if (lastSide) {
+                const opposites = {
+                    'TOP': 'BOTTOM', 'BOTTOM': 'TOP', 'LEFT': 'RIGHT', 'RIGHT': 'LEFT',
+                    'TOP_LEFT': 'BOTTOM_RIGHT', 'BOTTOM_RIGHT': 'TOP_LEFT',
+                    'TOP_RIGHT': 'BOTTOM_LEFT', 'BOTTOM_LEFT': 'TOP_RIGHT'
+                };
+                if (side === opposites[lastSide]) {
+                    w *= 2.0; // Higher chance for opposite
+                }
+            }
+
+            totalWeight += w;
+            return { side, weight: w };
+        });
+
+        // 2. Weighted pick
+        if (totalWeight <= 0) return SIDES[Math.floor(this.random() * SIDES.length)];
+
+        let r = this.random() * totalWeight;
+        for (const item of weights) {
+            r -= item.weight;
+            if (r <= 0) return item.side;
+        }
+        return SIDES[0];
+    }
+
+    calculateSpawnPos(side) {
+        const margin = 60;
+        const w = CONSTANTS.TARGET_WIDTH;
+        const h = CONSTANTS.TARGET_HEIGHT;
+        let x, y;
+
+        switch (side) {
+            case 'TOP':
+                x = this.random() * w;
+                y = -margin;
+                break;
+            case 'BOTTOM':
+                x = this.random() * w;
+                y = h + margin;
+                break;
+            case 'LEFT':
+                x = -margin;
+                y = this.random() * h;
+                break;
+            case 'RIGHT':
+                x = w + margin;
+                y = this.random() * h;
+                break;
+            case 'TOP_LEFT':
+                x = -margin - this.random() * 20;
+                y = -margin - this.random() * 20;
+                break;
+            case 'TOP_RIGHT':
+                x = w + margin + this.random() * 20;
+                y = -margin - this.random() * 20;
+                break;
+            case 'BOTTOM_LEFT':
+                x = -margin - this.random() * 20;
+                y = h + margin + this.random() * 20;
+                break;
+            case 'BOTTOM_RIGHT':
+                x = w + margin + this.random() * 20;
+                y = h + margin + this.random() * 20;
+                break;
+            default:
+                x = 0; y = -margin;
+        }
+
+        return { x, y };
+    }
+
+    recordSpawnStats(side, formationId = 'NONE') {
+        // Side Stats
+        this.spawnSideHistory.push(side);
+        if (this.spawnSideHistory.length > this.historyMax) this.spawnSideHistory.shift();
+        this.spawnSideTotal[side] = (this.spawnSideTotal[side] || 0) + 1;
+
+        this.recentSides.push(side);
+        if (this.recentSides.length > 10) this.recentSides.shift();
+
+        // Formation Stats
+        this.formationHistory.push(formationId);
+        if (this.formationHistory.length > this.historyMax) this.formationHistory.shift();
+        this.formationTotal[formationId] = (this.formationTotal[formationId] || 0) + 1;
     }
 
     getCurrentSpawnCap() {
@@ -113,7 +258,7 @@ export class SpawnDirector {
         const count = 3;
         for (let i = 0; i < count; i++) {
             if (types.length === 0) break;
-            const idx = Math.floor(Math.random() * types.length);
+            const idx = Math.floor(this.random() * types.length);
             selected.push(types[idx]);
             types.splice(idx, 1);
         }
@@ -153,6 +298,11 @@ export class SpawnDirector {
         // Boss戦中はフェーズ進行停止
         if (this.game.isBossActive) return;
 
+        // --- STAGE 9 UPDATE (Spice & Quota Stats) ---
+        if (this.game.currentStage === 8) {
+            this.updateStage9Spice(dt);
+        }
+
         // --- ステートマシン ---
         switch (this.state) {
             case 'GENERATING':
@@ -161,7 +311,7 @@ export class SpawnDirector {
                     this.state = 'WAITING';
                     break;
                 }
-                this.generateNextPhase();
+                this.generateNextPhase(dt);
                 this.state = 'SPAWNING';
                 break;
 
@@ -175,7 +325,11 @@ export class SpawnDirector {
                         this.spawnIntervalTimer -= dt;
                         if (this.spawnIntervalTimer <= 0) {
                             const task = this.spawnQueue[0];
-                            this.executeSpawn(task.type, task.pattern, task.x, task.y);
+                            const options = {
+                                entry: task.entry,
+                                formationInfo: task.formationInfo
+                            };
+                            this.executeSpawn(task.type, task.pattern, task.x, task.y, options);
                             this.spawnQueue.shift();
 
                             // 次の間隔 (Taskにあればそれ、なければデフォルト短間隔)
@@ -229,10 +383,17 @@ export class SpawnDirector {
         }
     }
 
-    generateNextPhase() {
+    generateNextPhase(dt) {
 
 
         const stage = this.game.currentStage + 1;
+
+        // --- STAGE 9 SPECIAL LOGIC ---
+        if (stage === 9) {
+            // this.updateStage9Spice(dt); // Moved to update()
+            this.generateStage9Phase();
+            return;
+        }
 
         // --- フェーズ種別の決定 ---
         // 1. 強敵直後の休憩 (Recovery)
@@ -245,7 +406,7 @@ export class SpawnDirector {
         // formationPhaseCounter は Formation 実行時に 0 にリセット、それ以外で +1
         if (this.formationPhaseCounter >= 3) { // 0,1,2...3(4回目)で解禁
             // 確率で発動
-            if (Math.random() < 0.7) {
+            if (this.random() < 0.7) {
                 this.generateFormationPhase();
                 return;
             }
@@ -253,7 +414,7 @@ export class SpawnDirector {
 
         // 3. その他 (Mixed / Pressure / Standard)
         // Stageが進むほど Mixed/Pressure の比率を上げる
-        const rand = Math.random();
+        const rand = this.random();
         let mixedThreshold = 0.3;
         let pressureThreshold = 0.1;
 
@@ -267,6 +428,245 @@ export class SpawnDirector {
         } else {
             this.generateStandardPhase();
         }
+    }
+
+    // --- Stage 9 Fixed Wave Logic ---
+    refillStage9Bag() {
+        // A: Standard (High A)
+        // B: Fast (Zigzag/Evasive)
+        // C: Heavy (Tank/Commander)
+        // D: Chaos (Mixed)
+        // Pattern: [A, A, B, C, D] to maintain ~60-70% A ratio
+        this.stage9WaveBag = ['A', 'A', 'B', 'C', 'D'];
+
+        // Fisher-Yates Shuffle
+        for (let i = this.stage9WaveBag.length - 1; i > 0; i--) {
+            const j = Math.floor(this.random() * (i + 1));
+            [this.stage9WaveBag[i], this.stage9WaveBag[j]] = [this.stage9WaveBag[j], this.stage9WaveBag[i]];
+        }
+        this.log('SYSTEM', 'Stage9', `Refilled Bag: ${this.stage9WaveBag.join(',')}`);
+    }
+
+    generateStage9Phase() {
+        if (!this.stage9WaveBag || this.stage9WaveBag.length === 0) {
+            this.refillStage9Bag();
+        }
+        const pattern = this.stage9WaveBag.shift();
+        this.log('SYSTEM', 'Stage9', `Generating Wave ${pattern} (Rem: ${this.stage9WaveBag.join(',')})`);
+
+        // Common Setup
+        this.currentPhase = { type: `STG9-${pattern}`, cooldownMs: 2000 };
+        const cap = this.getCurrentSpawnCap();
+        let count = Math.floor(cap * 0.8); // 80% density
+        count = Math.min(count, this.game.enemiesRemaining);
+
+        if (count <= 0) return;
+
+        const T = CONSTANTS.ENEMY_TYPES;
+        let composition = [];
+
+        // Define Wave Composition (Target A ratio <= 70%)
+        switch (pattern) {
+            case 'A': // Standard Swarm (A:70%, B:30%)
+                composition = [
+                    { type: T.NORMAL, weight: 70 },
+                    { type: T.ZIGZAG, weight: 30 }
+                ];
+                break;
+            case 'B': // Fast Assault (A:60%, B:20%, C:20%)
+                composition = [
+                    { type: T.NORMAL, weight: 60 },
+                    { type: T.ZIGZAG, weight: 20 },
+                    { type: T.EVASIVE, weight: 20 }
+                ];
+                break;
+            case 'C': // Heavy (A:60%, B:20%, O/M:20%)
+                composition = [
+                    { type: T.NORMAL, weight: 60 },
+                    { type: T.ZIGZAG, weight: 20 },
+                    { type: T.TRICKSTER, weight: 10 }, // O: TRICKSTER (Fixed from ORBITER)
+                    { type: T.FLANKER, weight: 10 }    // M: FLANKER (Fixed from MOMENTUM)
+                ];
+                break;
+            case 'D': // Chaos (A:50%, B:10%, C:10%, O:10%, M:10%, E:10%)
+                composition = [
+                    { type: T.NORMAL, weight: 50 },
+                    { type: T.ZIGZAG, weight: 10 },
+                    { type: T.EVASIVE, weight: 10 },
+                    { type: T.TRICKSTER, weight: 10 }, // O
+                    { type: T.FLANKER, weight: 10 },   // M
+                    { type: T.ELITE, weight: 10 }      // D (Kept as chaos element)
+                ];
+                break;
+        }
+
+        // Generate Queue based on composition
+        let remainingCount = count;
+        while (remainingCount > 0) {
+            // CRITICAL: Double check budget inside loop
+            if (this.game.enemiesRemaining - this.spawnQueue.length <= 0) break;
+
+            // Check Quota Priority first
+            let type = this.checkStage9Quota();
+            if (!type) {
+                type = this.pickFromComposition(composition);
+            }
+
+            // Decide between individual spawn or formation squad
+            if (this.canFormFormation(type) && remainingCount >= 4 && this.random() < 0.4) {
+                // Spawn as a squad formation (3 to 6 units)
+                const squadSize = Math.min(remainingCount, 4 + Math.floor(this.random() * 3));
+                const pattern = this.pickFormationPattern(type);
+                this.queueFormation(pattern, type, squadSize);
+
+                remainingCount -= squadSize;
+
+                // Add a small breather after a squad to maintain Stage 9 rhythm
+                if (this.spawnQueue.length > 0) {
+                    this.spawnQueue[this.spawnQueue.length - 1].nextDelay = 800 + this.random() * 400;
+                }
+            } else {
+                // Individual Random Spawn
+                this.spawnQueue.push({
+                    type: type,
+                    pattern: 'RANDOM',
+                    x: null, y: null,
+                    nextDelay: this.random() * 50 + 50
+                });
+                remainingCount--;
+            }
+        }
+    }
+
+    pickFromComposition(comp) {
+        const total = comp.reduce((acc, c) => acc + c.weight, 0);
+        let r = this.random() * total;
+        for (const c of comp) {
+            r -= c.weight;
+            if (r <= 0) return c.type;
+        }
+        return comp[0].type;
+    }
+
+    updateStage9Spice(dt) {
+        this.stage9SpiceTimer += dt;
+        const SPICE_INTERVAL_MS = 3000;
+
+        if (this.stage9SpiceTimer >= SPICE_INTERVAL_MS) {
+            this.stage9SpiceTimer = 0;
+
+            // CRITICAL: Prevent extra spawns if budget is exhausted
+            if (this.game.enemiesRemaining <= 0) return;
+            const T = CONSTANTS.ENEMY_TYPES;
+            const spicePool = [
+                T.ELITE, T.REFLECTOR, T.DASHER, T.ORBITER,
+                T.SPLITTER, T.BARRIER_PAIR, T.OBSERVER, T.SHIELDER
+            ];
+
+            // Filter valid candidates (Cooldown / Limits)
+            const candidates = spicePool.filter(type => this.canSpawnSpice(type));
+
+            if (candidates.length > 0) {
+                const picked = candidates[Math.floor(this.random() * candidates.length)];
+
+                // Direct Spawn / or Priority Queue
+                this.injectSpiceToQueue(picked);
+                this.log('SPICE', 'Injection', `Queueing ${picked}`);
+
+                // Manual cooldown trigger (Optional, if executeSpawn doesn't set global CD for type)
+                // this.cooldowns[picked] = ... (Built-in cooldown logic handled in update?) 
+                // SpawnDirector uses global `cooldowns`? check.
+                // Reset type specific cooldown
+                const cd = CONSTANTS.SPAWN_COOLDOWNS[picked] || 10;
+                this.cooldowns[picked] = cd * 1000;
+            }
+        }
+    }
+
+    canSpawnSpice(type) {
+        // Check 1: Hard Limit
+        // Check 2: Cooldown
+        if ((this.cooldowns[type] || 0) > 0) return false;
+
+        // Count active
+        const limit = CONSTANTS.TYPE_LIMITS[type] || 999;
+        const activeCount = this.game.enemies.filter(e => e.type === type && e.active).length;
+        if (activeCount >= limit) return false;
+
+        return true;
+    }
+
+    // Internal record helper if simulator calls separate logic, but 
+    // executeSpawn usually handles instantiation. 
+    // Wait, executeSpawn creates Enemy. 
+    // Simulator hooks executeSpawn? No, Simulator runs SD.update/spawnQueue.
+    // If I call executeSpawn directly here, it bypasses spawnQueue.
+    // That's fine for "Injection".
+
+    // NOTE: Simulator.js uses `spawnDirector.spawnQueue` to count "spawns".
+    // If I use executeSpawn directly, Simulator Loop might miss it if it only drains queue.
+    // Simulator.js Loop:
+    // while(spawnQueue.length > 0) ... recordSpawn ...
+    // So if I executeSpawn here, Simulator WON'T know unless I modify Simulator or use queue.
+    // 
+    // Better approach for Simulator compatibility: Push to Queue with 0 delay.
+
+    injectSpiceToQueue(type) {
+        this.spawnQueue.unshift({
+            type: type,
+            pattern: 'RANDOM',
+            x: null, y: null,
+            nextDelay: 0
+        });
+    }
+
+    // --- Quota System ---
+    initStage9Quota() {
+        const T = CONSTANTS.ENEMY_TYPES;
+        this.quotaByType = {};
+        this.spawnCountByType = {}; // Managed in recordSpawn? No, separate tracking or reuse?
+        // Reuse basic stats if robust, but for Stage 9 specific logic let's track here or use stageSpawnByType
+
+        // Tier 2 (Min 20)
+        [T.DASHER, T.ORBITER, T.SPLITTER, T.ATTRACTOR].forEach(t => this.quotaByType[t] = 20);
+
+        // Tier 3 (Min 8)
+        [T.ELITE, T.SHIELDER, T.BARRIER_PAIR, T.REFLECTOR, T.OBSERVER].forEach(t => this.quotaByType[t] = 8);
+        this.quotaByType[T.GUARDIAN] = 3;
+
+        this.debugQuotaStats = { hits: 0, failures: {} };
+    }
+
+    checkStage9Quota() {
+        if (!this.quotaByType) return null;
+
+        // Find unmet quotas
+        const needs = [];
+        for (const [type, limit] of Object.entries(this.quotaByType)) {
+            const current = this.stageSpawnByType[type] || 0;
+            if (current < limit) {
+                needs.push(type);
+            }
+        }
+
+        if (needs.length === 0) return null;
+
+        // Filter by canSpawnNow (eligibility)
+        // Note: Quota overrides weight but MUST respect limits/cooldowns to avoid bugs
+        const eligible = needs.filter(t => this.canSpawnSpice(t));
+
+        if (eligible.length === 0) {
+            // Log failure for debugging
+            needs.forEach(t => {
+                this.debugQuotaStats.failures[t] = (this.debugQuotaStats.failures[t] || 0) + 1;
+            });
+            return null;
+        }
+
+        // Pick one (Random)
+        const picked = eligible[Math.floor(this.random() * eligible.length)];
+        this.debugQuotaStats.hits++;
+        return picked;
     }
 
     // --- 各フェーズ生成メソッド ---
@@ -293,7 +693,7 @@ export class SpawnDirector {
         }
         // ---------------------------
 
-        let type = coreTypes[Math.floor(Math.random() * coreTypes.length)];
+        let type = coreTypes[Math.floor(this.random() * coreTypes.length)];
         // HardCap check (Recoveryでも念のため)
         if (!this.checkPhaseHardCaps(type)) type = CONSTANTS.ENEMY_TYPES.NORMAL;
 
@@ -331,7 +731,7 @@ export class SpawnDirector {
                 type: currentType,
                 pattern: 'NONE',
                 x: null, y: null,
-                nextDelay: 600 + Math.random() * 400 // バラけさせる
+                nextDelay: 600 + this.random() * 400 // バラけさせる
             });
         }
 
@@ -364,7 +764,7 @@ export class SpawnDirector {
 
         let pattern = 'LINEAR';
         if (allowedPatterns.length > 0) {
-            pattern = allowedPatterns[Math.floor(Math.random() * allowedPatterns.length)];
+            pattern = allowedPatterns[Math.floor(this.random() * allowedPatterns.length)];
         } else if (activePatterns.length > 0) {
             // Fallback to first active pattern if none allowed by stage
             pattern = activePatterns[0];
@@ -420,7 +820,6 @@ export class SpawnDirector {
             this.spawnQueue[preQueueLen].type = leaderType;
         }
 
-        // 強敵フラグ更新
         this.wasStrongPhase = this.isStrongType(type);
         this.formationPhaseCounter = 0; // Reset
         this.log('PHASE', 'Formation', `Pattern: ${pattern} Type: ${type}`);
@@ -431,7 +830,7 @@ export class SpawnDirector {
         const stage = this.game.currentStage + 1;
         const cap = this.getCurrentSpawnCap();
 
-        const subWaves = 2 + Math.floor(Math.random() * 2); // 2 or 3
+        const subWaves = 2 + Math.floor(this.random() * 2); // 2 or 3
 
         this.currentPhase = {
             type: 'MIXED',
@@ -453,7 +852,7 @@ export class SpawnDirector {
                 // 既に強敵が選ばれていないか？ (簡易的に: 最初の1回以外は強敵禁止とか)
                 if (i > 0) {
                     // 確率で弱体化
-                    if (Math.random() < 0.7) type = CONSTANTS.ENEMY_TYPES.NORMAL;
+                    if (this.random() < 0.7) type = CONSTANTS.ENEMY_TYPES.NORMAL;
                 }
             }
             if (!this.checkPhaseHardCaps(type)) type = CONSTANTS.ENEMY_TYPES.NORMAL;
@@ -474,18 +873,27 @@ export class SpawnDirector {
             }
             // -------------------------------
 
-            const interval = 600 + Math.random() * 400; // 0.6 - 1.0s
+            const interval = 600 + this.random() * 400; // 0.6 - 1.0s
 
-            for (let j = 0; j < subCount; j++) {
-                // Leader Injection
-                const currentType = (isCommander && j === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
+            if (this.canFormFormation(type) && subCount >= 3) {
+                const pattern = this.pickFormationPattern(type);
+                this.queueFormation(pattern, type, subCount);
+                // Wave interval after formation
+                if (this.spawnQueue.length > 0) {
+                    this.spawnQueue[this.spawnQueue.length - 1].nextDelay = 1500;
+                }
+            } else {
+                for (let j = 0; j < subCount; j++) {
+                    // Leader Injection
+                    const currentType = (isCommander && j === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
 
-                this.spawnQueue.push({
-                    type: currentType, // マッピング不要、直接IDが入るはず
-                    pattern: 'NONE',
-                    x: null, y: null,
-                    nextDelay: (j === subCount - 1) ? 1500 : interval // Waveの最後は少し間隔を空ける
-                });
+                    this.spawnQueue.push({
+                        type: currentType,
+                        pattern: 'NONE',
+                        x: null, y: null,
+                        nextDelay: (j === subCount - 1) ? 1500 : interval // Waveの最後は少し間隔を空ける
+                    });
+                }
             }
         }
 
@@ -498,7 +906,7 @@ export class SpawnDirector {
         // Pressure: 五月雨 (Streaming)
         // 0.5秒間隔で一定数を流し込む
         const cap = this.getCurrentSpawnCap();
-        let rate = 0.5 + Math.random() * 0.3;
+        let rate = 0.5 + this.random() * 0.3;
         let count = Math.floor(cap * rate);
         count = Math.max(5, count);
         count = Math.min(count, this.game.enemiesRemaining);
@@ -509,7 +917,7 @@ export class SpawnDirector {
 
         // 簡易抽選 (Candidatesから選ぶ形に修正して Active List を適用)
         // 以前のロジック:
-        // const r = Math.random();
+        // const r = this.random();
         // if (r < 0.4) type = CONSTANTS.ENEMY_TYPES.ZIGZAG;
         // else if (r < 0.6) type = CONSTANTS.ENEMY_TYPES.ASSAULT;
         // else if (r < 0.7) type = CONSTANTS.ENEMY_TYPES.DASHER; // 混ぜる
@@ -526,7 +934,7 @@ export class SpawnDirector {
         });
 
         if (pressureCandidates.length > 0) {
-            type = pressureCandidates[Math.floor(Math.random() * pressureCandidates.length)];
+            type = pressureCandidates[Math.floor(this.random() * pressureCandidates.length)];
         } else {
             type = CONSTANTS.ENEMY_TYPES.NORMAL;
         }
@@ -561,16 +969,21 @@ export class SpawnDirector {
             maxDurationMs: 12000
         };
 
-        for (let i = 0; i < this.currentPhase.count; i++) {
-            // Leader Injection
-            const currentType = (isCommander && i === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
+        if (this.canFormFormation(type) && count >= 3) {
+            const pattern = this.pickFormationPattern(type);
+            this.queueFormation(pattern, type, count);
+        } else {
+            for (let i = 0; i < count; i++) {
+                // Leader Injection
+                const currentType = (isCommander && i === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
 
-            this.spawnQueue.push({
-                type: currentType,
-                pattern: 'NONE',
-                x: null, y: null,
-                nextDelay: 400 + Math.random() * 200 // 0.4-0.6s
-            });
+                this.spawnQueue.push({
+                    type: currentType,
+                    pattern: 'NONE',
+                    x: null, y: null,
+                    nextDelay: 400 + this.random() * 200 // 0.4-0.6s
+                });
+            }
         }
 
         this.wasStrongPhase = false;
@@ -582,7 +995,7 @@ export class SpawnDirector {
         // 従来の「パターンなし」ランダム湧きに近いが、まとめて投入
         // バラバラと一度に出す
         const cap = this.getCurrentSpawnCap();
-        let rate = 0.4 + Math.random() * 0.3;
+        let rate = 0.4 + this.random() * 0.3;
         let count = Math.floor(cap * rate);
         count = Math.max(5, count);
         count = Math.min(count, this.game.enemiesRemaining);
@@ -609,17 +1022,22 @@ export class SpawnDirector {
         }
         // -------------------------------
 
-        // 一気に追加するが、出現自体はランダム位置
-        for (let i = 0; i < this.currentPhase.count; i++) {
-            // Leader Injection
-            const currentType = (isCommander && i === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
+        if (this.canFormFormation(type) && this.currentPhase.count >= 3) {
+            const pattern = this.pickFormationPattern(type);
+            this.queueFormation(pattern, type, this.currentPhase.count);
+        } else {
+            // 一気に追加するが、出現自体はランダム位置
+            for (let i = 0; i < this.currentPhase.count; i++) {
+                // Leader Injection
+                const currentType = (isCommander && i === 0) ? type : (isCommander ? CONSTANTS.ENEMY_TYPES.NORMAL : type);
 
-            this.spawnQueue.push({
-                type: currentType,
-                pattern: 'NONE',
-                x: null, y: null, // executeSpawnでランダム決定
-                nextDelay: 100 + Math.random() * 200 // 短い間隔でポンポン出る
-            });
+                this.spawnQueue.push({
+                    type: currentType,
+                    pattern: 'NONE',
+                    x: null, y: null, // executeSpawnでランダム決定
+                    nextDelay: 100 + this.random() * 200 // 短い間隔でポンポン出る
+                });
+            }
         }
 
         this.wasStrongPhase = this.isStrongType(type);
@@ -842,6 +1260,11 @@ export class SpawnDirector {
                 const forced = this.tryGetForcedNonAType(stage);
                 if (forced) {
                     this.debugForceStatus.picked = forced;
+
+                    // Track Force Stats
+                    this.debugForceStats.activations++;
+                    this.debugForceStats.picksByType[forced] = (this.debugForceStats.picksByType[forced] || 0) + 1;
+
                     return forced;
                 }
             }
@@ -875,38 +1298,38 @@ export class SpawnDirector {
         let totalWeight = 0;
         const weights = candidates.map(type => {
             let w = 1.0;
+            const isLate = (stageRef >= 6);
 
-            // User Request: NORMAL spawn rate 40-50%
-            if (type === CONSTANTS.ENEMY_TYPES.NORMAL) {
-                w = 0.5;
-                // 1) A Burst Logic
-                if (!this.isABurstOn) {
-                    w *= 0.2; // OFF時は出現率低下
-                }
-                // 2) A Ratio Target Logic
-                if (reduceA) {
-                    w *= 0.25;
-                }
-                // 3) Late Stage Weight Adjustment (3.5)
-                if (stageRef >= 6) {
-                    w *= 0.7; // Further reduce A base (0.5 -> 0.35 equivalent)
-                }
+            // Base Weight Assignment (Stage Based)
+            if (isLate) {
+                // Late Stage Redistribution
+                if (type === CONSTANTS.ENEMY_TYPES.NORMAL) w = 0.30;
+                else if (type === CONSTANTS.ENEMY_TYPES.ZIGZAG) w = 0.60;
+                else if (type === CONSTANTS.ENEMY_TYPES.EVASIVE) w = 1.20;
+                else if (type === CONSTANTS.ENEMY_TYPES.ASSAULT) w = 1.00;
+                else if (type === CONSTANTS.ENEMY_TYPES.TRICKSTER) w = 1.20;
+                else if (type === CONSTANTS.ENEMY_TYPES.FLANKER) w = 1.10;
+                else w = 1.0; // Others default
+            } else {
+                // Early Stage (Legacy)
+                if (type === CONSTANTS.ENEMY_TYPES.NORMAL) w = 0.5;
+                else w = 1.0;
             }
 
-            // Late Stage Diversification (Promote C, O, M)
-            if (stageRef >= 6) {
-                if (type === CONSTANTS.ENEMY_TYPES.EVASIVE ||
-                    type === CONSTANTS.ENEMY_TYPES.TRICKSTER ||
-                    type === CONSTANTS.ENEMY_TYPES.FLANKER) {
-                    w = 1.0; // Promote to main pool level
-                    if (type === CONSTANTS.ENEMY_TYPES.FLANKER) w = 0.8;
-                }
+            // A-specific Modifiers
+            if (type === CONSTANTS.ENEMY_TYPES.NORMAL) {
+                // 1) A Burst Logic
+                if (!this.isABurstOn) w *= 0.2;
+                // 2) A Ratio Target Logic
+                if (reduceA) w *= 0.25;
+            }
 
-                // Minimum Quota Boost (Check last 50)
+            // Quota Boost (Stage 6+)
+            if (isLate) {
                 const checkHistory = this.historyTypes.slice(-50);
                 const count = checkHistory.filter(t => t === type).length;
                 if (count === 0) {
-                    // Boost if missing from recent history (Force injection)
+                    // Boost Main Targets if missing
                     if (type === CONSTANTS.ENEMY_TYPES.EVASIVE ||
                         type === CONSTANTS.ENEMY_TYPES.TRICKSTER ||
                         type === CONSTANTS.ENEMY_TYPES.FLANKER) {
@@ -930,7 +1353,7 @@ export class SpawnDirector {
             return { type, weight: w };
         });
 
-        const r = Math.random() * totalWeight;
+        const r = this.random() * totalWeight;
         let s = 0;
         for (const item of weights) {
             s += item.weight;
@@ -938,7 +1361,7 @@ export class SpawnDirector {
                 let selected = item.type;
 
                 // 3) Filler Variation (Aが選ばれた時、30%で他へ)
-                if (selected === CONSTANTS.ENEMY_TYPES.NORMAL && Math.random() < 0.3) {
+                if (selected === CONSTANTS.ENEMY_TYPES.NORMAL && this.random() < 0.3) {
                     // 候補からNORMAL以外、かつ基本種(B/C/E/O)を探す
                     // Unlock済みのものに限る
                     const alts = candidates.filter(t =>
@@ -949,7 +1372,7 @@ export class SpawnDirector {
                             t === CONSTANTS.ENEMY_TYPES.TRICKSTER)
                     );
                     if (alts.length > 0) {
-                        selected = alts[Math.floor(Math.random() * alts.length)];
+                        selected = alts[Math.floor(this.random() * alts.length)];
                     }
                 }
                 return selected;
@@ -986,7 +1409,7 @@ export class SpawnDirector {
         }
 
         // Shuffle
-        pool.sort(() => Math.random() - 0.5);
+        pool.sort(() => this.random() - 0.5);
 
         for (const t of pool) {
             // Check availability
@@ -1011,7 +1434,7 @@ export class SpawnDirector {
             CONSTANTS.ENEMY_TYPES.TRICKSTER,
             CONSTANTS.ENEMY_TYPES.FLANKER
         ];
-        pool1.sort(() => Math.random() - 0.5);
+        pool1.sort(() => this.random() - 0.5);
 
         for (const t of pool1) {
             if (this.canSpawnNow(t, stage)) return t;
@@ -1024,7 +1447,7 @@ export class SpawnDirector {
             CONSTANTS.ENEMY_TYPES.DASHER,
             CONSTANTS.ENEMY_TYPES.ORBITER
         ];
-        pool2.sort(() => Math.random() - 0.5);
+        pool2.sort(() => this.random() - 0.5);
 
         for (const t of pool2) {
             if (this.canSpawnNow(t, stage)) return t;
@@ -1061,7 +1484,8 @@ export class SpawnDirector {
         return true;
     }
 
-    executeSpawn(type, pattern, overrideX = null, overrideY = null) {
+    executeSpawn(type, pattern = 'NONE', overrideX = null, overrideY = null, options = {}) {
+        // ... (NAN check or similar)
         // Cooldown設定 (ID -> Key変換がここでも必要だが、Switchで)
         this.setCooldown(type);
 
@@ -1073,35 +1497,51 @@ export class SpawnDirector {
         this.historyTypes.push(type);
         if (this.historyTypes.length > this.historyMax) this.historyTypes.shift();
 
-        // SpawnDirector側での座標計算 (簡易版)
-        let x = overrideX || 0;
-        let y = overrideY || 0;
+        // Cumulative Stats Update
+        this.stageSpawnTotalCount++;
+        this.stageSpawnByType[type] = (this.stageSpawnByType[type] || 0) + 1;
 
-        if (overrideX === null) {
-            // 通常ランダム座標 (簡易)
-            const margin = 50;
-            const w = CONSTANTS.TARGET_WIDTH;
-            const h = CONSTANTS.TARGET_HEIGHT;
-            if (Math.random() < 0.5) {
-                x = Math.random() * w;
-                y = Math.random() < 0.5 ? -margin : h + margin;
-            } else {
-                x = Math.random() < 0.5 ? -margin : w + margin;
-                y = Math.random() * h;
-            }
+        // Spawn Position & Side Selection
+        let x = overrideX;
+        let y = overrideY;
+        let side = 'CUSTOM';
+
+        if (overrideX === null || overrideY === null) {
+            side = this.getNextSpawnSide();
+            const pos = this.calculateSpawnPos(side);
+            x = pos.x;
+            y = pos.y;
         }
 
+        // Record for HUD stats
+        this.recordSpawnStats(side, pattern);
+
         // Game側へ委譲
-        const stageData = CONSTANTS.STAGE_DATA[this.game.currentStage];
+        const stageData = CONSTANTS.STAGE_DATA[this.game.currentStage] || { hpMul: 1.0, speedMul: 1.0 };
         const enemy = this.game.enemyPool.get();
         if (!enemy) return;
 
         enemy.init(x, y, this.game.player.x, this.game.player.y, type, stageData.hpMul, stageData.speedMul);
+
+        // アトラクター属性決定（スポーン時に50%でRED/BLUE）
+        if (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
+            enemy.attractorKind = this.random() < 0.5 ? CONSTANTS.ATTRACTOR_KIND.RED : CONSTANTS.ATTRACTOR_KIND.BLUE;
+        }
+
+        // --- PRODUCTION: Apply Entry & Formation Meta ---
+        if (options.entry) enemy.entry = options.entry;
+        if (options.formationInfo) enemy.formationInfo = options.formationInfo;
+
         enemy.id = Enemy.nextId++;
         enemy.age = 0;
         enemy.oobFrames = 0;
 
         this.game.enemies.push(enemy);
+
+        // --- STATISTICS TRACKING (Unified for Game & Sim) ---
+        this.stageSpawnTotalCount++;
+        this.stageSpawnByType[type] = (this.stageSpawnByType[type] || 0) + 1;
+
         if (this.game.economyLogger) {
             this.game.economyLogger.recordSpawn(type);
         }
@@ -1153,9 +1593,9 @@ export class SpawnDirector {
 
         // Burst/Lull
         if (this.intensity === 'BURST') {
-            base = 140 + Math.random() * 80;
+            base = 140 + this.random() * 80;
         } else {
-            base = 280 + Math.random() * 120;
+            base = 280 + this.random() * 120;
         }
 
         // Stage補正 (Stage 2-4は遅く)
@@ -1168,17 +1608,17 @@ export class SpawnDirector {
 
     enterBurst() {
         this.intensity = 'BURST';
-        this.intensityTimer = 10000 + Math.random() * 8000;
+        this.intensityTimer = 10000 + this.random() * 8000;
 
         // 隊列イベントチャンス (30%)
-        if (this.game.currentStage >= 1 && Math.random() < 0.3) {
+        if (this.game.currentStage >= 1 && this.random() < 0.3) {
             this.queueFormation();
         }
     }
 
     enterLull() {
         this.intensity = 'LULL';
-        this.intensityTimer = 6000 + Math.random() * 4000;
+        this.intensityTimer = 6000 + this.random() * 4000;
     }
 
     nextPhase() {
@@ -1197,7 +1637,7 @@ export class SpawnDirector {
         if (this.phase === 'A') {
             this.currentPlan.mainRole = 'CORE';
             this.currentPlan.mainType = CONSTANTS.ENEMY_TYPES.NORMAL;
-            if (stage >= 2 && Math.random() < 0.5) this.currentPlan.mainType = CONSTANTS.ENEMY_TYPES.ZIGZAG;
+            if (stage >= 2 && this.random() < 0.5) this.currentPlan.mainType = CONSTANTS.ENEMY_TYPES.ZIGZAG;
         } else if (this.phase === 'B') {
             this.currentPlan.mainRole = 'HARASSER';
             this.currentPlan.mainType = CONSTANTS.ENEMY_TYPES.EVASIVE;
@@ -1209,42 +1649,164 @@ export class SpawnDirector {
         }
     }
 
-    queueFormation(pattern, type, count) {
-        // NONE (Random/Cluster)
-        if (pattern === 'NONE') {
-            const w = CONSTANTS.TARGET_WIDTH;
-            const margin = 50;
-            // プレイヤーから遠い位置にまとめて湧く
-            let originX = Math.random() * w;
-            let originY = -margin;
-            if (Math.random() < 0.5) originY = CONSTANTS.TARGET_HEIGHT + margin;
+    canFormFormation(type) {
+        const T = CONSTANTS.ENEMY_TYPES;
+        // 除外リスト (SSOT)
+        const EXCLUDED = [
+            T.SHIELDER,     // 'F'
+            T.GUARDIAN,     // 'G'
+            T.BARRIER_PAIR, // 'N'
+            T.SPLITTER_CHILD // 'K'
+        ];
+        return !EXCLUDED.includes(type);
+    }
 
+    pickFormationPattern(type) {
+        const WEIGHTS = {
+            DEFAULT: {
+                LINE: 15, HLINE: 10, V_SHAPE: 10, FAN: 10, DOUBLE: 10,
+                CIRCLE: 15, ARC: 10, GRID: 5, RANDOM_CLUSTER: 10, CROSS: 5, DOUBLE_RING: 5
+            },
+            // 難易度調整用 (速い/高HPなど)
+            [CONSTANTS.ENEMY_TYPES.DASHER]: {
+                LINE: 20, HLINE: 20, V_SHAPE: 20, FAN: 20, DOUBLE: 20, CIRCLE: 0, GRID: 0 // 速いので GRID 等は避ける
+            }
+        };
+
+        const w = WEIGHTS[type] || WEIGHTS.DEFAULT;
+        const total = Object.values(w).reduce((acc, v) => acc + v, 0);
+        let r = this.random() * total;
+
+        for (const [pattern, weight] of Object.entries(w)) {
+            r -= weight;
+            if (r <= 0) return pattern;
+        }
+        return 'LINE';
+    }
+
+    queueFormation(pattern, type, count) {
+        // Pick an anchor side and position for the formation
+        const side = this.getNextSpawnSide();
+        let anchor = this.calculateSpawnPos(side);
+
+        // NONE (Random/Cluster)
+        if (pattern === 'NONE' || pattern === 'RANDOM_BURST') {
             for (let i = 0; i < count; i++) {
-                // 少し散らす
-                const offsetX = (Math.random() - 0.5) * 200;
-                const offsetY = (Math.random() - 0.5) * 100;
+                // Apply scattering to anchor
+                const offsetX = (this.random() - 0.5) * 200;
+                const offsetY = (this.random() - 0.5) * 200;
                 this.spawnQueue.push({
-                    type, pattern: 'DIRECT',
-                    x: originX + offsetX,
-                    y: originY + offsetY,
-                    nextDelay: 50 + Math.random() * 100
+                    type, pattern: pattern,
+                    x: anchor.x + offsetX,
+                    y: anchor.y + offsetY,
+                    side: side,
+                    nextDelay: 50 + this.random() * 100
                 });
             }
             return;
         }
 
-        // Existing Formations
-        switch (pattern) {
-            case 'LINEAR': this.queueLine(type, count); break;
-            case 'PINCER': this.queuePincer(type, count); break;
-            case 'V_SHAPE': this.queueVShape(type, count); break;
-            case 'CIRCLE': this.queueCircle(type, count); break;
-            case 'GRID': this.queueGrid(type, count); break;
-            case 'STREAM': this.queueStream(type, count); break;
-            case 'CROSS': this.queueCross(type, count); break;
-            case 'RANDOM_BURST': this.queueRandomBurst(type, count); break;
-            default: this.queueLine(type, count); break;
+        // Formation shapes
+        const spacing = 60;
+        const offsets = Formations.getOffsets(pattern, count, spacing);
+
+        // Rotate offsets based on spawn side to face inward
+        const rotatedOffsets = this.rotateOffsetsForSide(offsets, side);
+
+        // --- PUSH-BACK LOGIC: Ensure no one spawns inside the screen ---
+        // We adjust the anchor so that the entire formation starts outside the margin.
+        const margin = 60;
+        const w = CONSTANTS.TARGET_WIDTH;
+        const h = CONSTANTS.TARGET_HEIGHT;
+
+        if (rotatedOffsets.length > 0) {
+            let minDX = 0, maxDX = 0, minDY = 0, maxDY = 0;
+            rotatedOffsets.forEach(off => {
+                minDX = Math.min(minDX, off.dx);
+                maxDX = Math.max(maxDX, off.dx);
+                minDY = Math.min(minDY, off.dy);
+                maxDY = Math.max(maxDY, off.dy);
+            });
+
+            // Depending on side, push anchor further out
+            switch (side) {
+                case 'TOP':
+                    anchor.y = -margin - maxDY;
+                    break;
+                case 'BOTTOM':
+                    anchor.y = h + margin - minDY;
+                    break;
+                case 'LEFT':
+                    anchor.x = -margin - maxDX;
+                    break;
+                case 'RIGHT':
+                    anchor.x = w + margin - minDX;
+                    break;
+                case 'TOP_LEFT':
+                    anchor.x = -margin - maxDX;
+                    anchor.y = -margin - maxDY;
+                    break;
+                case 'TOP_RIGHT':
+                    anchor.x = w + margin - minDX;
+                    anchor.y = -margin - maxDY;
+                    break;
+                case 'BOTTOM_LEFT':
+                    anchor.x = -margin - maxDX;
+                    anchor.y = h + margin - minDY;
+                    break;
+                case 'BOTTOM_RIGHT':
+                    anchor.x = w + margin - minDX;
+                    anchor.y = h + margin - minDY;
+                    break;
+            }
         }
+        // ----------------------------------------------------------------
+
+        // Calculate Glide Vector (Anchor -> Center)
+        const center = { x: CONSTANTS.TARGET_WIDTH / 2, y: CONSTANTS.TARGET_HEIGHT / 2 };
+        const glideAngle = Math.atan2(center.y - anchor.y, center.x - anchor.x);
+        const glideSpeed = 150; // Glide speed px/s
+        const glideVX = Math.cos(glideAngle) * glideSpeed;
+        const glideVY = Math.sin(glideAngle) * glideSpeed;
+
+        for (let i = 0; i < rotatedOffsets.length; i++) {
+            const off = rotatedOffsets[i];
+            this.spawnQueue.push({
+                type, pattern: pattern,
+                x: anchor.x + off.dx,
+                y: anchor.y + off.dy,
+                side: side,
+                nextDelay: (pattern === 'LINEAR' || pattern === 'HLINE') ? 150 : 0,
+                // Meta for Production
+                entry: { t: 0, dur: 0.8, vx: glideVX, vy: glideVY },
+                formationInfo: { t: 0, anchor: anchor, offset: off, pattern: pattern }
+            });
+        }
+    }
+
+    rotateOffsetsForSide(offsets, side) {
+        // We assume face inward is towards center.
+        // Base orientation: TOP (spawning at top, moving DOWN, offsets relative to TOP)
+        // Adjust offsets based on side.
+        let angle = 0;
+        switch (side) {
+            case 'TOP': angle = 0; break;
+            case 'BOTTOM': angle = Math.PI; break;
+            case 'LEFT': angle = -Math.PI / 2; break;
+            case 'RIGHT': angle = Math.PI / 2; break;
+            case 'TOP_LEFT': angle = -Math.PI / 4; break;
+            case 'TOP_RIGHT': angle = Math.PI / 4; break;
+            case 'BOTTOM_LEFT': angle = -3 * Math.PI / 4; break;
+            case 'BOTTOM_RIGHT': angle = 3 * Math.PI / 4; break;
+        }
+
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+
+        return offsets.map(off => ({
+            dx: off.dx * cos - off.dy * sin,
+            dy: off.dx * sin + off.dy * cos
+        }));
     }
 
     // --- Formation Helpers (Updated to use count) ---
@@ -1252,7 +1814,7 @@ export class SpawnDirector {
     queueLine(type, count) {
         const w = CONSTANTS.TARGET_WIDTH;
         const margin = 50;
-        const startX = Math.random() * (w - 100) + 50;
+        const startX = this.random() * (w - 100) + 50;
         for (let i = 0; i < count; i++) {
             this.spawnQueue.push({
                 type, pattern: 'LINEAR',
@@ -1289,7 +1851,7 @@ export class SpawnDirector {
     queueVShape(type, count) {
         const w = CONSTANTS.TARGET_WIDTH;
         const margin = 50;
-        const centerX = Math.random() * (w - 200) + 100;
+        const centerX = this.random() * (w - 200) + 100;
         const startY = -margin;
 
         // Lead
@@ -1336,7 +1898,7 @@ export class SpawnDirector {
 
     queueGrid(type, count) {
         const w = CONSTANTS.TARGET_WIDTH;
-        const startX = Math.random() > 0.5 ? 100 : w - 300;
+        const startX = this.random() > 0.5 ? 100 : w - 300;
         const startY = -100;
 
         // count -> cols x rows approximation
@@ -1359,14 +1921,14 @@ export class SpawnDirector {
 
     queueStream(type, count) {
         const w = CONSTANTS.TARGET_WIDTH;
-        const startX = Math.random() * w;
+        const startX = this.random() * w;
         const margin = 50;
         // count from arg
 
         for (let i = 0; i < count; i++) {
             this.spawnQueue.push({
                 type, pattern: 'STREAM',
-                x: startX + (Math.random() * 40 - 20), // Slight jitter
+                x: startX + (this.random() * 40 - 20), // Slight jitter
                 y: -margin,
                 nextDelay: 80 // Very fast stream
             });
@@ -1403,12 +1965,12 @@ export class SpawnDirector {
 
         for (let i = 0; i < count; i++) {
             let x, y;
-            if (Math.random() < 0.5) {
-                x = Math.random() * w;
-                y = Math.random() < 0.5 ? -margin : h + margin;
+            if (this.random() < 0.5) {
+                x = this.random() * w;
+                y = this.random() < 0.5 ? -margin : h + margin;
             } else {
-                x = Math.random() < 0.5 ? -margin : w + margin;
-                y = Math.random() * h;
+                x = this.random() < 0.5 ? -margin : w + margin;
+                y = this.random() * h;
             }
 
             this.spawnQueue.push({
@@ -1425,48 +1987,85 @@ export class SpawnDirector {
     // --- DEBUG SPAWN ---
     handleDebugSpawn(dt) {
         // Refined Logic (Debug Tools Support):
-        // 1. Target Type from Game (Dropdown)
+        // 1. Target Type & Formation from Game
         const debugType = this.game.debugTargetType || CONSTANTS.ENEMY_TYPES.NORMAL;
+        const debugType2 = this.game.debugTargetType2;
+        const debugFormation = this.game.debugFormation || 'NONE';
 
-        // 2. Count Active Enemies
-        const activeCount = this.game.enemies.filter(e => e.active).length;
+        // 2. Queue Processing (Highest Priority)
+        if (this.spawnQueue.length > 0) {
+            this.spawnIntervalTimer -= dt;
+            if (this.spawnIntervalTimer <= 0) {
+                const task = this.spawnQueue[0];
+                const options = {
+                    entry: task.entry,
+                    formationInfo: task.formationInfo
+                };
+                this.executeSpawn(task.type, task.pattern, task.x, task.y, options);
+                this.spawnQueue.shift();
 
-        // 3. Spawn Cap based on Slider
-        const maxSpawn = this.game.debugSpawnCount || 1;
-
-        if (activeCount < maxSpawn && this.spawnIntervalTimer <= 0) {
-            if (debugType === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR) {
-                this.spawnPairDebug(debugType);
-            } else {
-                const e = this.game.enemyPool.get();
-                if (e) {
-                    const angle = Math.random() * Math.PI * 2;
-                    const dist = 450;
-                    const x = 400 + Math.cos(angle) * dist;
-                    const y = 400 + Math.sin(angle) * dist;
-
-                    const speedMul = this.game.debugSpeedMul || 1.0;
-                    const hpMul = this.game.debugHpMul || 1.0;
-
-                    e.id = Enemy.nextId++;
-                    e.init(x, y, this.game.player.x, this.game.player.y, debugType, hpMul, speedMul);
-                    this.game.enemies.push(e);
-                }
+                // Interval for next task
+                this.spawnIntervalTimer = (task.nextDelay !== undefined) ? task.nextDelay : 100;
             }
-
-            // Interval
-            const ratio = activeCount / maxSpawn;
-            if (ratio < 0.5) this.spawnIntervalTimer = 200;
-            else this.spawnIntervalTimer = 1000;
-        } else {
-            if (activeCount >= maxSpawn) {
-                // Nothing (Wait for kill)
-            } else {
-                this.spawnIntervalTimer -= dt;
-            }
+            return;
         }
 
-        // Budget Logic (Not typically needed for Debug spawn but kept for compatibility)
+        // 3. Count Active and Pending enemies
+        const activeCount = this.game.enemies.filter(e => e.active).length;
+        const pendingCount = this.spawnQueue.length;
+        const totalCount = activeCount + pendingCount;
+
+        // 4. Spawn Cap based on Slider
+        const maxSpawn = this.game.debugSpawnCount || 1;
+
+        if (totalCount < maxSpawn && this.spawnIntervalTimer <= 0) {
+            // Determine which type to spawn (alternate between TYPE1 and TYPE2)
+            let currentType = debugType;
+            if (debugType2 && debugType2 !== 'NONE') {
+                // Initialize toggle if not exists
+                if (this.debugTypeToggle === undefined) this.debugTypeToggle = false;
+
+                // Alternate between TYPE1 and TYPE2
+                currentType = this.debugTypeToggle ? debugType2 : debugType;
+                this.debugTypeToggle = !this.debugTypeToggle;
+            }
+
+            if (debugFormation !== 'NONE') {
+                // Spawn as a formation
+                const count = Math.min(6, maxSpawn - totalCount); // Limit squad size in debug
+                const actualCount = count < 3 ? count : count; // logic
+                this.queueFormation(debugFormation, currentType, count);
+                // The queueFormation will fill spawnQueue, next update will process it.
+            } else {
+                // Conventional Single / Pair Spawn
+                if (currentType === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR) {
+                    this.spawnPairDebug(currentType);
+                    this.spawnIntervalTimer = 1000;
+                } else {
+                    const stageData = CONSTANTS.STAGE_DATA[this.game.currentStage] || { hpMul: 1.0, speedMul: 1.0 };
+                    const hpMul = (this.game.debugHpMul || 1.0);
+                    const speedMul = (this.game.debugSpeedMul || 1.0);
+
+                    // Use executeSpawn with manual override if needed
+                    this.executeSpawn(currentType, 'NONE', null, null);
+
+                    // Apply debug overrides to the last spawned enemy
+                    const lastE = this.game.enemies[this.game.enemies.length - 1];
+                    if (lastE && lastE.active) {
+                        lastE.maxHp *= hpMul;
+                        lastE.hp = lastE.maxHp;
+                        lastE.baseSpeed *= speedMul;
+                        lastE.currentSpeed = lastE.baseSpeed;
+                    }
+
+                    this.spawnIntervalTimer = totalCount < maxSpawn / 2 ? 200 : 1000;
+                }
+            }
+        } else {
+            this.spawnIntervalTimer -= dt;
+        }
+
+        // Budget Logic (compatibility)
         this.budgetTimer -= dt;
         if (this.budgetTimer <= 0) {
             this.budgetTimer = 15000;
@@ -1502,7 +2101,7 @@ export class SpawnDirector {
         const e1 = this.game.enemyPool.get();
         const e2 = this.game.enemyPool.get();
         if (e1 && e2) {
-            const angle = Math.random() * Math.PI * 2;
+            const angle = this.random() * Math.PI * 2;
             const dist = 450;
             const cx = 400 + Math.cos(angle) * dist;
             const cy = 400 + Math.sin(angle) * dist;
@@ -1519,9 +2118,19 @@ export class SpawnDirector {
             e1.partner = e2;
             e2.partner = e1;
 
-            this.game.enemies.push(e1);
             this.game.enemies.push(e2);
         }
+    }
+
+    // --- UTILS ---
+
+    setRNG(rng) {
+        this.rng = rng;
+    }
+
+    random() {
+        if (this.rng) return this.rng.next();
+        return Math.random();
     }
 }
 

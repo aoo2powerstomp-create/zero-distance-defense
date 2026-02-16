@@ -48,6 +48,12 @@ export class DamageText {
 
         ctx.font = 'bold 20px "Audiowide", "Orbitron", sans-serif';
         ctx.textAlign = 'center';
+
+        // 黒い縁取りを追加（視認性向上）
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 4;
+        ctx.strokeText(this.text, this.x, this.y);
+
         ctx.fillText(this.text, this.x, this.y);
         ctx.restore();
     }

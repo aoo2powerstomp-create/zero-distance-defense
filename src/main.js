@@ -16,6 +16,7 @@ import { FrameCache } from './utils/FrameCache.js';
 
 import { SpawnDirector } from './SpawnDirector.js';
 import { EconomyLogger } from './utils/EconomyLogger.js';
+import { Simulator } from './utils/Simulator.js';
 
 class Game {
     constructor() {
@@ -87,7 +88,7 @@ class Game {
         this.orbitAngle = 0;
 
         // デバッグ設定
-        this.debugEnabled = true; // 開発中のため強制的に有効化
+        this.debugEnabled = DEBUG_ENABLED;
         this.debugInvincible = false;
         this.timeScale = 1.0;
 
@@ -101,7 +102,8 @@ class Game {
 
         this.runTotalTimeMs = 0;
 
-        this.economyLogger = new EconomyLogger(this); // Pass game instance directly as per constructor signature
+        this.economyLogger = new EconomyLogger(this);
+        this.shieldZones = []; // ★設置型シールド管理用
 
         this.initUI();
         this.setupDebugMenu();
@@ -552,12 +554,14 @@ class Game {
             };
             // Default Debug Values
             if (this.debugTargetType === undefined) this.debugTargetType = CONSTANTS.ENEMY_TYPES.NORMAL;
+            if (this.debugTargetType2 === undefined) this.debugTargetType2 = 'NONE';
             if (this.debugSpawnCount === undefined) this.debugSpawnCount = 1;
             if (this.debugSpeedMul === undefined) this.debugSpeedMul = 1.0;
             if (this.debugHpMul === undefined) this.debugHpMul = 1.0;
             if (this.debugShowHitbox === undefined) this.debugShowHitbox = false;
             if (this.debugShowKnockback === undefined) this.debugShowKnockback = false;
             if (this.debugShowVector === undefined) this.debugShowVector = false;
+            if (this.debugFormation === undefined) this.debugFormation = 'NONE'; // Ensure it's initialized for debug stage
         } else {
             stageData = CONSTANTS.STAGE_DATA[this.currentStage];
         }
@@ -1289,6 +1293,9 @@ class Game {
         }
         Profiler.end('spawning');
 
+        // アトラクターバフ集計（敵更新の直前に実行）
+        this.updateAttractorBuffs();
+
         const { hasGuardian, hasMark } = this.frameCache.buffFlags;
 
         Profiler.start('bullet_update');
@@ -1407,6 +1414,15 @@ class Game {
             fx.radius += dt * (fx.speed || 0.5);
             fx.alpha -= dt * (fx.fadeSpeed || 0.002);
             if (fx.alpha <= 0) this.pulseEffects.splice(i, 1);
+        }
+
+        // --- ShieldZones Update ---
+        for (let i = this.shieldZones.length - 1; i >= 0; i--) {
+            const sz = this.shieldZones[i];
+            sz.timer -= dt;
+            if (sz.timer <= 0) {
+                this.shieldZones.splice(i, 1);
+            }
         }
 
         Profiler.start('collision');
@@ -1632,7 +1648,9 @@ class Game {
                         } else if (e.type === CONSTANTS.ENEMY_TYPES.FLANKER) {
                             damageRatio *= 4.0; // High damage for Flanker charge
                         }
-                        this.player.takeDamage(damageRatio);
+                        // アトラクターバフ（RED）を接触ダメージに適用
+                        const finalDamage = damageRatio * (e.damageMultiplier || 1.0);
+                        this.player.takeDamage(finalDamage);
                         this.player.invincibleFrames = 18;
                         frameTouchHitApplied = true;
                         this.audio.play('damage', { priority: 'high' });
@@ -1733,33 +1751,51 @@ class Game {
         }
     }
 
+    /**
+     * 各敵がシールド保護範囲内にいるか判定（設置型シールドに対応）
+     */
     updateShieldCache() {
-        const activeShielders = this.enemies.filter(p =>
-            p.active && p.type === CONSTANTS.ENEMY_TYPES.SHIELDER && p.barrierState === 'active'
-        );
         const globalMarkActive = this.globalMarkTimer > 0;
         const globalGuardBuffActive = this.enemies.some(p =>
             p.active && p.type === CONSTANTS.ENEMY_TYPES.GUARDIAN && p.barrierState === 'active'
         );
-        this.globalGuardianActive = globalGuardBuffActive; // Store for drawing access
+        this.globalGuardianActive = globalGuardBuffActive;
         const globalBuffActive = globalGuardBuffActive || globalMarkActive;
 
-        const auraRadiusSq = Math.pow(CONSTANTS.SHIELDER.auraRadius + CONSTANTS.ENEMY_SIZE, 2);
+        const auraRadius = CONSTANTS.SHIELDER.auraRadius;
+        const auraRadiusSq = Math.pow(auraRadius, 2);
 
         for (let j = 0; j < this.enemies.length; j++) {
             const e = this.enemies[j];
             if (!e.active) continue;
 
-            // 全体バフが有効でも、オーラ保護 (90%軽減) は Shielder が近くにいる場合のみにする
             e.isShielded = false;
-            if (activeShielders.length > 0) {
-                const candidates = this.grid.queryCircle(e.renderX, e.renderY, CONSTANTS.SHIELDER.auraRadius + CONSTANTS.ENEMY_SIZE);
-                e.isShielded = candidates.some(p =>
-                    p.active && p.type === CONSTANTS.ENEMY_TYPES.SHIELDER && p.barrierState === 'active' &&
-                    (Math.pow(p.renderX - e.renderX, 2) + Math.pow(p.renderY - e.renderY, 2)) < auraRadiusSq
-                );
+            // 画面上の全設置シールドをチェック
+            for (let k = 0; k < this.shieldZones.length; k++) {
+                const sz = this.shieldZones[k];
+                const dx = sz.x - e.x;
+                const dy = sz.y - e.y;
+                if (dx * dx + dy * dy < auraRadiusSq) {
+                    e.isShielded = true;
+                    break;
+                }
             }
         }
+    }
+
+    /**
+     * 設置型シールドを生成
+     */
+    createShieldZone(x, y) {
+        this.shieldZones.push({
+            x: x,
+            y: y,
+            timer: CONSTANTS.SHIELDER.barrierDurationMs || 10000,
+            radius: CONSTANTS.SHIELDER.auraRadius || 90
+        });
+
+        // 生成SEなどがあればここで追加
+        if (this.audio) this.audio.play('barrier', { volume: 0.4, pitch: 0.8 });
     }
 
     cleanupEntities() {
@@ -1963,8 +1999,54 @@ class Game {
             dbState.classList.toggle('cool', this.spawnPhase === 'COOL');
         }
 
-        // Debug Stage UI (Canvas Overlay or just simple DOM if possible)
-        // Here we just ensure the debug info is shown in the HUD if needed
+        // --- Stats Display (SpawnSide / Formation) ---
+        if (this.debugEnabled) {
+            let statsDiv = document.getElementById('debug-stats-panel');
+            if (!statsDiv) {
+                statsDiv = document.createElement('div');
+                statsDiv.id = 'debug-stats-panel';
+                statsDiv.style.position = 'absolute';
+                statsDiv.style.bottom = '80px';
+                statsDiv.style.right = '10px';
+                statsDiv.style.backgroundColor = 'rgba(0,0,0,0.7)';
+                statsDiv.style.color = '#0f0';
+                statsDiv.style.fontFamily = 'monospace';
+                statsDiv.style.fontSize = '10px';
+                statsDiv.style.padding = '8px';
+                statsDiv.style.border = '1px solid #0f0';
+                statsDiv.style.pointerEvents = 'none';
+                statsDiv.style.zIndex = '1000';
+                document.body.appendChild(statsDiv);
+            }
+
+            if (this.spawnDirector) {
+                const sd = this.spawnDirector;
+
+                // Helper to format counts
+                const fmt = (obj) => Object.entries(obj).map(([k, v]) => `${k}:${v}`).join(', ');
+                const getHistoryCounts = (arr) => {
+                    const counts = {};
+                    arr.forEach(x => counts[x] = (counts[x] || 0) + 1);
+                    return counts;
+                };
+
+                const sideLatest = getHistoryCounts(sd.spawnSideHistory);
+                const formLatest = getHistoryCounts(sd.formationHistory);
+
+                statsDiv.innerHTML = `
+                    <div style="font-weight:bold; color:#fff; border-bottom:1px solid #0f0; margin-bottom:4px;">SPAWN STATISTICS</div>
+                    <div><b>SIDE (Latest 200):</b><br>${fmt(sideLatest)}</div>
+                    <div style="margin-top:4px;"><b>SIDE (Total):</b><br>${fmt(sd.spawnSideTotal)}</div>
+                    <hr style="border:0; border-top:1px solid #333; margin:4px 0;">
+                    <div><b>FORMATION (Latest 200):</b><br>${fmt(formLatest)}</div>
+                    <div style="margin-top:4px;"><b>FORMATION (Total):</b><br>${fmt(sd.formationTotal)}</div>
+                `;
+            }
+        } else {
+            const statsDiv = document.getElementById('debug-stats-panel');
+            if (statsDiv) statsDiv.remove();
+        }
+
         // Debug Stage UI
         if (this.isDebugStage) {
             let container = document.getElementById('debug-ui-container');
@@ -2015,7 +2097,10 @@ class Game {
                 select.addEventListener('change', (e) => {
                     this.debugTargetType = e.target.value;
                     this.enemies.forEach(e => e.active = false); // Clear
-                    if (this.spawnDirector) this.spawnDirector.spawnIntervalTimer = 0;
+                    if (this.spawnDirector) {
+                        this.spawnDirector.spawnQueue = [];
+                        this.spawnDirector.spawnIntervalTimer = 0;
+                    }
 
                     // 解説文の更新
                     const descDiv = document.getElementById('debug-enemy-desc');
@@ -2025,6 +2110,78 @@ class Game {
                 });
                 selDiv.appendChild(select);
                 container.appendChild(selDiv);
+
+                // 1.02 TYPE 2 Select [NEW]
+                const sel2Div = document.createElement('div');
+                sel2Div.textContent = 'TYPE 2: ';
+                const select2 = document.createElement('select');
+                select2.id = 'debug-enemy-select-2';
+                select2.style.backgroundColor = '#000';
+                select2.style.color = '#fff';
+                select2.style.border = '1px solid #0f0';
+                select2.style.marginTop = '5px';
+
+                // NONE option
+                const noneOpt = document.createElement('option');
+                noneOpt.value = 'NONE';
+                noneOpt.textContent = 'NONE';
+                if (this.debugTargetType2 === 'NONE' || this.debugTargetType2 === undefined) noneOpt.selected = true;
+                select2.appendChild(noneOpt);
+
+                // Enemy types
+                for (const [key, val] of Object.entries(CONSTANTS.ENEMY_TYPES)) {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = `${val}/${key}`;
+                    if (val === this.debugTargetType2) opt.selected = true;
+                    select2.appendChild(opt);
+                }
+
+                select2.addEventListener('change', (e) => {
+                    this.debugTargetType2 = e.target.value;
+                    // Clear existing enemies
+                    this.enemies.forEach(e => e.active = false);
+                    if (this.spawnDirector) {
+                        this.spawnDirector.spawnQueue = [];
+                        this.spawnDirector.spawnIntervalTimer = 0;
+                    }
+                });
+                sel2Div.appendChild(select2);
+                container.appendChild(sel2Div);
+
+                // 1.05 Formation Select [NEW]
+                const formDiv = document.createElement('div');
+                formDiv.textContent = 'FORMATION: ';
+                const formSelect = document.createElement('select');
+                formSelect.id = 'debug-formation-select';
+                formSelect.style.backgroundColor = '#000';
+                formSelect.style.color = '#fff';
+                formSelect.style.border = '1px solid #0f0';
+                formSelect.style.marginTop = '5px';
+
+                const formationList = [
+                    'NONE', 'LINEAR', 'HLINE', 'V_SHAPE', 'FAN', 'CIRCLE',
+                    'ARC', 'GRID', 'RANDOM_CLUSTER', 'CROSS', 'DOUBLE_RING'
+                ];
+
+                formationList.forEach(val => {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = val;
+                    if (val === this.debugFormation) opt.selected = true;
+                    formSelect.appendChild(opt);
+                });
+
+                formSelect.addEventListener('change', (e) => {
+                    this.debugFormation = e.target.value;
+                    this.enemies.forEach(e => e.active = false); // Clear
+                    if (this.spawnDirector) {
+                        this.spawnDirector.spawnQueue = [];
+                        this.spawnDirector.spawnIntervalTimer = 0;
+                    }
+                });
+                formDiv.appendChild(formSelect);
+                container.appendChild(formDiv);
 
                 // 1.1 Enemy Description Panel [NEW]
                 const descDiv = document.createElement('div');
@@ -2237,13 +2394,61 @@ class Game {
         this.ctx.lineWidth = 1;
         this.ctx.strokeRect(0, 0, CONSTANTS.TARGET_WIDTH, CONSTANTS.TARGET_HEIGHT);
 
-        Profiler.start('render');
         const bAssets = {
             [CONSTANTS.WEAPON_TYPES.STANDARD]: this.assetLoader.get('BULLET_RIFLE'),
             [CONSTANTS.WEAPON_TYPES.SHOT]: this.assetLoader.get('BULLET_SHOT'),
             [CONSTANTS.WEAPON_TYPES.PIERCE]: this.assetLoader.get('BULLET_LASER')
         };
         this.bullets.forEach(b => b.draw(this.ctx, bAssets[b.weaponType]));
+
+        // --- Draw Static Shield Zones ---
+        this.shieldZones.forEach(sz => {
+            if (sz.timer <= 0) return;
+            this.ctx.save();
+            this.ctx.translate(sz.x, sz.y);
+
+            const life = sz.timer / (CONSTANTS.SHIELDER.barrierDurationMs || 10000);
+            const alpha = Math.min(1.0, life * 5.0); // フェードアウト用
+            const color = '0, 255, 255';
+
+            // 六角形グリッド描画 (全て点灯版)
+            const radius = sz.radius;
+            const hexSize = 10;
+            const gridRadius = Math.ceil(radius / (hexSize * 1.5));
+
+            this.ctx.globalCompositeOperation = 'lighter';
+            this.ctx.strokeStyle = `rgba(${color}, ${0.5 * alpha})`;
+            this.ctx.fillStyle = `rgba(${color}, ${0.2 * alpha})`;
+            this.ctx.lineWidth = 1;
+
+            for (let q = -gridRadius; q <= gridRadius; q++) {
+                for (let r = -gridRadius; r <= gridRadius; r++) {
+                    const hx = hexSize * (3 / 2 * q);
+                    const hy = hexSize * (Math.sqrt(3) / 2 * q + Math.sqrt(3) * r);
+
+                    if (hx * hx + hy * hy < radius * radius) {
+                        // ★追加: 残り時間に応じてランダムに消えていく演出
+                        // 座標をベースにした疑似乱数で、各六角形が消えるタイミングを固定
+                        const hash = Math.abs(Math.sin(q * 12.9898 + r * 78.233) * 43758.5453) % 1;
+                        if (hash > life) continue;
+
+                        this.ctx.beginPath();
+                        for (let i = 0; i < 6; i++) {
+                            const angle = (i / 6) * Math.PI * 2;
+                            const px = hx + Math.cos(angle) * (hexSize - 1);
+                            const py = hy + Math.sin(angle) * (hexSize - 1);
+                            if (i === 0) this.ctx.moveTo(px, py);
+                            else this.ctx.lineTo(px, py);
+                        }
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                        this.ctx.stroke();
+                    }
+                }
+            }
+            this.ctx.restore();
+        });
+
         this.enemies.forEach(e => e.draw(this.ctx));
         if (this.itemManager) this.itemManager.draw(this.ctx);
 
@@ -2426,6 +2631,74 @@ class Game {
             location.reload();
         });
     }
+
+    /**
+     * アトラクターバフ集計（毎フレーム実行）
+     * 範囲内のアトラクターをカウントし、減衰式でバフ倍率を算出
+     */
+    updateAttractorBuffs() {
+        const cfg = CONSTANTS.ATTRACTOR;
+        const radius = cfg.pullRadius || 200;
+        const redBonus = cfg.RED_BONUS || 0.20;
+        const blueBonus = cfg.BLUE_BONUS || 0.25;
+        const stackMax = cfg.STACK_MAX || 3;
+        const decay = cfg.DECAY || 0.7;
+
+        // アトラクター一覧を抽出
+        const attractors = this.enemies.filter(e =>
+            e.active && e.type === CONSTANTS.ENEMY_TYPES.ATTRACTOR && e.attractorKind
+        );
+
+        // 全敵の倍率をリセット
+        for (const enemy of this.enemies) {
+            if (!enemy.active) continue;
+            enemy.damageMultiplier = 1.0;
+            enemy.speedMultiplier = 1.0;
+        }
+
+        // 各敵について範囲内のアトラクターをカウント
+        for (const enemy of this.enemies) {
+            if (!enemy.active) continue;
+
+            // アトラクター自身はバフ対象外
+            if (enemy.type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) continue;
+
+            let redCount = 0;
+            let blueCount = 0;
+
+            for (const attractor of attractors) {
+                const dx = enemy.x - attractor.x;
+                const dy = enemy.y - attractor.y;
+                const distSq = dx * dx + dy * dy;
+
+                if (distSq <= radius * radius) {
+                    if (attractor.attractorKind === CONSTANTS.ATTRACTOR_KIND.RED) {
+                        redCount++;
+                    } else if (attractor.attractorKind === CONSTANTS.ATTRACTOR_KIND.BLUE) {
+                        blueCount++;
+                    }
+                }
+            }
+
+            // スタック上限適用
+            redCount = Math.min(redCount, stackMax);
+            blueCount = Math.min(blueCount, stackMax);
+
+            // 減衰式で倍率算出: 1 + (base * stack * decay^(stack-1))
+            if (redCount > 0) {
+                enemy.damageMultiplier = 1 + (redBonus * redCount * Math.pow(decay, redCount - 1));
+            }
+            if (blueCount > 0) {
+                enemy.speedMultiplier = 1 + (blueBonus * blueCount * Math.pow(decay, blueCount - 1));
+            }
+        }
+    }
 }
 
-new Game();
+
+// グローバル公開 (デバッグ用)
+window.Game = Game;
+window.Simulator = Simulator;
+
+const game = new Game();
+window.game = game;

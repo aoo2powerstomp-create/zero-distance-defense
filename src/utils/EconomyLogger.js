@@ -149,19 +149,89 @@ export class EconomyLogger {
         div.style.overflowY = 'auto'; // Vertical scroll
         div.style.zIndex = '9999';
         div.style.padding = '10px';
-        div.style.pointerEvents = 'none'; // Click through
-        div.style.whiteSpace = 'pre-wrap';
+        div.style.pointerEvents = 'none'; // Click through (initially)
+
+        // Ensure container allows children pointer events
+        // But we want to click through empty space...
+        // Approach: Container click-through, children auto.
 
         document.body.appendChild(div);
         this.container = div;
+
+        // 1. Controls Area (Top)
+        this.controlsDiv = document.createElement('div');
+        this.controlsDiv.style.pointerEvents = 'auto'; // Enable clicks
+        this.controlsDiv.style.marginBottom = '10px';
+        this.controlsDiv.style.borderBottom = '1px solid #00ff00';
+        this.controlsDiv.style.paddingBottom = '5px';
+        this.container.appendChild(this.controlsDiv);
+
+        // Add Sim Button
+        const btn = document.createElement('button');
+        btn.textContent = "RUN SIM (Full Stage x100)";
+        btn.style.background = '#004400';
+        btn.style.color = '#00ff00';
+        btn.style.border = '1px solid #00ff00';
+        btn.style.cursor = 'pointer';
+        btn.style.fontSize = '10px';
+        btn.style.marginRight = '5px';
+
+        btn.onclick = () => {
+            if (window.Simulator) {
+                this.runSimulation();
+            } else {
+                this.simResultText = "\n[ERROR] Simulator class not found on window object.\n";
+                this.render();
+            }
+        };
+        this.controlsDiv.appendChild(btn);
+
+        // 2. Log Area
+        this.logDiv = document.createElement('div');
+        this.logDiv.style.whiteSpace = 'pre-wrap';
+        this.container.appendChild(this.logDiv);
+
+        this.simResultText = "";
+    }
+
+    runSimulation() {
+        const stage = this.game.currentStage + 1;
+        const runs = 100;
+        // duration arg is safety timeout (9999s) in updated Simulator
+        const seed = Date.now();
+
+        this.simResultText = `[Running Sim: Stg${stage} x${runs} (Full)...]`;
+        this.render(); // force update
+
+        // Async to let UI update
+        setTimeout(() => {
+            try {
+                const sim = new window.Simulator();
+                const res = sim.simulateMany(runs, stage, 9999, seed); // 9999s timeout
+
+                let out = `\n=== SIM RESULTS (Stg${stage}, ${runs}runs) ===\n`;
+                out += `Avg Total: ${res.total} (Duration: ${(res.avgDuration || 0).toFixed(1)}s)\n`;
+                out += `Avg Force Acts: ${res.forceActs}\n`;
+                out += `Ratios:\n`;
+                Object.keys(res.ratios).sort().forEach(k => {
+                    out += ` ${k}: ${res.ratios[k]}\n`;
+                });
+                out += `============================\n`;
+
+                this.simResultText = out;
+            } catch (e) {
+                this.simResultText = `\n[SIM ERROR]: ${e.message}\n`;
+                console.error(e);
+            }
+        }, 50);
     }
 
     render() {
-        if (!this.container) return;
+        if (!this.logDiv) return;
 
         // Debug Stage Exception
         if (this.game.currentStage === CONSTANTS.STAGE_DEBUG) {
-            this.container.textContent = "=== DEBUG STAGE (ECON LOG DISABLED) ===";
+            this.logDiv.textContent = "=== DEBUG STAGE (ECON LOG DISABLED) ===";
             return;
         }
 
@@ -210,6 +280,13 @@ export class EconomyLogger {
             const targetA = (this.game.currentStage + 1 >= 6) ? (sd.isABurstOn ? "70" : "50") : "-";
             html += `A-Ratio: ${aRatio}% (Tgt: ${targetA}%)\n`;
 
+            // Late Weights (Stage 6+)
+            if (this.game.currentStage + 1 >= 6) {
+                html += `[Late Weights]\n`;
+                html += `A:0.30 B:0.60 C:1.20\n`;
+                html += `E:1.00 O:1.20 M:1.10\n`;
+            }
+
             // Recent Spawn Ratios
             if (this.recentSpawns.length > 0) {
                 const total = this.recentSpawns.length;
@@ -220,6 +297,19 @@ export class EconomyLogger {
                 Object.keys(counts).sort().forEach(t => {
                     const pct = ((counts[t] / total) * 100).toFixed(1);
                     html += ` ${t}: ${pct}%\n`;
+                });
+            }
+            html += `---------------------\n`;
+
+            // Cumulative Spawn Stats (Stage Total)
+            const stTotal = sd.stageSpawnTotalCount || 0;
+            if (stTotal > 0) {
+                html += `Spawn(Total This Stage): total=${stTotal}\n`;
+                const stCounts = sd.stageSpawnByType || {};
+                Object.keys(stCounts).sort().forEach(t => {
+                    const c = stCounts[t];
+                    const pct = ((c / stTotal) * 100).toFixed(1);
+                    html += ` ${t}: ${c.toString().padEnd(3)} (${pct}%)\n`;
                 });
             }
             html += `---------------------\n`;
@@ -262,6 +352,7 @@ export class EconomyLogger {
                 typesToShow.push(CONSTANTS.ENEMY_TYPES.FLANKER);
             }
 
+            /*
             html += `[Limit] Active/Max\n`;
             const counts = this.game.frameCache.typeCounts;
             typesToShow.forEach(t => {
@@ -272,6 +363,7 @@ export class EconomyLogger {
                 }
             });
             html += `---------------------\n`;
+            */
 
             html += `---------------------\n`;
 
@@ -281,9 +373,41 @@ export class EconomyLogger {
                 const state = fs.active ? "ACTIVE" : "OFF";
                 const picked = fs.picked ? fs.picked : (fs.active ? "FAILED" : "-");
                 const counter = (fs.decision !== undefined) ? `${fs.decision % fs.period}/${fs.period}` : "-";
-                html += `ForceNonA: ${state} [${counter}] Pick:${picked}\n`;
+
+                // Active Stats (Activations & Picks)
+                let statsStr = "";
+                if (sd.debugForceStats && sd.debugForceStats.activations > 0) {
+                    const fStats = sd.debugForceStats;
+                    statsStr = `\n Act:${fStats.activations}`;
+                    const pTypes = Object.keys(fStats.picksByType).sort();
+                    if (pTypes.length > 0) {
+                        statsStr += " Pick:";
+                        statsStr += pTypes.map(pt => `${pt}=${fStats.picksByType[pt]}`).join(',');
+                    }
+                }
+
+                html += `ForceNonA: ${state} [${counter}] Pick:${picked}${statsStr}\n`;
             }
             html += `---------------------\n`;
+
+            // Cumulative Spawn Stats
+            if (sd.cumulativeSpawnStats) {
+                html += `[Cumulative Spawn Stats]\n`;
+                const css = sd.cumulativeSpawnStats;
+                const total = css.total;
+                if (total > 0) {
+                    const sortedCumulativeTypes = Object.keys(css.counts).sort();
+                    sortedCumulativeTypes.forEach(t => {
+                        const count = css.counts[t];
+                        const pct = ((count / total) * 100).toFixed(1);
+                        html += ` ${t}: ${count} (${pct}%)\n`;
+                    });
+                } else {
+                    html += ` (No spawns yet)\n`;
+                }
+                html += ` Total: ${total}\n`;
+                html += `---------------------\n`;
+            }
 
             // Rejection Stats
             if (sd.debugRejections) {
@@ -310,6 +434,33 @@ export class EconomyLogger {
         html += tableRows;
         html += `---------------------\n`;
 
+        // Stage 9 Quota Debug
+        const sd = this.game.spawnDirector;
+        if (stage === 9 && sd && sd.quotaByType) {
+            html += `[Quota Stats (Stage 9)]\n`;
+            html += `QuotaHits: ${sd.debugQuotaStats.hits}\n`;
+
+            const unmet = [];
+            let quotaSummary = "";
+            for (const [t, target] of Object.entries(sd.quotaByType)) {
+                const cur = sd.stageSpawnByType[t] || 0;
+                quotaSummary += ` ${t}:${cur}/${target}`;
+                if (cur < target) {
+                    unmet.push(`${t}(rem:${target - cur})`);
+                }
+            }
+            html += `Progress:${quotaSummary}\n`;
+            html += `Unmet: ${unmet.length > 0 ? unmet.join(', ') : 'NONE'}\n`;
+
+            const failures = sd.debugQuotaStats.failures;
+            if (Object.keys(failures).length > 0) {
+                const failStr = Object.entries(failures).map(([t, c]) => `${t}:${c}`).join(', ');
+                html += `QuotaFailures: ${failStr}\n`;
+            }
+            html += `---------------------\n`;
+        }
+
+        /*
         // Recent Logs (Reverse order traverse)
         html += `直近ログ (現在):\n`;
 
@@ -330,6 +481,7 @@ export class EconomyLogger {
         if (logs.length > logDisplayLimit) {
             html += `... (${logs.length - logDisplayLimit} more)\n`;
         }
+        */
 
         // HISTORY SECTION
         if (this.history.length > 0) {
@@ -354,6 +506,11 @@ export class EconomyLogger {
             }
         }
 
-        this.container.textContent = html;
+        // Append Sim Results at the bottom
+        if (this.simResultText) {
+            html += this.simResultText;
+        }
+
+        this.logDiv.textContent = html;
     }
 }

@@ -48,6 +48,16 @@ export class Enemy {
         // リフレクター用の状態
         this.isReflectActive = true;
         this.reflectCycleTimer = 0;
+
+        // アトラクターバフ用の倍率（main.jsで毎フレーム更新）
+        this.damageMultiplier = 1.0;  // 攻撃力倍率（RED）
+        this.speedMultiplier = 1.0;   // 移動速度倍率（BLUE）
+        this.attractorKind = null;    // 'RED' or 'BLUE'）
+
+        // 演出用
+        this.entry = null;         // { t, dur, vx, vy }
+        this.formationInfo = null; // { t, anchor, offset, pattern }
+        this.shieldAlpha = 0;      // 保護オーラ用透明度 (0.0 - 1.0)
     }
 
     init(x, y, targetX, targetY, type = CONSTANTS.ENEMY_TYPES.NORMAL, hpMul = 1.0, speedMul = 1.0, affinity = CONSTANTS.ENEMY_AFFINITIES.SWARM) {
@@ -82,6 +92,9 @@ export class Enemy {
         this.vy = 0;
         this.destroyReason = null;
         this.oobFrames = 0;
+        this.entry = null;
+        this.formationInfo = null;
+        this.shieldAlpha = 0;
 
         // タイプ別の基本速度倍率 (定数ファイルに個別定義がない場合の等倍フォールバック)
         let typeSpeedMul = 1.0;
@@ -103,6 +116,7 @@ export class Enemy {
             else if (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) typeSpeedMul = 1.5;
             else if (type === CONSTANTS.ENEMY_TYPES.DASHER) typeSpeedMul = 1.2;
             else if (type === CONSTANTS.ENEMY_TYPES.REFLECTOR) typeSpeedMul = 1.0;
+            else if (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) typeSpeedMul = 1.5;
 
             this.baseSpeed = CONSTANTS.ENEMY_BASE_SPEED * speedMul * typeSpeedMul;
         }
@@ -111,6 +125,7 @@ export class Enemy {
         if (type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
             this.isReflectActive = true;
             this.reflectCycleTimer = CONSTANTS.REFLECTOR.activeDurationMs || 7000;
+            this.renderAngle = this.angle; // 出現時の初期角度（通常はプレイヤー方向）で固定
         }
 
         // 移動設定の初期化
@@ -134,9 +149,10 @@ export class Enemy {
             this.dashState = 0; // Use integer 0 (Approach) instead of string 'normal'
             this.dashTimer = Math.random() * (CONSTANTS.DASHER.dashCooldownMs || 2000);
             this.curveDir = (this.id % 2 === 0) ? 1 : -1;
-            this.weavePhase = Math.random() * Math.PI * 2;
+            this.weavePhase = Math.PI * 2;
         }
 
+        // configureMovement後にcurrentSpeedを設定（configureMovement内でbaseSpeedが変更される場合があるため）
         this.currentSpeed = this.baseSpeed;
         this.movementPhase = Math.random() * Math.PI * 2;
 
@@ -347,12 +363,10 @@ export class Enemy {
                 break;
             case CONSTANTS.ENEMY_TYPES.SHIELDER:
             case CONSTANTS.ENEMY_TYPES.GUARDIAN:
-            // CONSTANTS.ENEMY_TYPES.ELITE (Separated)
-            case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
             case CONSTANTS.ENEMY_TYPES.OBSERVER:
                 this.movementMode = 'HOVER';
                 this.turnRate = (type === CONSTANTS.ENEMY_TYPES.OBSERVER) ? 0.05 : 0.03;
-                this.orbitRadius = (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) ? 300 : 180;
+                this.orbitRadius = 180;
 
                 // シールダー系初期化
                 if (type === CONSTANTS.ENEMY_TYPES.SHIELDER || type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
@@ -361,6 +375,15 @@ export class Enemy {
                     this.barrierTimer = Math.random() * (config.barrierCooldownMs || 0);
                     this.orbitAngle = Math.random() * Math.PI * 2;
                 }
+                break;
+            case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
+                // アトラクターはプレイヤーの周りを回る（接近しない）
+                this.movementMode = 'ORBIT';
+                this.orbitRadius = 300;
+                this.orbitAngle = Math.random() * Math.PI * 2;
+                this.turnRate = 0.05;  // 旋回速度
+                // ランダムにREDまたはBLUEを選択
+                this.attractorKind = Math.random() < 0.5 ? CONSTANTS.ATTRACTOR_KIND.RED : CONSTANTS.ATTRACTOR_KIND.BLUE;
                 break;
             case CONSTANTS.ENEMY_TYPES.ORBITER:
                 this.movementMode = 'ORBIT';
@@ -449,6 +472,18 @@ export class Enemy {
         }
         if (isNaN(this.angle)) this.angle = 0;
 
+        // --- PRODUCTION: Entry Glide ---
+        if (this.entry) {
+            this.entry.t += dt / 1000;
+            if (this.entry.t >= this.entry.dur) {
+                this.entry = null;
+            } else {
+                // Glide position (Constant velocity addition)
+                this.x += this.entry.vx * dt / 1000;
+                this.y += this.entry.vy * dt / 1000;
+            }
+        }
+
         // アイテム効果 (FREEZE) によるスロウ
         const freezeMul = options.isFrozen ? (CONSTANTS.ITEM_CONFIG.freezeSpeedMultiplier || 0.2) : 1.0;
         const effectiveDtMod = dtMod * freezeMul;
@@ -463,6 +498,13 @@ export class Enemy {
             this.updateBarrier(dt);
         }
 
+        // 保護オーラのフェード処理
+        if (this.isShielded) {
+            this.shieldAlpha = Math.min(1.0, this.shieldAlpha + dt / 200); // 0.2秒でフェードイン
+        } else {
+            this.shieldAlpha = Math.max(0.0, this.shieldAlpha - dt / 500); // 0.5秒でフェードアウト
+        }
+
         // 1. 速度計算 (距離減衰 & バフ)
         const dx = playerX - this.x;
         const dy = playerY - this.y;
@@ -475,8 +517,8 @@ export class Enemy {
         this.updateMovement(dtMod, playerX, playerY, dist, now, playerAngle, dt);
 
         // 3. 共通物理演算 (ノックバック & 位置更新)
-        this.x += (this.vx * freezeMul + this.knockVX) * dtMod;
-        this.y += (this.vy * freezeMul + this.knockVY) * dtMod;
+        this.x += (this.vx * freezeMul * this.speedMultiplier + this.knockVX) * dtMod;
+        this.y += (this.vy * freezeMul * this.speedMultiplier + this.knockVY) * dtMod;
 
         // ノックバック減衰
         const damp = Math.pow(CONSTANTS.ENEMY_KNOCKBACK_DAMP, dtMod);
@@ -526,20 +568,21 @@ export class Enemy {
 
     updateSpeed(dist, options) {
         let speedRatio = 1.0;
-        // 至近距離での減速 (FLANKERの背後回り込み〜突進中は無効化して機動力を維持)
-        const isFlankingOrCharging = (this.movementMode === 'FLANK' && this.flankState >= 1);
-        const isDashing = (this.movementMode === 'DASH' && this.dashState === 2);
+        // 突進中などの特殊速度設定を保護するため、1.0未満の時のみ適用orベース速度を元に計算
+        const isCharging =
+            (this.movementMode === 'FLANK' && this.flankState === 3) ||
+            (this.movementMode === 'DASH' && this.dashState === 2) ||
+            (this.movementMode === 'ELITE' && this.eliteState === 2) ||
+            (this.movementMode === 'ASSAULT_CURVE' && this.assaultState === 1) ||
+            (this.movementMode === 'ASSAULT');
 
-        if (dist < (CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS || 0) && !isFlankingOrCharging && !isDashing) {
+        if (dist < (CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS || 0) && !isCharging) {
             const t = Math.max(0, dist / CONSTANTS.ENEMY_SPEED_ADJUST_RADIUS);
             speedRatio = CONSTANTS.ENEMY_MIN_SPEED_RATIO + (1.0 - CONSTANTS.ENEMY_MIN_SPEED_RATIO) * t;
         }
 
-        // 突進中などの特殊速度設定を保護するため、1.0未満の時のみ適用orベース速度を元に計算
-        if (this.movementMode === 'FLANK' && this.flankState === 3) {
-            // Already set high speed, don't overwrite
-        } else if (this.movementMode === 'DASH' && this.dashState === 2) {
-            // Already set high speed
+        if (isCharging) {
+            // Keep high speed
         } else {
             this.currentSpeed = this.baseSpeed * speedRatio;
         }
@@ -589,8 +632,11 @@ export class Enemy {
             case 'ASSAULT':
                 // 旋回制限付き追尾: 急旋回禁止
                 this.turnTowards(targetAngle, this.turnRate * dtMod);
-                this.vx = Math.cos(this.angle) * this.currentSpeed;
-                this.vy = Math.sin(this.angle) * this.currentSpeed;
+
+                // 突撃時の倍率を適用 (ASSAULT 自体が突撃モード扱い)
+                const assaultSpd = this.baseSpeed * (CONSTANTS.ASSAULT_CURVE.chargeSpeedMul || 2.5);
+                this.vx = Math.cos(this.angle) * assaultSpd;
+                this.vy = Math.sin(this.angle) * assaultSpd;
                 break;
 
             case 'EVASIVE':
@@ -825,6 +871,44 @@ export class Enemy {
                 }
                 break;
 
+                // 5) Apply position updates
+                this.x += this.vx * dtMod;
+                this.y += this.vy * dtMod;
+
+                // --- PRODUCTION: Formation Morph Correction (Weak adjustment) ---
+                if (this.formationInfo) {
+                    this.formationInfo.t += dt / 1000;
+                    const t = this.formationInfo.t;
+                    let targetOffset = { dx: this.formationInfo.offset.dx, dy: this.formationInfo.offset.dy };
+
+                    // Apply Morph variations
+                    if (this.formationInfo.pattern === 'CIRCLE') {
+                        // CIRCLE_SHRINK: Lerp radius 1.0 -> 0.4 over 2s
+                        const shrink = Math.max(0.4, 1.0 - (t / 2.0) * 0.6);
+                        targetOffset.dx *= shrink;
+                        targetOffset.dy *= shrink;
+                    } else if (this.formationInfo.pattern === 'ARC') {
+                        // ARC_ROTATE: Rotate 0.8 rad/s
+                        const angle = 0.8 * t;
+                        const cos = Math.cos(angle);
+                        const sin = Math.sin(angle);
+                        const rx = targetOffset.dx * cos - targetOffset.dy * sin;
+                        const ry = targetOffset.dx * sin + targetOffset.dy * cos;
+                        targetOffset.dx = rx;
+                        targetOffset.dy = ry;
+                    }
+
+                    const targetX = this.formationInfo.anchor.x + targetOffset.dx;
+                    const targetY = this.formationInfo.anchor.y + targetOffset.dy;
+
+                    // Weak adjustment (k=3.0) to keep AI character
+                    const k = 3.0;
+                    this.x += (targetX - this.x) * k * dt / 1000;
+                    this.y += (targetY - this.y) * k * dt / 1000;
+                }
+
+            // 6) Screen Boundary Logic (Collision with play area or wrap)
+
             case 'HOVER':
             case 'ORBIT':
                 this.orbitAngle += (this.type === CONSTANTS.ENEMY_TYPES.ORBITER ? 0.02 : 0.01) * dtMod;
@@ -1013,10 +1097,28 @@ export class Enemy {
                         this.dashState = 2; // To Final Dash
                         this.dashTimer = CONSTANTS.DASHER.dashDurationMs || 600;
                         this.currentSpeed = this.baseSpeed * (CONSTANTS.DASHER.dashSpeedMultiplier || 4.0);
+                        this.chargeAngle = this.angle; // FINAL LOCK
                         Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 3.0);
                         if (this.game && this.game.audio) {
                             this.game.audio.play('dash', { volume: 0.5 });
                         }
+                    }
+
+                } else if (this.dashState === 2) {
+                    // FINAL DASH (Burst) [FIXED: Added missing implementation]
+                    this.vx = Math.cos(this.chargeAngle) * this.currentSpeed;
+                    this.vy = Math.sin(this.chargeAngle) * this.currentSpeed;
+                    this.angle = this.chargeAngle;
+
+                    // Dash trail
+                    if (Math.random() < 0.6) {
+                        Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 2.0);
+                    }
+
+                    if (this.dashTimer <= 0) {
+                        this.dashState = 3; // To Cooldown
+                        this.dashTimer = 800; // Cooldown duration
+                        this.currentSpeed = this.baseSpeed * 0.4; // Heavy slowdown
                     }
 
                 } else if (this.dashState === 3) {
@@ -1085,44 +1187,126 @@ export class Enemy {
                     this.reflectTimer = 0;
                     this.reflectStrafeDir = Math.random() < 0.5 ? 1 : -1;
                     this.reflectOrbitPhase = Math.random() * Math.PI * 2;
+                    this.orbitAngle = targetAngle + Math.PI; // 初期位置付近からスタート
                 }
 
                 this.reflectTimer -= dt;
-                if (this.reflectTimer <= 0) {
-                    // 2〜4秒ごとに旋回方向を検討
-                    this.reflectStrafeDir = Math.random() < 0.7 ? this.reflectStrafeDir : -this.reflectStrafeDir;
-                    this.reflectTimer = 2000 + Math.random() * 2000;
-                }
+
+                // orbitAngle を playerAngle（プレイヤーの正面方向）に寄せる
+                let orbitTarget = playerAngle;
+
+                let angDiff = orbitTarget - this.orbitAngle;
+                while (angDiff < -Math.PI) angDiff += Math.PI * 2;
+                while (angDiff > Math.PI) angDiff -= Math.PI * 2;
+
+                this.orbitAngle += angDiff * 0.05 * dtMod;
 
                 // 距離の伸縮 (200 - 350px)
                 this.reflectOrbitPhase += 0.01 * dtMod;
                 const baseOrbit = 260;
                 const orbitAmp = 80;
-                const targetOrbitDist = baseOrbit + Math.sin(this.reflectOrbitPhase) * orbitAmp;
 
-                // 旋回運動
-                this.orbitAngle += 0.015 * this.reflectStrafeDir * dtMod;
-
-                // 目標座標の計算
-                const txR = px + Math.cos(this.orbitAngle) * targetOrbitDist;
-                const tyR = py + Math.sin(this.orbitAngle) * targetOrbitDist;
-
+                // 旋回運動 (既存の orbitAngle は上で更新済みなので、ここでは位置のみ)
+                // const moveAngleR = Math.atan2(tyR - this.y, txR - this.x); 
+                // this.turnTowards(moveAngleR, 0.08 * dtMod);
+                // -> 移動自体は orbitAngle に基づく目標地点 txR, tyR を目指す
+                const reflectOrbitDist = baseOrbit + Math.sin(this.reflectOrbitPhase) * orbitAmp;
+                const txR = px + Math.cos(this.orbitAngle) * reflectOrbitDist;
+                const tyR = py + Math.sin(this.orbitAngle) * reflectOrbitDist;
                 const moveAngleR = Math.atan2(tyR - this.y, txR - this.x);
-                this.turnTowards(moveAngleR, 0.08 * dtMod);
+                this.turnTowards(moveAngleR, 0.12 * dtMod); // 回り込みは機敏に
 
                 // 速度適用
                 this.vx = Math.cos(this.angle) * this.currentSpeed;
                 this.vy = Math.sin(this.angle) * this.currentSpeed;
 
-                // 強制的な自機回避 (180px 以内に入りそうなら外へ逃げる)
-                if (dist < 180) {
+                // 強制的な自機回避 (150px 以内に入りそうなら外へ逃げる)
+                if (dist < 150) {
                     const fleeAngle = Math.atan2(this.y - py, this.x - px);
                     this.vx = Math.cos(fleeAngle) * this.currentSpeed * 1.5;
                     this.vy = Math.sin(fleeAngle) * this.currentSpeed * 1.5;
                 }
 
-                // 常に向きはプレイヤーを固定
-                this.renderAngle = targetAngle;
+                // ★盾の向き (renderAngle) をプレイヤー方向 (targetAngle) に向ける
+                // ただし即時ではなく、少し遅延させる（ユーザ要望：7割程度の追従感）
+                let rDiff = targetAngle - this.renderAngle;
+                while (rDiff < -Math.PI) rDiff += Math.PI * 2;
+                while (rDiff > Math.PI) rDiff -= Math.PI * 2;
+
+                const rotationLimit = 0.055 * dtMod; // 旋回速度を制限（プレイヤーの急旋回を逃す隙）
+                if (Math.abs(rDiff) < rotationLimit) {
+                    this.renderAngle = targetAngle;
+                } else {
+                    this.renderAngle += Math.sign(rDiff) * rotationLimit;
+                }
+                break;
+
+
+            case 'ORBIT':
+                // 周回移動: プレイヤーの周りを一定距離で回る
+                // アトラクター、ORBITERなどが使用
+
+                if (this.orbitAngle === undefined) {
+                    this.orbitAngle = Math.atan2(this.y - py, this.x - px);
+                }
+
+                // 目標距離
+                const targetOrbitDist = this.orbitRadius || 250;
+                const minSafeDist = targetOrbitDist * 0.8;  // 最小安全距離
+                const maxDist = targetOrbitDist * 1.2;      // 最大距離
+
+                // 距離が近すぎる場合は強制的に外へ逃げる（最優先）
+                if (dist < minSafeDist) {
+                    // 強制的に外へ
+                    const fleeAngle = Math.atan2(this.y - py, this.x - px);
+                    this.vx = Math.cos(fleeAngle) * this.currentSpeed * 2.0;
+                    this.vy = Math.sin(fleeAngle) * this.currentSpeed * 2.0;
+                    this.angle = fleeAngle;
+                } else if (dist > maxDist) {
+                    // 遠すぎる場合は近づく
+                    const approachAngle = Math.atan2(py - this.y, px - this.x);
+                    this.turnTowards(approachAngle, (this.turnRate || 0.05) * dtMod);
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+                } else {
+                    // 適切な距離：周回運動
+                    const orbitSpeed = 0.015 * dtMod;
+                    this.orbitAngle += orbitSpeed;
+
+                    // 目標位置
+                    const tx = px + Math.cos(this.orbitAngle) * targetOrbitDist;
+                    const ty = py + Math.sin(this.orbitAngle) * targetOrbitDist;
+
+                    // 目標位置へ移動
+                    const moveAngle = Math.atan2(ty - this.y, tx - this.x);
+                    this.turnTowards(moveAngle, (this.turnRate || 0.05) * dtMod);
+
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+                }
+                break;
+
+            case 'HOVER':
+                // ホバリング移動: 一定距離を保ちながらゆっくり移動
+                // SHIELDER、GUARDIAN、OBSERVERなどが使用
+
+                const hoverDist = this.orbitRadius || 180;
+
+                if (dist < hoverDist - 30) {
+                    // 遠ざかる
+                    const awayAngle = Math.atan2(this.y - py, this.x - px);
+                    this.turnTowards(awayAngle, (this.turnRate || 0.03) * dtMod);
+                } else if (dist > hoverDist + 30) {
+                    // 近づく
+                    this.turnTowards(targetAngle, (this.turnRate || 0.03) * dtMod);
+                } else {
+                    // 距離を維持しながら横移動
+                    const tangentAngle = targetAngle + Math.PI / 2;
+                    this.turnTowards(tangentAngle, (this.turnRate || 0.03) * dtMod);
+                }
+
+                this.vx = Math.cos(this.angle) * this.currentSpeed;
+                this.vy = Math.sin(this.angle) * this.currentSpeed;
                 break;
 
             case 'TRICKSTER':
@@ -1171,431 +1355,612 @@ export class Enemy {
 
 
     draw(ctx) {
+        // [ROBUST FIX] 描画状態を完全に分離するための外側ラッパー
         ctx.save();
-        ctx.translate(this.renderX, this.renderY);
+        try {
+            ctx.translate(this.renderX, this.renderY);
 
-        // 進行方向への回転適用 (本体のみに適用するため save)
-        ctx.save();
-        if (this.hasDirection) {
-            // スプライトは元々-Y方向(上)を向いていると仮定し、進行方向(this.angle)に向けるために+90度補正
-            ctx.rotate(this.angle + Math.PI / 2);
-        }
-
-        let assetKey = null;
-        let filter = "none";
-
-        switch (this.type) {
-            case CONSTANTS.ENEMY_TYPES.NORMAL: assetKey = 'ENEMY_A'; break;
-            case CONSTANTS.ENEMY_TYPES.ZIGZAG: assetKey = 'ENEMY_B'; break;
-            case CONSTANTS.ENEMY_TYPES.EVASIVE: assetKey = 'ENEMY_C'; break;
-            case CONSTANTS.ENEMY_TYPES.ELITE: assetKey = 'ENEMY_D'; break;
-            case CONSTANTS.ENEMY_TYPES.ASSAULT: assetKey = 'ENEMY_E'; break;
-            case CONSTANTS.ENEMY_TYPES.SHIELDER: assetKey = 'ENEMY_F'; break;
-            case CONSTANTS.ENEMY_TYPES.GUARDIAN: assetKey = 'ENEMY_G'; break;
-            case CONSTANTS.ENEMY_TYPES.DASHER: assetKey = 'ENEMY_H'; break;
-            case CONSTANTS.ENEMY_TYPES.ORBITER: assetKey = 'ENEMY_I'; break;
-            case CONSTANTS.ENEMY_TYPES.SPLITTER: assetKey = 'ENEMY_J'; break;
-            case CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD: assetKey = 'ENEMY_K'; break;
-            case CONSTANTS.ENEMY_TYPES.OBSERVER: assetKey = 'ENEMY_L'; break;
-
-            // 新敵タイプ (既存アセットの流用 + フィルタ)
-            case CONSTANTS.ENEMY_TYPES.FLANKER:
-                assetKey = 'ENEMY_A';
-                filter = "hue-rotate(240deg) brightness(0.8)";
-                break;
-            case CONSTANTS.ENEMY_TYPES.BARRIER_PAIR:
-                assetKey = 'ENEMY_F';
-                filter = "hue-rotate(180deg) brightness(1.2)";
-                break;
-            case CONSTANTS.ENEMY_TYPES.TRICKSTER:
-                assetKey = 'ENEMY_A';
-                filter = "hue-rotate(60deg) brightness(1.2) drop-shadow(0 0 5px #ffff00)";
-                break;
-            case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
-                assetKey = 'ENEMY_G';
-                filter = "hue-rotate(120deg) brightness(1.1)";
-                break;
-            case CONSTANTS.ENEMY_TYPES.REFLECTOR:
-                assetKey = 'ENEMY_F';
-                filter = "hue-rotate(0deg) brightness(1.1)"; // 後で金縁風の描画を追加検討
-                break;
-        }
-        if (this.isBoss) {
-            const stageNum = (this.game) ? this.game.currentStage + 1 : 1;
-            assetKey = (stageNum <= 5) ? 'ENEMY_BOSS_5' : 'ENEMY_BOSS_10';
-        }
-
-        const asset = (this.game && this.game.assetLoader) ? this.game.assetLoader.get(assetKey) : null;
-
-        if (asset) {
-            if (filter !== "none") ctx.filter = filter;
-            // アセットがある場合：スプライト描画
-            let size = CONSTANTS.ENEMY_SIZE * 2.5;
-            if (this.isBoss) {
-                size = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL * 2.5;
-            } else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
-                size = CONSTANTS.ENEMY_SIZE * CONSTANTS.ELITE_SIZE_MUL * 2.5;
-            } else if (this.type === CONSTANTS.ENEMY_TYPES.TRICKSTER) {
-                size *= CONSTANTS.TRICKSTER.sizeMul;
-            }
-            ctx.drawImage(asset, -size / 2, -size / 2, size, size);
-            ctx.filter = "none";
-
-            // (Barrier Line removed from here to follow rotation-free context below)
-
-            // REFLECTOR のゴージャスな半円シールド演出
-            if (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR && this.isReflectActive) {
-                ctx.save();
-                const r = size / 2.2;
-
-                // 正面（自機側）を向く半円の範囲 (-90度〜90度)
-                const startAngle = -Math.PI / 2;
-                const endAngle = Math.PI / 2;
-
-                // 1. 強力な外光グロー (Super Outer Glow)
-                ctx.shadowBlur = 35;
-                ctx.shadowColor = "rgba(255, 215, 0, 0.9)";
-
-                ctx.strokeStyle = "rgba(255, 230, 100, 0.4)";
-                ctx.lineWidth = 4;
-                ctx.lineCap = "round"; // 端を丸める
-                ctx.beginPath();
-                ctx.arc(0, 0, r, startAngle, endAngle);
-                ctx.stroke();
-
-                // 2. メインのグラデーション弧 (Main Gradient Arc)
-                ctx.shadowBlur = 20;
-                const grad = ctx.createLinearGradient(0, -r, 0, r);
-                grad.addColorStop(0, "#ffd700");
-                grad.addColorStop(0.5, "#fff8dc");
-                grad.addColorStop(1, "#b8860b");
-
-                ctx.strokeStyle = grad;
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.arc(0, 0, r, startAngle, endAngle);
-                ctx.stroke();
-
-                // 3. 回転する光沢、ただしシールドの範囲内のみ表示 (Specular Highlight clamped to arc)
-                ctx.shadowBlur = 0;
-                let highlightAngle = ((Date.now() * 0.005) % (Math.PI * 2)) - Math.PI; // -PI 〜 PI
-
-                // 表示範囲内にあれば描画
-                if (highlightAngle > startAngle && highlightAngle < endAngle) {
-                    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-                    ctx.lineWidth = 1.5;
-                    ctx.beginPath();
-                    ctx.arc(0, 0, r, highlightAngle, Math.min(highlightAngle + 0.8, endAngle));
-                    ctx.stroke();
-                }
-
-                ctx.restore();
+            // 進行方向への回転適用 (本体のみに適用するため save)
+            ctx.save();
+            if (this.hasDirection) {
+                // リフレクターは移動方向(angle)ではなく、盾の向き(renderAngle)で回転させる
+                const rot = (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) ? this.renderAngle : this.angle;
+                // スプライトは元々-Y方向(上)を向いていると仮定し、進行方向に向けるために+90度補正
+                ctx.rotate(rot + Math.PI / 2);
             }
 
-            /* 
-            // パルス時のアウトライン (画像の場合は矩形枠を表示)
-            if (this.pulseOutlineTimer > 0) {
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 4;
-                ctx.beginPath();
-                ctx.rect(-size / 2, -size / 2, size, size);
-                ctx.stroke();
-            }
-            */
-        } else {
-            // アセットがない場合：従来の図形描画
+            let assetKey = null;
+            let filter = "none";
+
             switch (this.type) {
-                case CONSTANTS.ENEMY_TYPES.NORMAL:
-                    this.drawShape(ctx, 3, '#ff0000'); // Triangle
+                case CONSTANTS.ENEMY_TYPES.NORMAL: assetKey = 'ENEMY_A'; break;
+                case CONSTANTS.ENEMY_TYPES.ZIGZAG: assetKey = 'ENEMY_B'; break;
+                case CONSTANTS.ENEMY_TYPES.EVASIVE: assetKey = 'ENEMY_C'; break;
+                case CONSTANTS.ENEMY_TYPES.ELITE: assetKey = 'ENEMY_D'; break;
+                case CONSTANTS.ENEMY_TYPES.ASSAULT: assetKey = 'ENEMY_E'; break;
+                case CONSTANTS.ENEMY_TYPES.SHIELDER: assetKey = 'ENEMY_F'; break;
+                case CONSTANTS.ENEMY_TYPES.GUARDIAN: assetKey = 'ENEMY_G'; break;
+                case CONSTANTS.ENEMY_TYPES.DASHER: assetKey = 'ENEMY_H'; break;
+                case CONSTANTS.ENEMY_TYPES.ORBITER: assetKey = 'ENEMY_I'; break;
+                case CONSTANTS.ENEMY_TYPES.SPLITTER: assetKey = 'ENEMY_J'; break;
+                case CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD: assetKey = 'ENEMY_K'; break;
+                case CONSTANTS.ENEMY_TYPES.OBSERVER: assetKey = 'ENEMY_L'; break;
+
+                // 新敵タイプ (既存アセットの流用 + フィルタ)
+                case CONSTANTS.ENEMY_TYPES.FLANKER:
+                    assetKey = 'ENEMY_A';
+                    filter = "hue-rotate(240deg) brightness(0.8)";
                     break;
-                case CONSTANTS.ENEMY_TYPES.ZIGZAG:
-                    this.drawShape(ctx, 4, '#ff00ff'); // Square
+                case CONSTANTS.ENEMY_TYPES.BARRIER_PAIR:
+                    assetKey = 'ENEMY_F';
+                    filter = "hue-rotate(180deg) brightness(1.2)";
                     break;
-                case CONSTANTS.ENEMY_TYPES.CHASER: // Pent
-                    this.drawShape(ctx, 5, '#ff8800');
+                case CONSTANTS.ENEMY_TYPES.TRICKSTER:
+                    assetKey = 'ENEMY_A';
+                    filter = "hue-rotate(60deg) brightness(1.2) drop-shadow(0 0 5px #ffff00)";
                     break;
-                case CONSTANTS.ENEMY_TYPES.SPEEDER: // Hex
-                    this.drawShape(ctx, 6, '#ffff00');
+                case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
+                    assetKey = 'ENEMY_G';
+                    filter = "hue-rotate(120deg) brightness(1.1)";
                     break;
-                case CONSTANTS.ENEMY_TYPES.DASHER: // Star (5)
-                    this.drawStar(ctx, 5, '#00ffff');
-                    break;
-                case CONSTANTS.ENEMY_TYPES.TANK: // 8角形
-                    this.drawShape(ctx, 8, '#8800ff');
-                    // 重装甲感の追加
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-                    ctx.fillStyle = `rgba(255, 255, 255, ${this.flashTimer / 5})`;
-                    ctx.fill();
-                    break;
-                case CONSTANTS.ENEMY_TYPES.SHOOTER:
-                    this.drawShape(ctx, 3, '#00ff00'); // 仮定
-                    break;
-                case CONSTANTS.ENEMY_TYPES.HOMING:
-                    this.drawShape(ctx, 4, '#ff8888'); // 仮定
-                    break;
-                case CONSTANTS.ENEMY_TYPES.EXPLODER:
-                    this.drawShape(ctx, 6, '#ff0088'); // 仮定
-                    break;
-                case CONSTANTS.ENEMY_TYPES.ORBITER:
-                    this.drawShape(ctx, 4, '#00ffff'); // 仮定
-                    break;
-                case CONSTANTS.ENEMY_TYPES.SHIELDER:
-                case CONSTANTS.ENEMY_TYPES.GUARDIAN:
-                    // SHIELDER/GUARDIAN は特殊エフェクトが下に続くが、本体も描画
-                    this.drawShape(ctx, 6, '#00ffff', false); // アウトラインなし
-                    break;
-                default:
-                    this.drawShape(ctx, 3, '#ff0000');
+                case CONSTANTS.ENEMY_TYPES.REFLECTOR:
+                    assetKey = 'ENEMY_F';
+                    filter = "hue-rotate(0deg) brightness(1.1)"; // 後で金縁風の描画を追加検討
                     break;
             }
-        }
+            if (this.isBoss) {
+                const stageNum = (this.game) ? this.game.currentStage + 1 : 1;
+                assetKey = (stageNum <= 5) ? 'ENEMY_BOSS_5' : 'ENEMY_BOSS_10';
+            }
 
-        // シールダーのバリア/弱点演出 (HEX GRID VERSION) - GUARDIAN removed
-        if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER) {
-            const baseSize = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+            const asset = (this.game && this.game.assetLoader) ? this.game.assetLoader.get(assetKey) : null;
 
-            if (this.barrierState === 'windup') {
-                // 予兆: 点滅
-                const flash = Math.sin(Date.now() * 0.02);
-                if (flash > 0) {
-                    ctx.strokeStyle = `rgba(255, 255, 255, ${flash})`;
-                    ctx.lineWidth = 2;
+            if (asset) {
+                if (filter !== "none") ctx.filter = filter;
+                // アセットがある場合：スプライト描画
+                let size = CONSTANTS.ENEMY_SIZE * 2.5;
+                if (this.isBoss) {
+                    size = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL * 2.5;
+                } else if (this.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                    size = CONSTANTS.ENEMY_SIZE * CONSTANTS.ELITE_SIZE_MUL * 2.5;
+                } else if (this.type === CONSTANTS.ENEMY_TYPES.TRICKSTER) {
+                    size *= CONSTANTS.TRICKSTER.sizeMul;
+                }
+                ctx.drawImage(asset, -size / 2, -size / 2, size, size);
+                ctx.filter = "none";
+
+                // (Barrier Line removed from here to follow rotation-free context below)
+
+                // REFLECTOR のゴージャスな半円シールド演出
+                if (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR && this.isReflectActive) {
+                    ctx.save();
+                    const r = size / 2.2;
+
+                    // 正面（自機側）を向く半円の範囲 (本体回転 PI/2 により、自機方向は local -PI/2)
+                    const startAngle = -Math.PI;
+                    const endAngle = 0;
+
+                    // 1. 強力な外光グロー (Super Outer Glow)
+                    ctx.shadowBlur = 35;
+                    ctx.shadowColor = "rgba(255, 215, 0, 0.9)";
+
+                    ctx.strokeStyle = "rgba(255, 230, 100, 0.4)";
+                    ctx.lineWidth = 4;
+                    ctx.lineCap = "round"; // 端を丸める
                     ctx.beginPath();
-                    ctx.arc(0, 0, baseSize * 1.5, 0, Math.PI * 2);
+                    ctx.arc(0, 0, r, startAngle, endAngle);
+                    ctx.stroke();
+
+                    // 2. メインのグラデーション弧 (Main Gradient Arc)
+                    ctx.shadowBlur = 20;
+                    const grad = ctx.createLinearGradient(0, -r, 0, r);
+                    grad.addColorStop(0, "#ffd700");
+                    grad.addColorStop(0.5, "#fff8dc");
+                    grad.addColorStop(1, "#b8860b");
+
+                    ctx.strokeStyle = grad;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, r, startAngle, endAngle);
+                    ctx.stroke();
+
+                    // 3. 回転する光沢、ただしシールドの範囲内のみ表示 (Specular Highlight clamped to arc)
+                    ctx.shadowBlur = 0;
+                    let highlightAngle = ((Date.now() * 0.005) % (Math.PI * 2)) - Math.PI; // -PI 〜 PI
+
+                    // 表示範囲内にあれば描画
+                    if (highlightAngle > startAngle && highlightAngle < endAngle) {
+                        ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, r, highlightAngle, Math.min(highlightAngle + 0.8, endAngle));
+                        ctx.stroke();
+                    }
+
+                    ctx.restore();
+                }
+
+                /* 
+                // パルス時のアウトライン (画像の場合は矩形枠を表示)
+                if (this.pulseOutlineTimer > 0) {
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.rect(-size / 2, -size / 2, size, size);
                     ctx.stroke();
                 }
-            } else if (this.barrierState === 'active') {
+                */
+            } else {
+                // アセットがない場合：従来の図形描画
+                switch (this.type) {
+                    case CONSTANTS.ENEMY_TYPES.NORMAL:
+                        this.drawShape(ctx, 3, '#ff0000'); // Triangle
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.ZIGZAG:
+                        this.drawShape(ctx, 4, '#ff00ff'); // Square
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.CHASER: // Pent
+                        this.drawShape(ctx, 5, '#ff8800');
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.SPEEDER: // Hex
+                        this.drawShape(ctx, 6, '#ffff00');
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.DASHER: // Star (5)
+                        this.drawStar(ctx, 5, '#00ffff');
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.TANK: // 8角形
+                        this.drawShape(ctx, 8, '#8800ff');
+                        // 重装甲感の追加
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        ctx.fillStyle = `rgba(255, 255, 255, ${this.flashTimer / 5})`;
+                        ctx.fill();
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.SHOOTER:
+                        this.drawShape(ctx, 3, '#00ff00'); // 仮定
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.HOMING:
+                        this.drawShape(ctx, 4, '#ff8888'); // 仮定
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.EXPLODER:
+                        this.drawShape(ctx, 6, '#ff0088'); // 仮定
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.ORBITER:
+                        this.drawShape(ctx, 4, '#00ffff'); // 仮定
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.SHIELDER:
+                    case CONSTANTS.ENEMY_TYPES.GUARDIAN:
+                        // SHIELDER/GUARDIAN は特殊エフェクトが下に続くが、本体も描画
+                        this.drawShape(ctx, 6, '#00ffff', false); // アウトラインなし
+                        break;
+                    default:
+                        this.drawShape(ctx, 3, '#ff0000');
+                        break;
+                }
+            }
+            ctx.restore(); // [FIX] Restore Save R (Body Rotation context at line 1362)
+
+            // シールダーのバリア/弱点演出 (HEX GRID VERSION)
+            if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER) {
+                const baseSize = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+
+                if (this.barrierState === 'windup') {
+                    const now = Date.now();
+                    const radius = CONSTANTS.SHIELDER.auraRadius || (baseSize * 1.8);
+                    const color = '0, 255, 255';
+
+                    // 設置が近づくにつれて強まる点滅
+                    const flash = Math.sin(now * 0.02);
+                    const progress = 1.0 - (this.barrierTimer / (CONSTANTS.SHIELDER.barrierWindupMs || 800));
+
+                    ctx.save();
+
+
+                    // 波打つ六角形グリッド (Telegraph)
+                    const hexSize = 10;
+                    const gridRadius = Math.ceil(radius / (hexSize * 1.5));
+
+                    ctx.globalCompositeOperation = 'lighter';
+                    for (let q = -gridRadius; q <= gridRadius; q++) {
+                        for (let r = -gridRadius; r <= gridRadius; r++) {
+                            const hx = hexSize * (3 / 2 * q);
+                            const hy = hexSize * (Math.sqrt(3) / 2 * q + Math.sqrt(3) * r);
+                            const distVal = Math.sqrt(hx * hx + hy * hy);
+
+                            if (distVal < radius) {
+                                // 同心円状に波打つロジック
+                                const wave = Math.sin(distVal * 0.1 - now * 0.015);
+                                const alpha = (wave > 0.4 ? 0.4 : 0.1) * (0.5 + progress * 0.5);
+
+                                ctx.strokeStyle = `rgba(${color}, ${alpha})`;
+                                ctx.fillStyle = `rgba(${color}, ${alpha * 0.3})`;
+
+                                ctx.beginPath();
+                                for (let i = 0; i < 6; i++) {
+                                    const ang = (i / 6) * Math.PI * 2;
+                                    ctx.lineTo(hx + Math.cos(ang) * (hexSize - 1), hy + Math.sin(ang) * (hexSize - 1));
+                                }
+                                ctx.closePath();
+                                if (wave > 0.7) ctx.fill();
+                                ctx.stroke();
+                            }
+                        }
+                    }
+                    ctx.restore();
+                }
+            }
+
+            // 設置型バリア演出 (GUARDIAN などの従来型)
+            if (this.barrierState === 'active' && this.type !== CONSTANTS.ENEMY_TYPES.SHIELDER) {
+                // GUARDIAN などの従来型バリア演出は維持（SHIELDERは設置型へ移行したため除外）
+                const baseSize = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
                 const now = Date.now();
                 const radius = CONSTANTS.SHIELDER.auraRadius || (baseSize * 1.8);
                 const color = '0, 255, 255';
 
-                // HEX GRID TILING
-                // No outer circle, just filled hexes
-                const hexSize = 10;
-                const gridRadius = Math.ceil(radius / (hexSize * 1.5));
-
                 ctx.save();
-                ctx.strokeStyle = `rgba(${color}, 0.5)`;
-                ctx.fillStyle = `rgba(${color}, 0.15)`;
-                ctx.lineWidth = 1;
 
-                // Pulsing effect
-                const pulse = Math.sin(now * 0.005);
+                // シンプルな円形バリア（軽量化版）
+                const pulse = Math.sin(now * 0.005) * 0.2 + 0.8;
+                ctx.strokeStyle = `rgba(${color}, ${0.6 * pulse})`;
+                ctx.fillStyle = `rgba(${color}, ${0.1 * pulse})`;
+                ctx.lineWidth = 2;
 
-                for (let q = -gridRadius; q <= gridRadius; q++) {
-                    for (let r = -gridRadius; r <= gridRadius; r++) {
-                        const x = hexSize * 1.5 * q;
-                        const y = hexSize * Math.sqrt(3) * (r + q / 2);
-
-                        // Check if inside barrier radius
-                        if (Math.sqrt(x * x + y * y) < radius - 5) {
-                            // Draw small hex
-                            ctx.beginPath();
-                            // Rotate individual hexes
-                            for (let i = 0; i < 6; i++) {
-                                const angle = (Math.PI / 3) * i + (now * 0.001);
-                                const hx = x + Math.cos(angle) * (hexSize * 0.9);
-                                const hy = y + Math.sin(angle) * (hexSize * 0.9);
-                                if (i === 0) ctx.moveTo(hx, hy);
-                                else ctx.lineTo(hx, hy);
-                            }
-                            ctx.closePath();
-
-                            // Wave flicker
-                            const distVal = Math.sqrt(x * x + y * y);
-                            const wave = Math.sin(distVal * 0.1 - now * 0.01);
-                            if (wave > 0.5) ctx.stroke();
-                            if (wave > 0.8) ctx.fill(); // Fill only strongest wave parts
-                        }
-                    }
-                }
-                ctx.restore();
-            }
-        }
-
-        // バリア状態の描画 (統合済みのため削除)
-        // if (this.barrierState === 'active') { this.drawBarrier(ctx); }
-
-        // パルスヒット時のアウトライン
-        if (this.pulseOutlineTimer > 0) {
-            ctx.strokeStyle = `rgba(255, 128, 0, ${this.pulseOutlineTimer / 200})`;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            const r = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
-            ctx.arc(0, 0, r + 5, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-
-        // Gorgeous Guardian Mandala Effect (When Active)
-        if (this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN && this.barrierState === 'active') {
-            const nowTime = Date.now();
-            const radius = 60;
-
-            ctx.save();
-            ctx.globalCompositeOperation = 'lighter';
-
-            // Layer 1: Outer glowing ring
-            ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 + Math.sin(nowTime * 0.003) * 0.2})`;
-            ctx.lineWidth = 3;
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            ctx.arc(0, 0, radius * 1.5, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Layer 2: Rotating Magic Circle (Mandala)
-            ctx.save();
-            ctx.rotate(nowTime * 0.001);
-            ctx.strokeStyle = 'rgba(0, 255, 150, 0.6)';
-            ctx.lineWidth = 1.5;
-
-            for (let j = 0; j < 2; j++) {
-                ctx.rotate(Math.PI / 4);
+                // 外側の円
                 ctx.beginPath();
-                const sides = 4 + j * 2;
-                for (let i = 0; i < sides; i++) {
-                    const theta = (i / sides) * Math.PI * 2;
-                    const x = Math.cos(theta) * radius * 1.3;
-                    const y = Math.sin(theta) * radius * 1.3;
+                ctx.arc(0, 0, radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // 内側の回転する六角形（1つだけ）
+                ctx.save();
+                ctx.rotate(now * 0.001);
+                ctx.strokeStyle = `rgba(${color}, 0.8)`;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const ang = (i / 6) * Math.PI * 2;
+                    const x = Math.cos(ang) * radius * 0.7;
+                    const y = Math.sin(ang) * radius * 0.7;
                     if (i === 0) ctx.moveTo(x, y);
                     else ctx.lineTo(x, y);
                 }
                 ctx.closePath();
                 ctx.stroke();
-            }
-            ctx.restore();
+                ctx.restore();
 
-            // Layer 3: Inner fast-rotating gear
-            ctx.save();
-            ctx.rotate(-nowTime * 0.002);
-            ctx.strokeStyle = 'rgba(200, 255, 200, 0.8)';
-            ctx.beginPath();
-            const points = 12;
-            for (let i = 0; i < points; i++) {
-                const r = i % 2 === 0 ? radius * 0.8 : radius * 0.4;
-                const theta = (i / points) * Math.PI * 2;
-                const x = Math.cos(theta) * r;
-                const y = Math.sin(theta) * r;
-                if (i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            }
-            ctx.closePath();
-            ctx.stroke();
-            ctx.restore();
-
-            // Rising Particles
-            const pCount = 5;
-            for (let i = 0; i < pCount; i++) {
-                const seed = (nowTime + i * 500) * 0.001;
-                const px = Math.sin(seed * 4) * radius * 0.8;
-                const py = (seed % 1) * -radius * 2 + radius;
-                const pAlpha = 1 - (Math.abs(py) / (radius * 2));
-                ctx.fillStyle = `rgba(0, 255, 100, ${pAlpha * 0.5})`;
-                ctx.beginPath();
-                ctx.arc(px, py, 2, 0, Math.PI * 2);
-                ctx.fill();
-            }
-
-            ctx.restore();
-        }
-
-        // --- END OF ROTATABLE SECTION ---
-        ctx.restore(); // Ends rotation save at line 1000
-
-        // BARRIER_PAIR Line
-        if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner && this.partner.active &&
-            this.partner.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner.partner === this) {
-            if (this.id < this.partner.id) {
-                ctx.save();
-                ctx.strokeStyle = "rgba(0, 255, 255, 0.6)";
-                ctx.lineWidth = CONSTANTS.BARRIER_PAIR.barrierWidth || 6;
-                ctx.setLineDash([12, 6]);
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = "#00ffff";
-                ctx.beginPath();
-                ctx.moveTo(0, 0);
-                ctx.lineTo(this.partner.x - this.x, this.partner.y - this.y);
-                ctx.stroke();
                 ctx.restore();
             }
-        }
 
-        // HP Bar
-        if (!this.isBoss && this.hp < this.maxHp) {
-            const barW = 40;
-            const barH = 4;
-            const yOff = -CONSTANTS.ENEMY_SIZE - 10;
-            ctx.fillStyle = '#444';
-            ctx.fillRect(-barW / 2, yOff, barW, barH);
-            ctx.fillStyle = '#f00';
-            ctx.fillRect(-barW / 2, yOff, barW * (this.hp / this.maxHp), barH);
-        }
+            // ★追加: シールド内（保護中）の敵全般へのビジュアルフィードバック
+            if (this.shieldAlpha > 0) {
+                const baseSize = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+                ctx.save();
+                const now = Date.now();
+                const shieldR = baseSize * 1.5; // キャラを覆うサイズ
+                const alpha = this.shieldAlpha * (0.4 + Math.sin(now * 0.01) * 0.1);
+                ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+                ctx.lineWidth = 2;
 
-        // Apply Shadow to the main body drawing
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = '#00ffaa';
-
-        ctx.restore(); // Final balance for Save at line 996 (Translation Context)
-
-        // GLOBAL GUARDIAN BUFF (Applied to all enemies)
-        // This is separate because it needs its own translation if the above one is closed
-        if (this.game && this.game.globalGuardianActive) {
-            const buffSize = (this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE) * 1.6;
-            const nowTime = Date.now();
-            ctx.save();
-            ctx.translate(this.renderX, this.renderY);
-            ctx.globalCompositeOperation = 'lighter';
-            ctx.shadowBlur = 0; // Clear any leaking shadow
-
-            // Pulsing Background Glow
-            const glowAlpha = 0.15 + Math.sin(nowTime * 0.005) * 0.05;
-            const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, buffSize);
-            grad.addColorStop(0, `rgba(0, 255, 150, ${glowAlpha})`);
-            grad.addColorStop(1, 'rgba(0, 255, 150, 0)');
-            ctx.fillStyle = grad;
-            ctx.beginPath();
-            ctx.arc(0, 0, buffSize, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Layer 1: Outer Rotating Hex
-            ctx.strokeStyle = 'rgba(0, 255, 150, 0.7)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            const sides = 6;
-            const angle1 = nowTime * 0.0015 + (this.id * 0.1);
-            for (let i = 0; i < sides; i++) {
-                const theta = (i / sides) * Math.PI * 2 + angle1;
-                ctx.lineTo(Math.cos(theta) * buffSize, Math.sin(theta) * buffSize);
-            }
-            ctx.closePath();
-            ctx.stroke();
-
-            // Layer 2: Pulse Ring
-            const pulse = (Math.sin(nowTime * 0.005) + 1) * 0.5;
-            if (pulse > 0.5) {
-                ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 * (pulse - 0.5)})`;
+                // 単一の六角形オーラ
                 ctx.beginPath();
-                ctx.arc(0, 0, buffSize * pulse, 0, Math.PI * 2);
+                for (let i = 0; i < 6; i++) {
+                    const ang = (i / 6) * Math.PI * 2 + (now * 0.0005); // ゆっくり回転
+                    const xx = Math.cos(ang) * shieldR;
+                    const yy = Math.sin(ang) * shieldR;
+                    if (i === 0) ctx.moveTo(xx, yy);
+                    else ctx.lineTo(xx, yy);
+                }
+                ctx.closePath();
+                ctx.stroke();
+
+                // 内側に薄い塗りつぶしを追加して「包まれている感」を出す
+                ctx.fillStyle = `rgba(0, 255, 255, ${alpha * 0.2})`;
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            // Pulsing effect
+            const pulse = Math.sin(Date.now() * 0.005);
+
+            // バリア状態の描画 (統合済みのため削除)
+            // if (this.barrierState === 'active') { this.drawBarrier(ctx); }
+
+            // パルスヒット時のアウトライン
+            if (this.pulseOutlineTimer > 0) {
+                ctx.strokeStyle = `rgba(255, 128, 0, ${this.pulseOutlineTimer / 200})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                const r = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+                ctx.arc(0, 0, r + 5, 0, Math.PI * 2);
                 ctx.stroke();
             }
 
-            // Layer 3: Inner floating hex
-            ctx.save();
-            const floatY = Math.sin(nowTime * 0.004 + this.id) * 5;
-            ctx.translate(0, -buffSize * 0.8 + floatY);
-            ctx.strokeStyle = 'rgba(0, 255, 255, 0.9)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            for (let i = 0; i < 6; i++) {
-                const theta = (i / 6) * Math.PI * 2 + (nowTime * 0.002);
-                ctx.lineTo(Math.cos(theta) * 8, Math.sin(theta) * 8);
-            }
-            ctx.closePath();
-            ctx.stroke();
-            ctx.restore();
+            // Gorgeous Guardian Mandala Effect (When Active)
+            if (this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN && this.barrierState === 'active') {
+                const nowTime = Date.now();
+                const radius = 60;
 
-            ctx.restore();
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+
+                // Layer 1: Outer glowing ring
+                ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 + Math.sin(nowTime * 0.003) * 0.2})`;
+                ctx.lineWidth = 3;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.arc(0, 0, radius * 1.5, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Layer 2: Rotating Magic Circle (Mandala)
+                ctx.save();
+                ctx.rotate(nowTime * 0.001);
+                ctx.strokeStyle = 'rgba(0, 255, 150, 0.6)';
+                ctx.lineWidth = 1.5;
+
+                for (let j = 0; j < 2; j++) {
+                    ctx.rotate(Math.PI / 4);
+                    ctx.beginPath();
+                    const sides = 4 + j * 2;
+                    for (let i = 0; i < sides; i++) {
+                        const theta = (i / sides) * Math.PI * 2;
+                        const x = Math.cos(theta) * radius * 1.3;
+                        const y = Math.sin(theta) * radius * 1.3;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.closePath();
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // Layer 3: Inner fast-rotating gear
+                ctx.save();
+                ctx.rotate(-nowTime * 0.002);
+                ctx.strokeStyle = 'rgba(200, 255, 200, 0.8)';
+                ctx.beginPath();
+                const points = 12;
+                for (let i = 0; i < points; i++) {
+                    const r = i % 2 === 0 ? radius * 0.8 : radius * 0.4;
+                    const theta = (i / points) * Math.PI * 2;
+                    const x = Math.cos(theta) * r;
+                    const y = Math.sin(theta) * r;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.stroke();
+                ctx.restore();
+
+                // Rising Particles
+                const pCount = 5;
+                for (let i = 0; i < pCount; i++) {
+                    const seed = (nowTime + i * 500) * 0.001;
+                    const px = Math.sin(seed * 4) * radius * 0.8;
+                    const py = (seed % 1) * -radius * 2 + radius;
+                    const pAlpha = 1 - (Math.abs(py) / (radius * 2));
+                    ctx.fillStyle = `rgba(0, 255, 100, ${pAlpha * 0.5})`;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            // アトラクターのオーラエフェクト（RED/BLUE）
+            if (this.type === CONSTANTS.ENEMY_TYPES.ATTRACTOR && this.attractorKind) {
+                const nowTime = Date.now();
+                const radius = CONSTANTS.ATTRACTOR.pullRadius || 200;
+
+                // 属性に応じた色設定
+                let color, colorRGB;
+                if (this.attractorKind === CONSTANTS.ATTRACTOR_KIND.RED) {
+                    color = 'rgba(255, 50, 50, '; // RED
+                    colorRGB = '255, 50, 50';
+                } else if (this.attractorKind === CONSTANTS.ATTRACTOR_KIND.BLUE) {
+                    colorRGB = '50, 100, 255';
+                    color = 'rgba(50, 100, 255, '; // BLUE
+                } else {
+                    color = 'rgba(0, 255, 0, '; // デフォルト（緑）
+                    colorRGB = '0, 255, 0';
+                }
+
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+
+                // Layer 1: パルスする外側のリング
+                const pulse = Math.sin(nowTime * 0.004) * 0.15 + 0.85;
+                ctx.strokeStyle = color + (0.3 + Math.sin(nowTime * 0.003) * 0.15) + ')';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.arc(0, 0, radius * pulse, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Layer 2: 回転する内側のリング
+                ctx.save();
+                ctx.rotate(nowTime * 0.0015);
+                ctx.strokeStyle = color + '0.5)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(0, 0, radius * 0.7, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // 回転する装飾ライン
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i / 6) * Math.PI * 2;
+                    const x1 = Math.cos(angle) * radius * 0.5;
+                    const y1 = Math.sin(angle) * radius * 0.5;
+                    const x2 = Math.cos(angle) * radius * 0.9;
+                    const y2 = Math.sin(angle) * radius * 0.9;
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // Layer 3: 中心の強調リング
+                ctx.strokeStyle = color + '0.7)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, 0, 25, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // パーティクル（属性色）
+                const pCount = 8;
+                for (let i = 0; i < pCount; i++) {
+                    const seed = (nowTime + i * 300) * 0.0008;
+                    const angle = (i / pCount) * Math.PI * 2 + seed;
+                    const dist = (seed % 1) * radius * 0.8 + radius * 0.2;
+                    const px = Math.cos(angle) * dist;
+                    const py = Math.sin(angle) * dist;
+                    const pAlpha = 1 - (dist / radius);
+                    ctx.fillStyle = `rgba(${colorRGB}, ${pAlpha * 0.6})`;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            // --- END OF ROTATABLE SECTION ---
+
+            // Barrier_PAIR Line
+            if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner && this.partner.active &&
+                this.partner.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner.partner === this) {
+                if (this.id < this.partner.id) {
+                    ctx.save();
+                    ctx.strokeStyle = "rgba(0, 255, 255, 0.6)";
+                    ctx.lineWidth = CONSTANTS.BARRIER_PAIR.barrierWidth || 6;
+                    ctx.setLineDash([12, 6]);
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = "#00ffff";
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(this.partner.x - this.x, this.partner.y - this.y);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+
+            // HP Bar
+            if (!this.isBoss && this.hp < this.maxHp) {
+                const barW = 40;
+                const barH = 4;
+                const yOff = -CONSTANTS.ENEMY_SIZE - 10;
+                ctx.fillStyle = '#444';
+                ctx.fillRect(-barW / 2, yOff, barW, barH);
+                ctx.fillStyle = '#f00';
+                ctx.fillRect(-barW / 2, yOff, barW * (this.hp / this.maxHp), barH);
+            }
+
+            // アトラクターバフインジケーター（▲マーク）
+            // アトラクター自身は表示しない
+            if (this.type !== CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
+                const hasRedBuff = this.damageMultiplier && this.damageMultiplier > 1.0;
+                const hasBlueBuff = this.speedMultiplier && this.speedMultiplier > 1.0;
+
+                if (hasRedBuff || hasBlueBuff) {
+                    const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+                    const offsetX = size * 0.7;  // 右上
+                    const offsetY = -size * 0.7;
+
+                    ctx.save();
+                    ctx.font = 'bold 16px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+
+                    // 縁取り
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 3;
+
+                    if (hasRedBuff) {
+                        ctx.strokeText('▲', offsetX, offsetY);
+                        ctx.fillStyle = '#ff4444';
+                        ctx.fillText('▲', offsetX, offsetY);
+                    }
+
+                    if (hasBlueBuff) {
+                        const blueOffsetY = hasRedBuff ? offsetY + 18 : offsetY;
+                        ctx.strokeText('▲', offsetX, blueOffsetY);
+                        ctx.fillStyle = '#4444ff';
+                        ctx.fillText('▲', offsetX, blueOffsetY);
+                    }
+
+                    ctx.restore();
+                }
+            }
+
+            // Apply Shadow to the main body drawing
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00ffaa';
+
+            // GLOBAL GUARDIAN BUFF (Applied to all enemies)
+            // This is separate because it needs its own translation if the above one is closed
+            if (this.game && this.game.globalGuardianActive) {
+                const buffSize = (this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE) * 1.6;
+                const nowTime = Date.now();
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.shadowBlur = 0; // Clear any leaking shadow
+
+                // Pulsing Background Glow
+                const glowAlpha = 0.15 + Math.sin(nowTime * 0.005) * 0.05;
+                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, buffSize);
+                grad.addColorStop(0, `rgba(0, 255, 150, ${glowAlpha})`);
+                grad.addColorStop(1, 'rgba(0, 255, 150, 0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(0, 0, buffSize, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Layer 1: Outer Rotating Hex
+                ctx.strokeStyle = 'rgba(0, 255, 150, 0.7)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                const sides = 6;
+                const angle1 = nowTime * 0.0015 + (this.id * 0.1);
+                for (let i = 0; i < sides; i++) {
+                    const theta = (i / sides) * Math.PI * 2 + angle1;
+                    ctx.lineTo(Math.cos(theta) * buffSize, Math.sin(theta) * buffSize);
+                }
+                ctx.closePath();
+                ctx.stroke();
+
+                // Layer 2: Pulse Ring
+                const pulse = (Math.sin(nowTime * 0.005) + 1) * 0.5;
+                if (pulse > 0.5) {
+                    ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 * (pulse - 0.5)})`;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, buffSize * pulse, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                // Layer 3: Inner floating hex
+                ctx.save();
+                const floatY = Math.sin(nowTime * 0.004 + this.id) * 5;
+                ctx.translate(0, -buffSize * 0.8 + floatY);
+                ctx.strokeStyle = 'rgba(0, 255, 255, 0.9)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const theta = (i / 6) * Math.PI * 2 + (nowTime * 0.002);
+                    ctx.lineTo(Math.cos(theta) * 8, Math.sin(theta) * 8);
+                }
+                ctx.closePath();
+                ctx.stroke();
+                ctx.restore();
+                ctx.restore(); // Restore GGB (1909)
+            }
+        } catch (e) {
+            console.error(`[Enemy Draw Error] type=${this.type}, id=${this.id}, error:`, e);
+        } finally {
+            ctx.restore(); // [ROBUST FIX] メソッド開始時の Save を確実に復元
         }
     }
 
@@ -1705,12 +2070,9 @@ export class Enemy {
         if (this.type === CONSTANTS.ENEMY_TYPES.OBSERVER && this.obsState === 'snap') return; // SNAP中は無敵
         let actualAmount = amount;
 
-        // 1) SHIELDER 軽減 (床あり)
-        // ※オーラ内にいる場合は options.isAuraProtected が true で渡される想定
+        // 1) SHIELDER 軽減 (設置型シールド内)
         if (options.isAuraProtected) {
-            const reduced = actualAmount * CONSTANTS.SHIELDER.damageMultiplierWhileBarrier;
-            const floor = actualAmount * (CONSTANTS.SHIELDER.minDamageRatio || 0.1);
-            actualAmount = Math.max(reduced, floor);
+            actualAmount = 1; // ★全ダメージ 1 固定
         }
 
         // 2) DASHER windup 倍率
@@ -1863,29 +2225,55 @@ export class Enemy {
     }
 
     updateBarrier(dt) {
+        // GUARDIAN (全体バフ型) は従来通りのサイクル
+        if (this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
+            this.updateGuardianBarrier(dt);
+            return;
+        }
+
+        // SHIELDER (設置型) ロジック
+        const cfg = CONSTANTS.SHIELDER;
         if (this.barrierState === 'idle') {
             this.barrierTimer -= dt;
             if (this.barrierTimer <= 0) {
-                // Activate barrier
+                this.barrierState = 'windup';
+                this.barrierTimer = cfg.barrierWindupMs || 800;
+            }
+        } else if (this.barrierState === 'windup') {
+            this.barrierTimer -= dt;
+            if (this.barrierTimer <= 0) {
+                // シールド設置！
+                if (this.game && this.game.createShieldZone) {
+                    this.game.createShieldZone(this.x, this.y);
+                }
+
+                // 自身はクールダウンへ
+                this.barrierState = 'idle';
+                this.barrierTimer = cfg.barrierCooldownMs || 3000;
+            }
+        }
+    }
+
+    updateGuardianBarrier(dt) {
+        if (this.barrierState === 'idle') {
+            this.barrierTimer -= dt;
+            if (this.barrierTimer <= 0) {
                 this.barrierState = 'active';
-                const config = this.type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER : CONSTANTS.GUARDIAN;
-                this.barrierTimer = (config.barrierDurationMs || 3000) * 2.0; // Double Duration
-                // Sound effect could go here
+                const config = CONSTANTS.GUARDIAN;
+                this.barrierTimer = (config.barrierDurationMs || 3000) * 1.5;
             }
         } else if (this.barrierState === 'active') {
             this.barrierTimer -= dt;
             if (this.barrierTimer <= 0) {
-                // Deactivate barrier (cooldown / vulnerable)
                 this.barrierState = 'vulnerable';
-                const config = this.type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER : CONSTANTS.GUARDIAN;
-                this.barrierTimer = config.vulnerableDurationMs || 2000;
+                const config = CONSTANTS.GUARDIAN;
+                this.barrierTimer = config.vulnerableMs || 2000;
             }
         } else if (this.barrierState === 'vulnerable') {
             this.barrierTimer -= dt;
             if (this.barrierTimer <= 0) {
-                // Back to idle
                 this.barrierState = 'idle';
-                const config = this.type === CONSTANTS.ENEMY_TYPES.SHIELDER ? CONSTANTS.SHIELDER : CONSTANTS.GUARDIAN;
+                const config = CONSTANTS.GUARDIAN;
                 this.barrierTimer = config.barrierCooldownMs || 3000;
             }
         }

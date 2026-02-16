@@ -385,7 +385,7 @@ export const CONSTANTS = {
         backDist: 180,            // プレイヤーの背後に回る際の基準距離
         approachDist: 350,        // 回り込みを開始する距離
         orbitRadius: 220,         // 回り込み中の半径
-        chargeSpeedMul: 12.0,     // 超高速突進 (7.0 -> 12.0)
+        chargeSpeedMul: 9.0,      // 超高速突進 (12.0 -> 9.0: ユーザー要望で下方修正)
         maintainDurationMs: 2000, // 2秒間背後を維持
         flankTurnRate: 0.15,      // 回り込み時の俊敏な旋回性能
         spawnRate: 0.05,
@@ -412,7 +412,15 @@ export const CONSTANTS = {
         maxHp: 4,
         orbitRadius: 300, // 遠巻きに維持
         spawnRate: 0.05,
-        unlockStage: 7 // Stage 7
+        unlockStage: 7, // Stage 7
+        RED_BONUS: 0.20,   // 攻撃強化ベース値（1スタック当たり）
+        BLUE_BONUS: 0.25,  // 機動力強化ベース値（1スタック当たり）
+        STACK_MAX: 3,      // 同色最大スタック数
+        DECAY: 0.7         // 減衰係数（スタック増加による効果減衰）
+    },
+    ATTRACTOR_KIND: {
+        RED: 'RED',   // 攻撃強化型
+        BLUE: 'BLUE'  // 機動力強化型
     },
     REFLECTOR: {
         reflectAngle: Math.PI / 2, // 前方180度 (半円ビジュアルと同期)
@@ -552,10 +560,10 @@ export const CONSTANTS = {
         retreatBoost: 1.6,
         approachBoost: 1.2,
 
-        barrierWindupMs: 250,     // 予兆時間
-        barrierDurationMs: 900,   // バリア持続時間
-        barrierCooldownMs: 3200,  // バリア再使用間隔
-        damageMultiplierWhileBarrier: 0.2, // バリア中の被ダメ倍率 (0.1 -> 0.2)
+        barrierWindupMs: 800,     // 予兆時間を少し延長 (250 -> 800)
+        barrierDurationMs: 10000, // ★設置されたシールドの持続時間（10秒）
+        barrierCooldownMs: 3200,  // 次の予兆までのクールダウン
+        damageMultiplierWhileBarrier: 0.1, // シールド内での通常軽減（全ダメージ1化を優先適用するが、念のため）
 
         vulnerableMs: 650,        // 弱点（露出）時間
         vulnerableDamageMultiplier: 1.8,   // 弱点中の被ダメ倍率

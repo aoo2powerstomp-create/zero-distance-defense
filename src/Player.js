@@ -168,6 +168,30 @@ export class Player {
         if (Date.now() < this.invincibleUntilMs || this.invincibleFrames > 0 || (this.game && this.game.debugInvincible)) return;
 
         const damage = CONSTANTS.PLAYER_MAX_HP * ratio;
+
+        // デバッグステージでは体力を一時的に減らして、すぐ回復
+        if (this.game && this.game.isDebugStage) {
+            // ダメージエフェクトは表示
+            this.damageFlashTimer = 300;
+
+            // HPを一時的に減らす（視覚的確認用）
+            this.hp = Math.max(0, this.hp - damage);
+
+            // ダメージ数値をポップアップ表示（整数）
+            if (this.game.spawnDamageText) {
+                this.game.spawnDamageText(this.x, this.y - 30, `-${Math.round(damage)}`, "#ff4444");
+            }
+
+            // 1秒後に回復
+            setTimeout(() => {
+                if (this.game && this.game.isDebugStage) {
+                    this.hp = CONSTANTS.PLAYER_MAX_HP;
+                }
+            }, 1000);
+
+            return; // 被弾カウントはしない
+        }
+
         this.hp = Math.max(0, this.hp - damage);
         this.lastDamageTime = Date.now();
 
