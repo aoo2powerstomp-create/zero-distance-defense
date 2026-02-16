@@ -43,9 +43,25 @@ export class SpawnDirector {
 
         // Roster保証 (Unlock済みの敵をリストアップ)
         this.rosterWanted = this.getUnlockedEnemyTypes();
+
         // 重複抑制履歴 (直近8件)
         this.recentTypes = [];
         this.stageStartTime = Date.now();
+
+        this.historyTypes = []; // Last 200
+        this.historyMax = 200;
+
+        // Force Non-A Logic
+        this.spawnDecisionCount = 0;
+        this.debugForceStatus = { active: false, type: null };
+
+        this.spawnQueue = [];
+        this.spawnIntervalTimer = 0;
+
+        // A-Burst Logic
+        this.burstTimer = 0;
+        this.isABurstOn = true;
+        this.burstCycle = 6000; // 6 sec
 
         // Budget (初期値はステージ依存) - フェーズ生成（強敵選定）に使用
         const stageFn = CONSTANTS.STAGE_BUDGET_REFILL[this.game.currentStage + 1] || 1;
@@ -110,6 +126,15 @@ export class SpawnDirector {
             this.handleDebugSpawn(dt);
             return;
         }
+
+        // 0. Update Burst Timer
+        this.burstTimer += dt;
+        if (this.burstTimer >= this.burstCycle) {
+            this.burstTimer = 0;
+            this.isABurstOn = !this.isABurstOn;
+            // if (this.game.debugEnabled) console.log(`[BURST] ${this.isABurstOn ? 'ON' : 'OFF'}`);
+        }
+
         // 1. クールダウン更新 (これは維持: HardCap系)
         for (const type in this.cooldowns) {
             if (this.cooldowns[type] > 0) {
@@ -639,6 +664,13 @@ export class SpawnDirector {
         const activeTypes = CONSTANTS.ACTIVE_ENEMY_TYPES || [];
         const unfrozenTypes = CONSTANTS.UNFROZEN_ENEMY_TYPES || [];
         const combinedCandidatePool = [...activeTypes, ...unfrozenTypes];
+
+        // Debug Vars
+        this.debugRejections = {};
+        const logRejection = (type, reason) => {
+            if (!this.debugRejections[type]) this.debugRejections[type] = {};
+            this.debugRejections[type][reason] = (this.debugRejections[type][reason] || 0) + 1;
+        };
         // ------------------------------------------
 
         const candidates = [];
@@ -656,14 +688,30 @@ export class SpawnDirector {
             const role = CONSTANTS.ENEMY_ROLES[type] || 'CORE';
 
             // 3. Cooldown Check (HardCap系)
-            if (this.cooldowns[type] && this.cooldowns[type] > 0) continue;
+            if (this.cooldowns[type] && this.cooldowns[type] > 0) {
+                logRejection(type, 'CD');
+                continue;
+            }
 
             // 4. Type Limit Check (同時出現数制限)
-            if (!this.checkPhaseHardCaps(type)) continue;
+            if (!this.checkPhaseHardCaps(type)) {
+                logRejection(type, 'MaxAlive');
+                continue;
+            }
 
             // 5. Role Limit Check (Legacy)
-            const roleLimit = CONSTANTS.ROLE_LIMITS[role] || 999;
-            if ((counts[role] || 0) >= roleLimit) continue;
+            let roleLimit = CONSTANTS.ROLE_LIMITS[role] || 999;
+            // Late Stage Role Cap Relaxation
+            if (stage >= 6) {
+                if (role === 'HARASSER') roleLimit = 6;  // 3 -> 6
+                else if (role === 'ELITE') roleLimit = 3; // 2 -> 3
+                else if (role === 'CONTROLLER') roleLimit = 2; // 1 -> 2 (BarrierPair x2)
+                else if (role === 'DIRECTOR') roleLimit = 2;   // 1 -> 2
+            }
+            if ((counts[role] || 0) >= roleLimit) {
+                logRejection(type, 'RoleMax');
+                continue;
+            }
 
             candidates.push(type);
         }
@@ -711,25 +759,38 @@ export class SpawnDirector {
         const inQueue = this.spawnQueue.filter(q => q.type === type).length;
         const total = (typeCounts[type] || 0) + inQueue;
 
+        const isLate = (this.game.currentStage + 1 >= 6);
+
         switch (type) {
             case CONSTANTS.ENEMY_TYPES.BARRIER_PAIR:
-                if (total > 0) return false;
+                // Normal: 1, Late: 2
+                if (total >= (isLate ? 2 : 1)) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.SHIELDER:
-                if (total > 0) return false;
+                // Normal: 1, Late: 2
+                if (total >= (isLate ? 2 : 1)) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.GUARDIAN:
-                if (total > 0) return false;
+                // Normal: 1, Late: 1 (Unchanged)
+                if (total >= 1) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.OBSERVER:
-                if (total > 0) return false;
+                // Normal: 1, Late: 2
+                if (total >= (isLate ? 2 : 1)) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.SPLITTER:
-                if (total >= 2) return false;
+                // Normal: 2, Late: 3
+                if (total >= (isLate ? 3 : 2)) return false;
                 break;
             case CONSTANTS.ENEMY_TYPES.DASHER:
             case CONSTANTS.ENEMY_TYPES.ORBITER:
-                if (total >= 2) return false;
+                // Normal: 2, Late: 3
+                if (total >= (isLate ? 3 : 2)) return false;
+                break;
+            case CONSTANTS.ENEMY_TYPES.ELITE:
+            case CONSTANTS.ENEMY_TYPES.REFLECTOR:
+                // Normal: 2 (Role limit usually), Late: 3
+                if (total >= (isLate ? 3 : 2)) return false;
                 break;
         }
 
@@ -770,6 +831,22 @@ export class SpawnDirector {
     pickTypeWeighted(candidates) {
         if (!candidates || candidates.length === 0) return null;
 
+        // 0. Forced Non-A Logic (Stage 6+, Every 4th)
+        const stage = this.game.currentStage + 1;
+        this.debugForceStatus = { active: false, decision: this.spawnDecisionCount, period: 4, picked: null };
+
+        if (stage >= 6) {
+            this.spawnDecisionCount++;
+            if (this.spawnDecisionCount % 4 === 0) {
+                this.debugForceStatus.active = true;
+                const forced = this.tryGetForcedNonAType(stage);
+                if (forced) {
+                    this.debugForceStatus.picked = forced;
+                    return forced;
+                }
+            }
+        }
+
         // 1. Roster保証 (最優先)
         const elapsed = (Date.now() - this.stageStartTime) / 1000;
         if (elapsed < 60 && this.rosterWanted.length > 0) {
@@ -782,12 +859,61 @@ export class SpawnDirector {
         }
 
         // 2. 重み付け抽選
+
+        // A-Ratio Check (Target Control)
+        const aCount = this.historyTypes.filter(t => t === CONSTANTS.ENEMY_TYPES.NORMAL).length;
+        const aRatio = this.historyTypes.length > 0 ? aCount / this.historyTypes.length : 0;
+
+        // Target: BurstON=0.70, OFF=0.50 (Stage 6+ only)
+        const stageRef = this.game.currentStage + 1;
+        let reduceA = false;
+        if (stageRef >= 6) {
+            const targetA = this.isABurstOn ? 0.70 : 0.50;
+            if (aRatio > targetA) reduceA = true;
+        }
+
         let totalWeight = 0;
         const weights = candidates.map(type => {
             let w = 1.0;
 
             // User Request: NORMAL spawn rate 40-50%
-            if (type === CONSTANTS.ENEMY_TYPES.NORMAL) w = 0.5;
+            if (type === CONSTANTS.ENEMY_TYPES.NORMAL) {
+                w = 0.5;
+                // 1) A Burst Logic
+                if (!this.isABurstOn) {
+                    w *= 0.2; // OFF時は出現率低下
+                }
+                // 2) A Ratio Target Logic
+                if (reduceA) {
+                    w *= 0.25;
+                }
+                // 3) Late Stage Weight Adjustment (3.5)
+                if (stageRef >= 6) {
+                    w *= 0.7; // Further reduce A base (0.5 -> 0.35 equivalent)
+                }
+            }
+
+            // Late Stage Diversification (Promote C, O, M)
+            if (stageRef >= 6) {
+                if (type === CONSTANTS.ENEMY_TYPES.EVASIVE ||
+                    type === CONSTANTS.ENEMY_TYPES.TRICKSTER ||
+                    type === CONSTANTS.ENEMY_TYPES.FLANKER) {
+                    w = 1.0; // Promote to main pool level
+                    if (type === CONSTANTS.ENEMY_TYPES.FLANKER) w = 0.8;
+                }
+
+                // Minimum Quota Boost (Check last 50)
+                const checkHistory = this.historyTypes.slice(-50);
+                const count = checkHistory.filter(t => t === type).length;
+                if (count === 0) {
+                    // Boost if missing from recent history (Force injection)
+                    if (type === CONSTANTS.ENEMY_TYPES.EVASIVE ||
+                        type === CONSTANTS.ENEMY_TYPES.TRICKSTER ||
+                        type === CONSTANTS.ENEMY_TYPES.FLANKER) {
+                        w *= 5.0;
+                    }
+                }
+            }
 
             // Plan Bonus
             if (type === this.currentPlan.mainType) w *= 3.0;
@@ -808,19 +934,144 @@ export class SpawnDirector {
         let s = 0;
         for (const item of weights) {
             s += item.weight;
-            if (r < s) return item.type;
+            if (r < s) {
+                let selected = item.type;
+
+                // 3) Filler Variation (Aが選ばれた時、30%で他へ)
+                if (selected === CONSTANTS.ENEMY_TYPES.NORMAL && Math.random() < 0.3) {
+                    // 候補からNORMAL以外、かつ基本種(B/C/E/O)を探す
+                    // Unlock済みのものに限る
+                    const alts = candidates.filter(t =>
+                        t !== CONSTANTS.ENEMY_TYPES.NORMAL &&
+                        (t === CONSTANTS.ENEMY_TYPES.ZIGZAG ||
+                            t === CONSTANTS.ENEMY_TYPES.EVASIVE ||
+                            t === CONSTANTS.ENEMY_TYPES.ASSAULT ||
+                            t === CONSTANTS.ENEMY_TYPES.TRICKSTER)
+                    );
+                    if (alts.length > 0) {
+                        selected = alts[Math.floor(Math.random() * alts.length)];
+                    }
+                }
+                return selected;
+            }
         }
 
-        return candidates[0]; // Fallback
+        // Fallback: A (Normal)
+        // Stage 6-10: Filler Pool Attempt
+        if (stage >= 6) {
+            const filler = this.tryGetFillerType(stage);
+            if (filler) return filler;
+        }
+
+        return candidates[0]; // Fallback to A
+    }
+
+    tryGetFillerType(stage) {
+        // Pool: B, C, E, O (Basic variants)
+        // Late Stage: M, H, I, P (if unlocked & valid)
+        let pool = [
+            CONSTANTS.ENEMY_TYPES.ZIGZAG,
+            CONSTANTS.ENEMY_TYPES.EVASIVE,
+            CONSTANTS.ENEMY_TYPES.ASSAULT,
+            CONSTANTS.ENEMY_TYPES.TRICKSTER
+        ];
+
+        if (stage >= 7) {
+            pool.push(CONSTANTS.ENEMY_TYPES.FLANKER);
+            pool.push(CONSTANTS.ENEMY_TYPES.ATTRACTOR);
+        }
+        if (stage >= 5) {
+            pool.push(CONSTANTS.ENEMY_TYPES.DASHER);
+            pool.push(CONSTANTS.ENEMY_TYPES.ORBITER);
+        }
+
+        // Shuffle
+        pool.sort(() => Math.random() - 0.5);
+
+        for (const t of pool) {
+            // Check availability
+            if (!this.isUnlocked(t)) continue;
+            if (this.cooldowns[t] > 0) continue;
+            if (!this.checkPhaseHardCaps(t)) continue;
+            // Role Limit check (optional but safer)
+            const role = CONSTANTS.ENEMY_ROLES[t] || 'CORE';
+            const roleLimit = CONSTANTS.ROLE_LIMITS[role] || 999;
+            const counts = this.game.frameCache.roleCounts;
+            if ((counts[role] || 0) >= roleLimit) continue;
+
+            return t;
+        }
+        return null; // Failed to fill
+    }
+
+    tryGetForcedNonAType(stage) {
+        // Priority 1: Main Targets (C, O, M)
+        let pool1 = [
+            CONSTANTS.ENEMY_TYPES.EVASIVE,
+            CONSTANTS.ENEMY_TYPES.TRICKSTER,
+            CONSTANTS.ENEMY_TYPES.FLANKER
+        ];
+        pool1.sort(() => Math.random() - 0.5);
+
+        for (const t of pool1) {
+            if (this.canSpawnNow(t, stage)) return t;
+        }
+
+        // Priority 2: Other Non-A (B, E, H, I)
+        let pool2 = [
+            CONSTANTS.ENEMY_TYPES.ZIGZAG,
+            CONSTANTS.ENEMY_TYPES.ASSAULT,
+            CONSTANTS.ENEMY_TYPES.DASHER,
+            CONSTANTS.ENEMY_TYPES.ORBITER
+        ];
+        pool2.sort(() => Math.random() - 0.5);
+
+        for (const t of pool2) {
+            if (this.canSpawnNow(t, stage)) return t;
+        }
+
+        return null; // Failed to force
+    }
+
+    canSpawnNow(type, stage) {
+        // 1. Unlock
+        if (!this.isUnlocked(type)) return false;
+
+        // 2. Cooldown
+        if (this.cooldowns[type] && this.cooldowns[type] > 0) return false;
+
+        // 3. Max Alive (Hard Cap)
+        if (!this.checkPhaseHardCaps(type)) return false;
+
+        // 4. Role Limit
+        const role = CONSTANTS.ENEMY_ROLES[type] || 'CORE';
+        let roleLimit = CONSTANTS.ROLE_LIMITS[role] || 999;
+
+        // Late Stage Check (Sync with buildCandidateList logic)
+        if (stage >= 6) {
+            if (role === 'HARASSER') roleLimit = 6;
+            else if (role === 'ELITE') roleLimit = 3;
+            else if (role === 'CONTROLLER') roleLimit = 2;
+            else if (role === 'DIRECTOR') roleLimit = 2;
+        }
+
+        const counts = this.game.frameCache.roleCounts;
+        if ((counts[role] || 0) >= roleLimit) return false;
+
+        return true;
     }
 
     executeSpawn(type, pattern, overrideX = null, overrideY = null) {
         // Cooldown設定 (ID -> Key変換がここでも必要だが、Switchで)
         this.setCooldown(type);
 
-        // 履歴更新
+        // 履歴更新 (Recent 8 for Anti-Streak)
         this.recentTypes.push(type);
         if (this.recentTypes.length > 8) this.recentTypes.shift();
+
+        // History for Ratio (Last 200)
+        this.historyTypes.push(type);
+        if (this.historyTypes.length > this.historyMax) this.historyTypes.shift();
 
         // SpawnDirector側での座標計算 (簡易版)
         let x = overrideX || 0;
@@ -851,6 +1102,9 @@ export class SpawnDirector {
         enemy.oobFrames = 0;
 
         this.game.enemies.push(enemy);
+        if (this.game.economyLogger) {
+            this.game.economyLogger.recordSpawn(type);
+        }
         this.game.enemiesRemaining--;
         this.game.currentSpawnBudget--;
 

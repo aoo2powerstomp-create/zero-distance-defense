@@ -12,6 +12,10 @@ export class EconomyLogger {
         this.recentLogs = []; // Ring buffer max 100
         this.maxLogs = 100;
 
+        // Spawn Stats
+        this.recentSpawns = []; // Ring buffer max 200
+        this.maxSpawns = 200;
+
         // History
         this.history = [];
         this.activeStageIndex = null;
@@ -74,7 +78,10 @@ export class EconomyLogger {
         this.stageTotalG = 0;
         this.killsByType = {};
         this.gByType = {};
+        this.killsByType = {};
+        this.gByType = {};
         this.recentLogs = [];
+        this.recentSpawns = [];
 
         // Clear UI logs immediately to avoid confusion
         // Force update to clear screen
@@ -105,6 +112,14 @@ export class EconomyLogger {
         this.recentLogs.push({ stage, enemyType, baseG, mult, gainedG });
         if (this.recentLogs.length > this.maxLogs) {
             this.recentLogs.shift();
+        }
+    }
+
+    recordSpawn(type) {
+        if (!this.isActive) return;
+        this.recentSpawns.push(type);
+        if (this.recentSpawns.length > this.maxSpawns) {
+            this.recentSpawns.shift();
         }
     }
 
@@ -180,6 +195,110 @@ export class EconomyLogger {
         // Aggregation table
         html += `[種別] 撃破 | 獲得G\n`;
         const sortedTypes = Object.keys(this.killsByType).sort();
+
+        // Spawn Stats (Burst Info)
+        if (this.game.spawnDirector) {
+            const sd = this.game.spawnDirector;
+            const burstState = sd.isABurstOn ? "ON" : "OFF";
+            const timer = (sd.burstCycle - sd.burstTimer) / 1000;
+            html += `A-Burst: ${burstState} (${timer.toFixed(1)}s)\n`;
+
+            // A-Ratio Info
+            const history = sd.historyTypes || [];
+            const aCount = history.filter(t => t === CONSTANTS.ENEMY_TYPES.NORMAL).length;
+            const aRatio = history.length > 0 ? (aCount / history.length * 100).toFixed(1) : "0.0";
+            const targetA = (this.game.currentStage + 1 >= 6) ? (sd.isABurstOn ? "70" : "50") : "-";
+            html += `A-Ratio: ${aRatio}% (Tgt: ${targetA}%)\n`;
+
+            // Recent Spawn Ratios
+            if (this.recentSpawns.length > 0) {
+                const total = this.recentSpawns.length;
+                const counts = {};
+                this.recentSpawns.forEach(t => counts[t] = (counts[t] || 0) + 1);
+
+                html += `Spawn(Latest ${total}):\n`;
+                Object.keys(counts).sort().forEach(t => {
+                    const pct = ((counts[t] / total) * 100).toFixed(1);
+                    html += ` ${t}: ${pct}%\n`;
+                });
+            }
+            html += `---------------------\n`;
+
+            // Active/Max Counts (Stage 6+ Verification)
+            const stage = this.game.currentStage + 1;
+            const isLate = stage >= 6;
+
+            // Define limits for display (Manual sync with SpawnDirector)
+            const limits = {
+                [CONSTANTS.ENEMY_TYPES.ZIGZAG]: 999, // B
+                [CONSTANTS.ENEMY_TYPES.EVASIVE]: isLate ? 6 : 3, // C
+                [CONSTANTS.ENEMY_TYPES.ASSAULT]: 999, // E
+                [CONSTANTS.ENEMY_TYPES.TRICKSTER]: isLate ? 6 : 3, // O
+                [CONSTANTS.ENEMY_TYPES.FLANKER]: isLate ? 6 : 3, // M
+
+                [CONSTANTS.ENEMY_TYPES.ORBITER]: isLate ? 3 : 2, // I
+                [CONSTANTS.ENEMY_TYPES.DASHER]: isLate ? 3 : 2, // H
+
+                [CONSTANTS.ENEMY_TYPES.ELITE]: isLate ? 3 : 2, // D
+                [CONSTANTS.ENEMY_TYPES.REFLECTOR]: isLate ? 3 : 2, // Q
+                [CONSTANTS.ENEMY_TYPES.SPLITTER]: isLate ? 3 : 2, // J
+
+                [CONSTANTS.ENEMY_TYPES.SHIELDER]: isLate ? 2 : 1, // F
+                [CONSTANTS.ENEMY_TYPES.OBSERVER]: isLate ? 2 : 1, // L
+                [CONSTANTS.ENEMY_TYPES.BARRIER_PAIR]: isLate ? 2 : 1, // N
+            };
+
+            const typesToShow = [
+                CONSTANTS.ENEMY_TYPES.SHIELDER, CONSTANTS.ENEMY_TYPES.GUARDIAN,
+                CONSTANTS.ENEMY_TYPES.ELITE, CONSTANTS.ENEMY_TYPES.SPLITTER,
+                CONSTANTS.ENEMY_TYPES.DASHER, CONSTANTS.ENEMY_TYPES.ORBITER,
+                CONSTANTS.ENEMY_TYPES.BARRIER_PAIR, CONSTANTS.ENEMY_TYPES.OBSERVER,
+                CONSTANTS.ENEMY_TYPES.REFLECTOR
+            ];
+            // Add Basic types if Late
+            if (isLate) {
+                typesToShow.push(CONSTANTS.ENEMY_TYPES.EVASIVE);
+                typesToShow.push(CONSTANTS.ENEMY_TYPES.TRICKSTER);
+                typesToShow.push(CONSTANTS.ENEMY_TYPES.FLANKER);
+            }
+
+            html += `[Limit] Active/Max\n`;
+            const counts = this.game.frameCache.typeCounts;
+            typesToShow.forEach(t => {
+                const now = counts[t] || 0;
+                const max = limits[t] || 999;
+                if (max < 999) {
+                    html += `${t}: ${now} / ${max}\n`;
+                }
+            });
+            html += `---------------------\n`;
+
+            html += `---------------------\n`;
+
+            // Force Non-A Status
+            if (sd.debugForceStatus) {
+                const fs = sd.debugForceStatus;
+                const state = fs.active ? "ACTIVE" : "OFF";
+                const picked = fs.picked ? fs.picked : (fs.active ? "FAILED" : "-");
+                const counter = (fs.decision !== undefined) ? `${fs.decision % fs.period}/${fs.period}` : "-";
+                html += `ForceNonA: ${state} [${counter}] Pick:${picked}\n`;
+            }
+            html += `---------------------\n`;
+
+            // Rejection Stats
+            if (sd.debugRejections) {
+                html += `[Rejections] (Blocking Factor)\n`;
+                const rej = sd.debugRejections;
+                const rTypes = Object.keys(rej).sort();
+                rTypes.forEach(t => {
+                    const r = rej[t];
+                    let line = `${t}: `;
+                    const reasons = Object.keys(r).map(rs => `${rs}:${r[rs]}`).join(', ');
+                    html += line + reasons + '\n';
+                });
+                html += `---------------------\n`;
+            }
+        }
 
         let tableRows = "";
         for (const t of sortedTypes) {

@@ -1794,7 +1794,9 @@ export class Enemy {
         if (reason !== 'glitch' && reason !== 'GLITCH' && reason !== 'return' && reason !== 'LIFETIME' && reason !== 'OOB') {
             // GOLD (100% drop)
             // Stage1 = 0, Stage2 = 1 ...
-            const stageIndex = Math.max(0, (game.currentStage ?? 1) - 1);
+            // Debug Stage (999) -> Level 0 (x1.0)
+            const stage = (game.currentStage === CONSTANTS.STAGE_DEBUG) ? 1 : (game.currentStage ?? 1);
+            const stageIndex = Math.max(0, stage - 1);
             const mult = Math.pow(CONSTANTS.ECON_GROWTH_BASE || 1.18, stageIndex);
 
             const baseG = CONSTANTS.ENEMY_GOLD[this.type] || 10;
