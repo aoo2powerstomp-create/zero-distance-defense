@@ -2083,15 +2083,18 @@ export class SpawnDirector {
             const cx = w / 2;
             const cy = -margin;
 
-            e1.init(cx - ox, cy, this.game.player.x, this.game.player.y, type, 1.0, 1.0);
-            e2.init(cx + ox, cy, this.game.player.x, this.game.player.y, type, 1.0, 1.0);
+            const speedMul = 1.0;
+            const hpMul = 1.0;
 
-            // Link them (Simulated behavior implies logic in Enemy.js handles pairing if they find each other,
-            // or specific init instructions. Constants says 'BARRIER_PAIR' handles itself?)
-            // If Enemy.js logic requires manual pairing, we might need to set it.
-            // Assuming Enemy.js finds partner by type 'N' proximity or shared ID.
+            e1.id = Enemy.nextId++;
+            e2.id = Enemy.nextId++;
+            e1.init(cx - ox, cy, this.game.player.x, this.game.player.y, type, hpMul, speedMul);
+            e2.init(cx + ox, cy, this.game.player.x, this.game.player.y, type, hpMul, speedMul);
 
-            // For now just push both.
+            // Link them
+            e1.partner = e2;
+            e2.partner = e1;
+
             this.game.enemies.push(e1);
             this.game.enemies.push(e2);
         }
@@ -2118,11 +2121,75 @@ export class SpawnDirector {
             e1.partner = e2;
             e2.partner = e1;
 
+            this.game.enemies.push(e1);
             this.game.enemies.push(e2);
         }
     }
 
-    // --- UTILS ---
+    // --- DEBUG SPAWN ---
+
+    /**
+     * デバッグ用ボス生成：多重生成を防止し、既存がいる場合はリセットする
+     */
+    spawnBossDebug(bossId, opts = {}) {
+        const forceRespawn = opts.forceRespawn || false;
+
+        // 1. 既存のボスを検索
+        const existingBoss = this.game.enemies.find(e => e.active && e.isBoss);
+
+        if (existingBoss && !forceRespawn) {
+            // 既存を再利用：HP全快、位置リセット
+            existingBoss.hp = existingBoss.maxHp;
+            existingBoss.x = CONSTANTS.TARGET_WIDTH / 2;
+            existingBoss.y = 150; // 画面内に配置
+            existingBoss.vx = 0;
+            existingBoss.vy = 0;
+
+            // 特殊な移動状態のリセット（両方とも Stage 5 の接近・停止挙動に統一）
+            existingBoss.bossIndex = bossId; // 識別子を更新
+            existingBoss.movementMode = 'DIRECT'; // Boss Stop Logic が入るモード
+            existingBoss.orbitRadius = 180; // (DIRECTモードでは参照されないが、念のためのフォールバック)
+            existingBoss.turnRate = 0.03;
+            if (bossId === 9) {
+                existingBoss.orbitAngle = -Math.PI / 2;
+            }
+
+            if (this.game.audio) this.game.audio.play('upgrade', { volume: 0.5 });
+            return existingBoss;
+        }
+
+        if (existingBoss && forceRespawn) {
+            existingBoss.active = false; // デスポーン
+        }
+
+        // 2. 新規生成
+        const boss = this.game.enemyPool.get();
+        if (boss) {
+            const x = CONSTANTS.TARGET_WIDTH / 2;
+            const y = -100;
+            const hpMul = this.game.debugHpMul || 1.0;
+
+            // ステージごとのボス設定を模倣
+            // bossId は内部的には 0-indexed (4: Stage 5, 9: Stage 10) と想定
+            const targetStage = parseInt(bossId);
+            const stageData = CONSTANTS.STAGE_DATA[targetStage] || { hpMul: 1.0 };
+
+            boss.initBoss(x, y, this.game.player.x, this.game.player.y, stageData.hpMul * hpMul, (bx, by) => {
+                this.game.handleBossSummon(bx, by);
+            });
+            boss.bossIndex = targetStage; // 識別子を設定
+
+            // 両方とも Stage 5 の接近・停止挙動に統一
+            boss.movementMode = 'DIRECT'; // Enemy.js 内で isBoss なら停止するロジックが動く
+            boss.orbitRadius = 180;
+            boss.turnRate = 0.03;
+
+            this.game.enemies.push(boss);
+            if (this.game.audio) this.game.audio.play('dash', { volume: 0.6 });
+            return boss;
+        }
+        return null;
+    }
 
     setRNG(rng) {
         this.rng = rng;

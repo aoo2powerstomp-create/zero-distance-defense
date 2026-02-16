@@ -23,6 +23,7 @@ export class Enemy {
         this.knockVX = 0;
         this.knockVY = 0;
         this.isBoss = false;
+        this.bossIndex = -1; // [NEW] ボス個別の識別子（Stage 5=4, Stage 10=9等）
         this.lastSummonTime = 0;
         this.onSummon = null;
         this.partner = null; // BARRIER_PAIR 用
@@ -95,6 +96,28 @@ export class Enemy {
         this.entry = null;
         this.formationInfo = null;
         this.shieldAlpha = 0;
+
+        // 状態のリセット (再利用時のバグ防止)
+        this.barrierState = 'idle';
+        this.barrierTimer = 0;
+        this.orbitAngle = 0;
+        this.damageMultiplier = 1.0;
+        this.speedMultiplier = 1.0;
+        this.attractorKind = null;
+        this.isReflectActive = false;
+        this.reflectCycleTimer = 0;
+        this.isShielded = false;
+        this.shieldAlpha = 0;
+        this.pulseOutlineTimer = 0;
+        this.obsState = 'hold';
+        this.obsTimer = 0;
+        this.didMark = false;
+        this.didMarkThisHold = false;
+        this.dashTimer = 0;
+        this.searchTimer = 0;
+        this.revengeState = 0;
+        this.revengeTimer = 0;
+        this.isBoss = false; // initBoss で上書きされる
 
         // タイプ別の基本速度倍率 (定数ファイルに個別定義がない場合の等倍フォールバック)
         let typeSpeedMul = 1.0;
@@ -193,20 +216,15 @@ export class Enemy {
         this.lastContactTime = 0;
         this.knockVX = 0;
         this.knockVY = 0;
-        this.isBoss = false;
-        this.lastSummonTime = Date.now();
-        this.onSummon = null;
+        // isBoss などの主要なフラグは冒頭のリセットブロックに移動済み
 
         // 制御レイヤー：世代管理と回避制限
         this.generation = 0;
         this.evasionTimer = 0;
 
-        // OBSERVER 用
-        this.obsState = 'hold';
-        this.obsTimer = 0;
+        // OBSERVER 用 (冒頭で一部リセット済みだが、スロット等はここでも可)
         this.slotIndex = 0;
         this.nextSlotIndex = 0;
-        this.didMarkThisHold = false;
 
         this.startX = x;
         this.startY = y;
@@ -514,7 +532,7 @@ export class Enemy {
         this.updateSpeed(dist, options);
 
         // 2. 移動ロジック (Movement Mode Switch)
-        this.updateMovement(dtMod, playerX, playerY, dist, now, playerAngle, dt);
+        this.updateMovement(dtMod, playerX, playerY, dist, now, playerAngle, dt, options);
 
         // 3. 共通物理演算 (ノックバック & 位置更新)
         this.x += (this.vx * freezeMul * this.speedMultiplier + this.knockVX) * dtMod;
@@ -599,7 +617,7 @@ export class Enemy {
         }
     }
 
-    updateMovement(dtMod, px, py, dist, now, playerAngle, dt = 16.6) {
+    updateMovement(dtMod, px, py, dist, now, playerAngle, dt = 16.6, options = {}) {
         // 描画座標リセット (Render offset reset)
         this.renderX = this.x;
         this.renderY = this.y;
@@ -1139,46 +1157,167 @@ export class Enemy {
                 break;
 
             case 'AVOID':
-                // 照準回避 (BARRIER_PAIR)
-                // ペアがいない場合は自棄になって突っ込む (ASSAULTへ移行)
-                if (!this.partner || !this.partner.active) {
-                    this.movementMode = 'ASSAULT';
-                    this.turnRate = 0.2; // Aggressive turn
-                    this.currentSpeed *= 1.5; // Speed up
-                    // Fallthrough to next frame's ASSAULT logic
+                // ゲート型スイープ (BARRIER_PAIR)
+                // ペアがいない場合は索敵モードへ (SEARCHへ移行)
+                if (!this.partner || !this.partner.active || this.partner.partner !== this) {
+                    this.movementMode = 'SEARCH';
+                    this.searchTimer = CONSTANTS.BARRIER_PAIR.searchDurationMs || 7000;
+                    break;
+                }
+
+                // [FIX] プレイヤーに近すぎたら逃げる (接触自滅防止)
+                const fleeDist = CONSTANTS.BARRIER_PAIR.fleeDistance || 140;
+                if (dist < fleeDist) {
+                    const fleeAngle = Math.atan2(this.y - py, this.x - px);
+                    this.turnTowards(fleeAngle, 0.2 * dtMod);
+                    this.vx = Math.cos(this.angle) * this.currentSpeed * 1.5;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed * 1.5;
                     break;
                 }
 
                 // 安定化: IDの大小で左右を分担する
-                // プレイヤーの照準に対して、片方は +65度、片方は -65度 の位置をキープしようとする
                 const isLeader = this.id < this.partner.id;
                 const formationSide = isLeader ? 1 : -1;
 
-                // 目標とする角度 (Player aiming angle + side offset)
-                // 65度くらい開けば、間のバリアが正面を塞ぐ形になる
-                let targetFormationAngle = playerAngle + (formationSide * (Math.PI / 180 * 65));
+                // --- 分散包囲ロジック ---
+                // 全ペア中での自身のインデックスを特定して分散する
+                let baseAngle = playerAngle;
+                if (this.game && this.game.frameCache && this.game.frameCache.barrierPairs.length > 1) {
+                    const pairs = this.game.frameCache.barrierPairs;
+                    const myId1 = Math.min(this.id, this.partner.id);
+                    const myId2 = Math.max(this.id, this.partner.id);
+                    const pairIndex = pairs.findIndex(p => p.id1 === myId1 && p.id2 === myId2);
 
-                // 現在の角度
-                const currentAngleToSelf = Math.atan2(this.y - py, this.x - px);
+                    if (pairIndex !== -1) {
+                        // 全ペアで 360度を等分し、正面(playerAngle)を基準にオフセット
+                        const totalPairs = pairs.length;
+                        baseAngle = playerAngle + (pairIndex / totalPairs) * Math.PI * 2;
+                    }
+                }
 
-                // 距離メンテナンス (つかず離れず)
-                let targetDist2 = this.orbitRadius || 240; // Rename variable to avoid conflict if any
-                // 基本は orbitRadius を維持だが、近すぎると下がる
-                if (dist < targetDist2 - 30) targetDist2 += 30;
-                if (dist > targetDist2 + 30) targetDist2 -= 30;
+                // 各ペアごとのスイープ (ベース角度を中心に左右に振る)
+                const sweepFreq = 0.001;
+                const sweepRange = (Math.PI / 180) * 40; // 40度の範囲でスイープ
+                const sweepCenter = baseAngle + Math.sin(now * sweepFreq + (this.id % 10)) * sweepRange;
 
-                // Move towards formation target
-                // 目標地点
+                // 2体の間隔 (30度程度)
+                const gapAngle = (Math.PI / 180) * 30;
+                let targetFormationAngle = sweepCenter + (formationSide * gapAngle);
+
+                // ハンティング・パルス (距離の伸縮 180-320px)
+                const pulseFreq = 0.0015;
+                const baseOrbitR = 250;
+                const orbitRange = 70;
+                let targetDist2 = baseOrbitR + Math.sin(now * pulseFreq + (this.id % 5)) * orbitRange;
+
+                // 目標座標の計算
                 const tx2 = px + Math.cos(targetFormationAngle) * targetDist2;
                 const ty2 = py + Math.sin(targetFormationAngle) * targetDist2;
 
                 const approachAngle2 = Math.atan2(ty2 - this.y, tx2 - this.x);
-
-                // 旋回
                 this.turnTowards(approachAngle2, (this.turnRate || 0.05) * dtMod);
 
                 this.vx = Math.cos(this.angle) * this.currentSpeed;
                 this.vy = Math.sin(this.angle) * this.currentSpeed;
+                break;
+
+            case 'SEARCH':
+                // 相方喪失時の索敵・再ペアリング
+                this.searchTimer -= dt;
+
+                // 他のはぐれ個体(SEARCH状態のBARRIER_PAIR)を探す
+                if (options.allEnemies && ((options.frameCount + this.id) % 20 === 0)) { // 負荷軽減のため20フレームに1回
+                    const others = options.allEnemies;
+                    for (let i = 0; i < others.length; i++) {
+                        const e = others[i];
+                        if (e !== this &&
+                            e.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR &&
+                            e.movementMode === 'SEARCH' &&
+                            e.active) {
+
+                            // 合流！
+                            this.partner = e;
+                            e.partner = this;
+                            this.movementMode = 'AVOID';
+                            e.movementMode = 'AVOID';
+
+                            if (this.game && this.game.audio) this.game.audio.play('buff', { volume: 0.4, pitch: 1.5 });
+                            break;
+                        }
+                    }
+                }
+
+                if (this.searchTimer <= 0) {
+                    this.movementMode = 'REVENGE';
+                    this.revengeState = 0; // ANGER
+                    this.revengeTimer = 800;
+                    break;
+                }
+
+                // 外周を回る挙動
+                const searchR = CONSTANTS.BARRIER_PAIR.searchOrbitRadius || 360;
+                this.orbitAngle += 0.012 * dtMod;
+                const sx = px + Math.cos(this.orbitAngle) * searchR;
+                const sy = py + Math.sin(this.orbitAngle) * searchR;
+
+                this.turnTowards(Math.atan2(sy - this.y, sx - this.x), 0.06 * dtMod);
+                this.vx = Math.cos(this.angle) * this.currentSpeed;
+                this.vy = Math.sin(this.angle) * this.currentSpeed;
+                break;
+
+            case 'REVENGE':
+                // 単独突撃 (怒りの復讐)
+                this.revengeTimer -= dt;
+
+                if (this.revengeState === 0) {
+                    // 0: ANGER (溜め)
+                    this.vx *= 0.85;
+                    this.vy *= 0.85;
+                    this.turnTowards(targetAngle, 0.1 * dtMod);
+
+                    // 激しく震える演出
+                    this.renderX += (Math.random() - 0.5) * 6;
+                    this.renderY += (Math.random() - 0.5) * 6;
+
+                    if (this.revengeTimer <= 0) {
+                        this.revengeState = 1; // ZIGZAG CHARGE
+                        this.currentSpeed = this.baseSpeed * 5.4; // [FIX] 3.0倍に強化 (1.8 * 3)
+                        if (this.game && this.game.audio) this.game.audio.play('dash', { volume: 0.4 });
+                    }
+                } else if (this.revengeState === 1) {
+                    // 1: ZIGZAG CHARGE
+                    const amp = CONSTANTS.BARRIER_PAIR.revengeZigzagAmp || 120;
+                    const freq = CONSTANTS.BARRIER_PAIR.revengeZigzagFreq || 0.008;
+                    const osc = Math.sin(now * freq) * amp;
+                    const perp = targetAngle + Math.PI / 2;
+
+                    const tx = px + Math.cos(targetAngle) * 50 + Math.cos(perp) * osc;
+                    const ty = py + Math.sin(targetAngle) * 50 + Math.sin(perp) * osc;
+
+                    this.turnTowards(Math.atan2(ty - this.y, tx - this.x), 0.15 * dtMod);
+                    this.vx = Math.cos(this.angle) * this.currentSpeed;
+                    this.vy = Math.sin(this.angle) * this.currentSpeed;
+
+                    if (dist < (CONSTANTS.BARRIER_PAIR.revengeChargeDist || 250)) {
+                        this.revengeState = 2; // SONIC BURST
+                        this.revengeTimer = 600;
+                        this.chargeAngle = targetAngle;
+                        this.currentSpeed = this.baseSpeed * 13.5; // [FIX] 3.0倍に強化 (4.5 * 3)
+                    }
+                } else if (this.revengeState === 2) {
+                    // 2: SONIC BURST (直線高速突進)
+                    this.vx = Math.cos(this.chargeAngle) * this.currentSpeed;
+                    this.vy = Math.sin(this.chargeAngle) * this.currentSpeed;
+                    this.angle = this.chargeAngle;
+
+                    // 高速移動時のエフェクト強化
+                    if (Math.random() < 0.9) Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 2.5);
+                    if (Math.random() < 0.3) Effects.createSpark(this.renderX, this.renderY, '#00ffff');
+
+                    if (this.revengeTimer <= 0) {
+                        this.revengeState = 1; // 蛇行に戻る
+                    }
+                }
                 break;
 
             case 'REFLECT':
@@ -1409,7 +1548,9 @@ export class Enemy {
                     break;
             }
             if (this.isBoss) {
-                const stageNum = (this.game) ? this.game.currentStage + 1 : 1;
+                // bossIndex が設定されている場合は優先、なければ game の現在ステージを参照
+                const idx = (this.bossIndex !== -1) ? this.bossIndex : (this.game ? this.game.currentStage : 0);
+                const stageNum = idx + 1;
                 assetKey = (stageNum <= 5) ? 'ENEMY_BOSS_5' : 'ENEMY_BOSS_10';
             }
 
@@ -1591,8 +1732,8 @@ export class Enemy {
                 }
             }
 
-            // 設置型バリア演出 (GUARDIAN などの従来型)
-            if (this.barrierState === 'active' && this.type !== CONSTANTS.ENEMY_TYPES.SHIELDER) {
+            // 設置型バリア演出 (SHIELDER 以外の敵タイプ)
+            if (this.barrierState === 'active' && this.type !== CONSTANTS.ENEMY_TYPES.SHIELDER && this.type !== CONSTANTS.ENEMY_TYPES.GUARDIAN) {
                 // GUARDIAN などの従来型バリア演出は維持（SHIELDERは設置型へ移行したため除外）
                 const baseSize = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
                 const now = Date.now();
@@ -1633,34 +1774,7 @@ export class Enemy {
                 ctx.restore();
             }
 
-            // ★追加: シールド内（保護中）の敵全般へのビジュアルフィードバック
-            if (this.shieldAlpha > 0) {
-                const baseSize = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
-                ctx.save();
-                const now = Date.now();
-                const shieldR = baseSize * 1.5; // キャラを覆うサイズ
-                const alpha = this.shieldAlpha * (0.4 + Math.sin(now * 0.01) * 0.1);
-                ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
-                ctx.lineWidth = 2;
-
-                // 単一の六角形オーラ
-                ctx.beginPath();
-                for (let i = 0; i < 6; i++) {
-                    const ang = (i / 6) * Math.PI * 2 + (now * 0.0005); // ゆっくり回転
-                    const xx = Math.cos(ang) * shieldR;
-                    const yy = Math.sin(ang) * shieldR;
-                    if (i === 0) ctx.moveTo(xx, yy);
-                    else ctx.lineTo(xx, yy);
-                }
-                ctx.closePath();
-                ctx.stroke();
-
-                // 内側に薄い塗りつぶしを追加して「包まれている感」を出す
-                ctx.fillStyle = `rgba(0, 255, 255, ${alpha * 0.2})`;
-                ctx.fill();
-
-                ctx.restore();
-            }
+            // (Protect shield outline removed per user request)
 
             // Pulsing effect
             const pulse = Math.sin(Date.now() * 0.005);
@@ -1678,74 +1792,50 @@ export class Enemy {
                 ctx.stroke();
             }
 
-            // Gorgeous Guardian Mandala Effect (When Active)
+            // [REDESIGNED] Matrix Digital Forcefield Effect
             if (this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN && this.barrierState === 'active') {
                 const nowTime = Date.now();
                 const radius = 60;
-
                 ctx.save();
                 ctx.globalCompositeOperation = 'lighter';
+                ctx.font = 'bold 10px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
 
-                // Layer 1: Outer glowing ring
-                ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 + Math.sin(nowTime * 0.003) * 0.2})`;
-                ctx.lineWidth = 3;
-                ctx.setLineDash([]);
-                ctx.beginPath();
-                ctx.arc(0, 0, radius * 1.5, 0, Math.PI * 2);
-                ctx.stroke();
+                // Core Digital Layers
+                const charSize = 8;
+                for (let j = 0; j < 3; j++) {
+                    const r = radius * (1.2 + j * 0.25);
+                    const alpha = 0.6 - j * 0.15;
+                    ctx.save();
+                    ctx.rotate(nowTime * (0.0005 + j * 0.0002));
+                    ctx.fillStyle = `rgba(0, 255, 150, ${alpha * (0.7 + Math.sin(nowTime * 0.005) * 0.3)})`;
 
-                // Layer 2: Rotating Magic Circle (Mandala)
-                ctx.save();
-                ctx.rotate(nowTime * 0.001);
-                ctx.strokeStyle = 'rgba(0, 255, 150, 0.6)';
-                ctx.lineWidth = 1.5;
+                    const numSidesMatrix = 6;
+                    for (let side = 0; side < numSidesMatrix; side++) {
+                        const sAng = (side / numSidesMatrix) * Math.PI * 2;
+                        const eAng = ((side + 1) / numSidesMatrix) * Math.PI * 2;
+                        const sx = Math.cos(sAng) * r;
+                        const sy = Math.sin(sAng) * r;
+                        const ex = Math.cos(eAng) * r;
+                        const ey = Math.sin(eAng) * r;
 
-                for (let j = 0; j < 2; j++) {
-                    ctx.rotate(Math.PI / 4);
-                    ctx.beginPath();
-                    const sides = 4 + j * 2;
-                    for (let i = 0; i < sides; i++) {
-                        const theta = (i / sides) * Math.PI * 2;
-                        const x = Math.cos(theta) * radius * 1.3;
-                        const y = Math.sin(theta) * radius * 1.3;
-                        if (i === 0) ctx.moveTo(x, y);
-                        else ctx.lineTo(x, y);
+                        const edgeLen = Math.sqrt((ex - sx) ** 2 + (ey - sy) ** 2);
+                        const count = Math.floor(edgeLen / charSize);
+                        for (let i = 0; i < count; i++) {
+                            const t = i / count;
+                            const px = sx + (ex - sx) * t;
+                            const py = sy + (ey - sy) * t;
+
+                            // Seeded random bit
+                            const bitSeed = Math.floor(nowTime / 150) + side * 13 + i + j * 71;
+                            const char = (Math.abs(Math.sin(bitSeed * 7.89)) > 0.5) ? "1" : "0";
+                            ctx.fillText(char, px, py);
+                        }
                     }
-                    ctx.closePath();
-                    ctx.stroke();
+                    ctx.restore();
                 }
-                ctx.restore();
-
-                // Layer 3: Inner fast-rotating gear
-                ctx.save();
-                ctx.rotate(-nowTime * 0.002);
-                ctx.strokeStyle = 'rgba(200, 255, 200, 0.8)';
-                ctx.beginPath();
-                const points = 12;
-                for (let i = 0; i < points; i++) {
-                    const r = i % 2 === 0 ? radius * 0.8 : radius * 0.4;
-                    const theta = (i / points) * Math.PI * 2;
-                    const x = Math.cos(theta) * r;
-                    const y = Math.sin(theta) * r;
-                    if (i === 0) ctx.moveTo(x, y);
-                    else ctx.lineTo(x, y);
-                }
-                ctx.closePath();
-                ctx.stroke();
-                ctx.restore();
-
-                // Rising Particles
-                const pCount = 5;
-                for (let i = 0; i < pCount; i++) {
-                    const seed = (nowTime + i * 500) * 0.001;
-                    const px = Math.sin(seed * 4) * radius * 0.8;
-                    const py = (seed % 1) * -radius * 2 + radius;
-                    const pAlpha = 1 - (Math.abs(py) / (radius * 2));
-                    ctx.fillStyle = `rgba(0, 255, 100, ${pAlpha * 0.5})`;
-                    ctx.beginPath();
-                    ctx.arc(px, py, 2, 0, Math.PI * 2);
-                    ctx.fill();
-                }
+                // (Inner Scan Glow removed per user request: No lines/circles)
 
                 ctx.restore();
             }
@@ -1909,51 +1999,34 @@ export class Enemy {
                 ctx.globalCompositeOperation = 'lighter';
                 ctx.shadowBlur = 0; // Clear any leaking shadow
 
-                // Pulsing Background Glow
-                const glowAlpha = 0.15 + Math.sin(nowTime * 0.005) * 0.05;
-                const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, buffSize);
-                grad.addColorStop(0, `rgba(0, 255, 150, ${glowAlpha})`);
-                grad.addColorStop(1, 'rgba(0, 255, 150, 0)');
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(0, 0, buffSize, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Layer 1: Outer Rotating Hex
-                ctx.strokeStyle = 'rgba(0, 255, 150, 0.7)';
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                const sides = 6;
-                const angle1 = nowTime * 0.0015 + (this.id * 0.1);
-                for (let i = 0; i < sides; i++) {
-                    const theta = (i / sides) * Math.PI * 2 + angle1;
-                    ctx.lineTo(Math.cos(theta) * buffSize, Math.sin(theta) * buffSize);
-                }
-                ctx.closePath();
-                ctx.stroke();
-
-                // Layer 2: Pulse Ring
-                const pulse = (Math.sin(nowTime * 0.005) + 1) * 0.5;
-                if (pulse > 0.5) {
-                    ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 * (pulse - 0.5)})`;
-                    ctx.beginPath();
-                    ctx.arc(0, 0, buffSize * pulse, 0, Math.PI * 2);
-                    ctx.stroke();
-                }
-
-                // Layer 3: Inner floating hex
+                // (Pulsing background removed per user request: Numbers only)
+                ctx.beginPath(); // Reset path state
+                // [REDESIGNED] Pure Matrix Global Buff Aura (Numbers Only)
+                const pulseMatrix = (Math.sin(nowTime * 0.005) + 1) * 0.5;
                 ctx.save();
-                const floatY = Math.sin(nowTime * 0.004 + this.id) * 5;
-                ctx.translate(0, -buffSize * 0.8 + floatY);
-                ctx.strokeStyle = 'rgba(0, 255, 255, 0.9)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                for (let i = 0; i < 6; i++) {
-                    const theta = (i / 6) * Math.PI * 2 + (nowTime * 0.002);
-                    ctx.lineTo(Math.cos(theta) * 8, Math.sin(theta) * 8);
+                ctx.rotate(nowTime * 0.0008);
+                ctx.font = '8px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = `rgba(0, 255, 150, ${0.4 + Math.sin(nowTime * 0.005) * 0.2})`;
+
+                const sides = 6;
+                const charSize = 7;
+                for (let side = 0; side < sides; side++) {
+                    const sAng = (side / sides) * Math.PI * 2;
+                    const eAng = ((side + 1) / sides) * Math.PI * 2;
+                    const sx = Math.cos(sAng) * buffSize;
+                    const sy = Math.sin(sAng) * buffSize;
+                    const ex = Math.cos(eAng) * buffSize;
+                    const ey = Math.sin(eAng) * buffSize;
+
+                    const edgeLen = Math.sqrt((ex - sx) ** 2 + (ey - sy) ** 2);
+                    const count = Math.ceil(edgeLen / charSize);
+                    for (let i = 0; i < count; i++) {
+                        const t = i / count;
+                        const char = (Math.abs(Math.sin(side * 17 + i + Math.floor(nowTime / 200))) > 0.5) ? "1" : "0";
+                        ctx.fillText(char, sx + (ex - sx) * t, sy + (ey - sy) * t);
+                    }
                 }
-                ctx.closePath();
-                ctx.stroke();
                 ctx.restore();
                 ctx.restore(); // Restore GGB (1909)
             }

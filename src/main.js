@@ -560,6 +560,7 @@ class Game {
             if (this.debugHpMul === undefined) this.debugHpMul = 1.0;
             if (this.debugShowHitbox === undefined) this.debugShowHitbox = false;
             if (this.debugShowKnockback === undefined) this.debugShowKnockback = false;
+            this.debugSpawnQueue = []; // [NEW] デバッグ用スポーン要求キュー
             if (this.debugShowVector === undefined) this.debugShowVector = false;
             if (this.debugFormation === undefined) this.debugFormation = 'NONE'; // Ensure it's initialized for debug stage
         } else {
@@ -958,12 +959,11 @@ class Game {
             boss.initBoss(x, y, this.player.x, this.player.y, stageData.hpMul, (bx, by) => {
                 this.handleBossSummon(bx, by);
             });
+            boss.bossIndex = this.currentStage; // 進行度を識別子として設定
 
-            // 10面ボス (Stage 10) は「浮遊城塞」として周囲を周回する
+            // 10面ボス (Stage 10) も Stage 5 と同じ接近・停止挙動にする
             if (this.currentStage === 9) {
-                boss.movementMode = 'HOVER';
-                boss.orbitRadius = 300;
-                boss.turnRate = 0.04;
+                boss.movementMode = 'DIRECT';
             }
 
             this.enemies.push(boss);
@@ -973,7 +973,7 @@ class Game {
 
     handleBossSummon(bx, by) {
         if (this.enemies.length >= CONSTANTS.ENEMY_LIMIT - CONSTANTS.BOSS_SUMMON_COUNT) return;
-        const stageData = CONSTANTS.STAGE_DATA[this.currentStage];
+        const stageData = CONSTANTS.STAGE_DATA[this.currentStage] || { hpMul: 1.0, speedMul: 1.0 };
 
         for (let i = 0; i < CONSTANTS.BOSS_SUMMON_COUNT; i++) {
             const enemy = this.enemyPool.get();
@@ -1211,6 +1211,21 @@ class Game {
     update(dt) {
         this.optimizationFrameCount++;
 
+        // --- Phase X: Debug Spawn Queue Processing [NEW] ---
+        if (this.debugSpawnQueue && this.debugSpawnQueue.length > 0) {
+            const req = this.debugSpawnQueue.shift();
+            if (req.kind === 'BOSS') {
+                if (this.spawnDirector) {
+                    this.spawnDirector.spawnBossDebug(req.bossId, { forceRespawn: req.forceRespawn });
+                }
+            } else if (req.kind === 'ENEMY') {
+                // 通常エネミーの即時生成要求（将来用）
+                if (this.spawnDirector) {
+                    this.spawnDirector.executeSpawn(req.type, req.formation || 'NONE');
+                }
+            }
+        }
+
         // ゴールドカウンターのアニメーション
         if (this.displayGoldCount < this.goldCount) {
             // 1桁ずつ増えるような演出（差分の一定割合か、最低1ずつ増やす）
@@ -1325,7 +1340,9 @@ class Game {
                 globalMarkActive: hasMark,
                 isFrozen: this.freezeTimer > 0,
                 totalRemaining: totalRemaining,
-                onlyEvasiveLeft: onlyEvasiveLeft
+                onlyEvasiveLeft: onlyEvasiveLeft,
+                allEnemies: activeEnemies,
+                frameCount: this.optimizationFrameCount
             });
             if (e.didMark) {
                 this.globalMarkTimer = Math.max(this.globalMarkTimer, CONSTANTS.OBSERVER.globalBuffDurationMs);
@@ -2094,6 +2111,13 @@ class Game {
                     select.appendChild(opt);
                 });
 
+                // [NEW] BOSS option
+                const bossOpt = document.createElement('option');
+                bossOpt.value = 'BOSS';
+                bossOpt.textContent = 'BOSS (Debug Only)';
+                if (this.debugTargetType === 'BOSS') bossOpt.selected = true;
+                select.appendChild(bossOpt);
+
                 select.addEventListener('change', (e) => {
                     this.debugTargetType = e.target.value;
                     this.enemies.forEach(e => e.active = false); // Clear
@@ -2148,6 +2172,45 @@ class Game {
                 });
                 sel2Div.appendChild(select2);
                 container.appendChild(sel2Div);
+
+                // 1.03 Boss ID Select [NEW]
+                const bossSelDiv = document.createElement('div');
+                bossSelDiv.id = 'debug-boss-select-container';
+                bossSelDiv.textContent = 'BOSS ID: ';
+                bossSelDiv.style.display = this.debugTargetType === 'BOSS' ? 'block' : 'none';
+                const bossSelect = document.createElement('select');
+                bossSelect.id = 'debug-boss-select';
+                bossSelect.style.backgroundColor = '#000';
+                bossSelect.style.color = '#fff';
+                bossSelect.style.border = '1px solid #0f0';
+                bossSelect.style.marginTop = '5px';
+
+                // ボス一覧 (Stage 5, 10 等)
+                const bossList = [
+                    { id: 4, name: 'Stage 5 Boss' },
+                    { id: 9, name: 'Stage 10 Boss' }
+                ];
+                bossList.forEach(b => {
+                    const opt = document.createElement('option');
+                    opt.value = b.id;
+                    opt.textContent = b.name;
+                    if (this.debugTargetBossId === b.id) opt.selected = true;
+                    bossSelect.appendChild(opt);
+                });
+                if (this.debugTargetBossId === undefined) this.debugTargetBossId = bossList[0].id;
+
+                bossSelect.addEventListener('change', (e) => {
+                    this.debugTargetBossId = parseInt(e.target.value);
+                });
+                bossSelDiv.appendChild(bossSelect);
+                container.appendChild(bossSelDiv);
+
+                // TYPEの変更に応じて表示切り替え
+                select.addEventListener('change', (e) => {
+                    const isBoss = e.target.value === 'BOSS';
+                    bossSelDiv.style.display = isBoss ? 'block' : 'none';
+                    descDiv.textContent = isBoss ? 'デバッグ用ボスの単体生成モード。' : (CONSTANTS.ENEMY_DESCRIPTIONS[this.debugTargetType] || '解説なし');
+                });
 
                 // 1.05 Formation Select [NEW]
                 const formDiv = document.createElement('div');
@@ -2273,6 +2336,28 @@ class Game {
 
                 container.appendChild(createToggle('Show Hitbox', 'debugShowHitbox'));
                 container.appendChild(createToggle('Show Knockback', 'debugShowKnockback'));
+
+                // [NEW] SPAWN Button
+                const btnSpawn = document.createElement('button');
+                btnSpawn.textContent = 'SPAWN (SINGLE)';
+                btnSpawn.style.marginTop = '10px';
+                btnSpawn.style.backgroundColor = '#033';
+                btnSpawn.style.border = '1px solid #0f0';
+                btnSpawn.style.color = '#0f0';
+                btnSpawn.onclick = () => {
+                    if (this.debugTargetType === 'BOSS') {
+                        this.debugSpawnQueue.push({ kind: 'BOSS', bossId: this.debugTargetBossId, forceRespawn: false });
+                    } else {
+                        // 通常エネミーの生成（SpawnDirectorの自動生成をリセットして1体出す）
+                        this.enemies.forEach(e => e.active = false);
+                        if (this.spawnDirector) {
+                            this.spawnDirector.spawnQueue = [];
+                            this.spawnDirector.spawnIntervalTimer = 0;
+                            this.spawnDirector.executeSpawn(this.debugTargetType, this.debugFormation);
+                        }
+                    }
+                };
+                container.appendChild(btnSpawn);
 
                 // Info
                 const infoDiv = document.createElement('div');

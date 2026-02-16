@@ -392,12 +392,18 @@ export const CONSTANTS = {
         unlockStage: 7
     },
     BARRIER_PAIR: {
-        maxDist: 200, // ペアが離れすぎないようにする距離 (300 -> 200)
-        minDist: 100, // ペアが近すぎないようにする距離 (120 -> 100)
+        maxDist: 200,
+        minDist: 100,
         barrierWidth: 6,
-        orbitRadius: 180, // プレイヤーとの距離を維持 (250 -> 180)
+        orbitRadius: 180,
         spawnRate: 0.03,
-        unlockStage: 8 // Stage 8
+        unlockStage: 8,
+        searchDurationMs: 7000,   // 相方を探す時間
+        fleeDistance: 140,         // プレイヤーから逃げる距離
+        searchOrbitRadius: 360,   // 索敵時の外周半径
+        revengeZigzagAmp: 120,    // 復讐突撃時の蛇行幅
+        revengeZigzagFreq: 0.008, // 復讐突撃時の蛇行周波数
+        revengeChargeDist: 250    // 復讐突撃（ソニックバースト）開始距離
     },
     TRICKSTER: {
         sizeMul: 0.7,
@@ -486,7 +492,9 @@ export const CONSTANTS = {
         DASH: 'DASH',           // 回避->突進 (DASHER)
         HOVER: 'HOVER',         // ゆっくり追尾 (SHIELDER, ELITE)
         REFLECT: 'REFLECT',      // 横移動混じり (REFLECTOR)
-        AVOID: 'AVOID'          // 照準回避 (BARRIER_PAIR)
+        AVOID: 'AVOID',         // 照準回避 (BARRIER_PAIR)
+        SEARCH: 'SEARCH',       // 索敵・再ペアリング
+        REVENGE: 'REVENGE'      // 復讐突撃
     },
 
     // 敵ごとの基本移動設定
