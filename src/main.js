@@ -1730,12 +1730,19 @@ class Game {
             if (hasActiveBoss) this.bossSpawned = true;
 
             if (this.bossSpawned && !hasActiveBoss) {
-                this.stageClear();
+                if (this.isDebugStage) {
+                    // デバッグ時はリザルトに行かず、フラグをリセットして次を待つ
+                    this.bossSpawned = false;
+                } else {
+                    this.stageClear();
+                }
             }
         } else {
             // 通常ステージ
             if (this.enemiesRemaining <= 0 && this.spawnQueue <= 0 && this.enemies.length === 0) {
-                this.stageClear();
+                if (!this.isDebugStage) {
+                    this.stageClear();
+                }
             }
         }
 
@@ -2406,6 +2413,35 @@ class Game {
             const level = this.player.weapons[this.player.currentWeapon].level;
             const dps = (1000 / stats.cooldown) * stats.damage;
             dbWeapon.textContent = `${config.name} Lv.${level} (DPS: ${dps.toFixed(1)})`;
+        }
+
+        // --- Boss HP Bar Update [NEW] ---
+        const bossHpContainer = document.getElementById('boss-hp-container');
+        if (bossHpContainer) {
+            const activeBoss = this.enemies.find(e => e.active && e.isBoss);
+            if (activeBoss) {
+                bossHpContainer.classList.remove('hidden');
+                const fill = document.getElementById('boss-hp-bar-fill');
+                const percentText = document.getElementById('boss-hp-percent');
+                const nameText = document.getElementById('boss-name');
+
+                const percent = Math.max(0, (activeBoss.hp / activeBoss.maxHp) * 100);
+                if (fill) fill.style.width = `${percent}%`;
+                if (percentText) percentText.textContent = `${Math.ceil(percent)}%`;
+
+                // Name assignment
+                if (nameText) {
+                    const stage = (activeBoss.bossIndex !== undefined) ? activeBoss.bossIndex + 1 : this.currentStage + 1;
+                    nameText.textContent = `STAGE ${stage} GUARDIAN`;
+                }
+
+                // Danger state
+                if (percent < 25) bossHpContainer.classList.add('danger');
+                else bossHpContainer.classList.remove('danger');
+
+            } else {
+                bossHpContainer.classList.add('hidden');
+            }
         }
     }
 

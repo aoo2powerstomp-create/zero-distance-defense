@@ -1986,6 +1986,9 @@ export class SpawnDirector {
     }
     // --- DEBUG SPAWN ---
     handleDebugSpawn(dt) {
+        // [FIX] BOSS selection prevents auto-spawn (to avoid red triangles)
+        if (this.game.debugTargetType === 'BOSS') return;
+
         // Refined Logic (Debug Tools Support):
         // 1. Target Type & Formation from Game
         const debugType = this.game.debugTargetType || CONSTANTS.ENEMY_TYPES.NORMAL;
@@ -2016,9 +2019,9 @@ export class SpawnDirector {
         const totalCount = activeCount + pendingCount;
 
         // 4. Spawn Cap based on Slider
-        const maxSpawn = this.game.debugSpawnCount || 1;
+        const targetCount = this.game.debugSpawnCount || 1;
 
-        if (totalCount < maxSpawn && this.spawnIntervalTimer <= 0) {
+        if (totalCount < targetCount && this.spawnIntervalTimer <= 0) {
             // Determine which type to spawn (alternate between TYPE1 and TYPE2)
             let currentType = debugType;
             if (debugType2 && debugType2 !== 'NONE') {
@@ -2028,6 +2031,12 @@ export class SpawnDirector {
                 // Alternate between TYPE1 and TYPE2
                 currentType = this.debugTypeToggle ? debugType2 : debugType;
                 this.debugTypeToggle = !this.debugTypeToggle;
+            }
+
+            // BOSSは自動スポーンの対象から外す（SPAWNボタンのみで生成）
+            if (currentType === 'BOSS') {
+                this.spawnIntervalTimer = 500; // 少し待機
+                return;
             }
 
             if (debugFormation !== 'NONE') {
@@ -2058,7 +2067,7 @@ export class SpawnDirector {
                         lastE.currentSpeed = lastE.baseSpeed;
                     }
 
-                    this.spawnIntervalTimer = totalCount < maxSpawn / 2 ? 200 : 1000;
+                    this.spawnIntervalTimer = totalCount < targetCount / 2 ? 200 : 1000;
                 }
             }
         } else {
