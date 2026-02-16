@@ -653,7 +653,8 @@ export const CONSTANTS = {
 
     // アップグレード設定
     UPGRADE_LV_MAX: 30,
-    UPGRADE_COST_BASE: 1.25, // コスト上昇率 ( 1.25^(lv-1) )
+    UPGRADE_COST_GROWTH_WEAPON: 1.20, // 武器コスト上昇率
+    UPGRADE_COST_GROWTH_SPEED: 1.18,  // 速度コスト上昇率
     UPGRADE_WEAPON_BASE: 40,
     UPGRADE_ATK_SPEED_BASE: 80,
 
@@ -728,6 +729,7 @@ export const CONSTANTS = {
     GOLD_ATTRACT_SPEED: 8,
     GOLD_ATTRACT_DIST: 150,
     GOLD_LIMIT: 50,
+    ECON_GROWTH_BASE: 1.18, // ステージごとのゴールド増加倍率 (指数)
 
     // ゲーム状態
     STATE: {

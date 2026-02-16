@@ -1793,10 +1793,27 @@ export class Enemy {
         // ドロップ処理
         if (reason !== 'glitch' && reason !== 'GLITCH' && reason !== 'return' && reason !== 'LIFETIME' && reason !== 'OOB') {
             // GOLD (100% drop)
-            const goldAmount = CONSTANTS.ENEMY_GOLD[this.type] || 10;
+            // Stage1 = 0, Stage2 = 1 ...
+            const stageIndex = Math.max(0, (game.currentStage ?? 1) - 1);
+            const mult = Math.pow(CONSTANTS.ECON_GROWTH_BASE || 1.18, stageIndex);
+
+            const baseG = CONSTANTS.ENEMY_GOLD[this.type] || 10;
+            const finalG = Math.max(1, Math.round(baseG * mult));
+
+            // Log if logger exists
+            if (game.economyLogger) {
+                game.economyLogger.recordKill({
+                    stage: game.currentStage,
+                    enemyType: this.type,
+                    baseG: baseG,
+                    mult: mult,
+                    gainedG: finalG
+                });
+            }
+
             const g = game.goldPool.get();
             if (g) {
-                g.init(this.renderX, this.renderY, goldAmount);
+                g.init(this.renderX, this.renderY, finalG);
                 game.golds.push(g);
             }
 

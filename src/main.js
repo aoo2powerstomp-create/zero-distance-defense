@@ -13,7 +13,9 @@ import { SpatialGrid } from './SpatialGrid.js';
 import { ItemManager } from './ItemManager.js';
 import { AssetLoader } from './AssetLoader.js';
 import { FrameCache } from './utils/FrameCache.js';
+
 import { SpawnDirector } from './SpawnDirector.js';
+import { EconomyLogger } from './utils/EconomyLogger.js';
 
 class Game {
     constructor() {
@@ -96,6 +98,10 @@ class Game {
         this.runTotalDamageTaken = 0;
         this.runTotalItemsUsed = 0;
         this.runTotalTimeMs = 0;
+
+        this.runTotalTimeMs = 0;
+
+        this.economyLogger = new EconomyLogger(this); // Pass game instance directly as per constructor signature
 
         this.initUI();
         this.setupDebugMenu();
@@ -207,7 +213,7 @@ class Game {
                     }
                 } else {
                     if (this.player.currentWeapon === type) {
-                        const cost = this.getUpgradeCost(CONSTANTS.UPGRADE_WEAPON_BASE, data.level);
+                        const cost = this.getUpgradeCost(CONSTANTS.UPGRADE_WEAPON_BASE, data.level, CONSTANTS.UPGRADE_COST_GROWTH_WEAPON);
                         if (this.goldCount >= cost && data.level < CONSTANTS.UPGRADE_LV_MAX) {
                             this.goldCount -= cost;
                             data.level++;
@@ -227,7 +233,7 @@ class Game {
         document.getElementById('btn-up-speed').addEventListener('click', () => {
             const type = this.player.currentWeapon;
             const data = this.player.weapons[type];
-            const cost = this.getUpgradeCost(CONSTANTS.UPGRADE_ATK_SPEED_BASE, data.atkSpeedLv);
+            const cost = this.getUpgradeCost(CONSTANTS.UPGRADE_ATK_SPEED_BASE, data.atkSpeedLv, CONSTANTS.UPGRADE_COST_GROWTH_SPEED);
 
             if (this.goldCount >= cost && data.atkSpeedLv < CONSTANTS.UPGRADE_LV_MAX) {
                 this.goldCount -= cost;
@@ -527,8 +533,8 @@ class Game {
         }
     }
 
-    getUpgradeCost(base, level) {
-        return Math.round(base * Math.pow(CONSTANTS.UPGRADE_COST_BASE, level - 1));
+    getUpgradeCost(base, level, growth) {
+        return Math.round(base * Math.pow(growth, level - 1));
     }
 
     startWave() {
@@ -602,6 +608,11 @@ class Game {
         // SpawnDirector リセット
         if (this.spawnDirector) {
             this.spawnDirector.resetForStage();
+        }
+
+        // EconomyLogger リセット
+        if (this.economyLogger) {
+            this.economyLogger.resetForStage(this.currentStage);
         }
 
         // リザルト等で隠れたUIを確実に再表示する
@@ -1882,7 +1893,7 @@ class Game {
                 btn.classList.toggle('disabled', this.goldCount < config.unlockCost);
                 btn.classList.remove('max');
             } else {
-                const cost = this.getUpgradeCost(CONSTANTS.UPGRADE_WEAPON_BASE, data.level);
+                const cost = this.getUpgradeCost(CONSTANTS.UPGRADE_WEAPON_BASE, data.level, CONSTANTS.UPGRADE_COST_GROWTH_WEAPON);
                 const isMax = data.level >= CONSTANTS.UPGRADE_LV_MAX;
 
                 lvSpan.textContent = isMax ? '∞' : data.level;
@@ -1898,7 +1909,7 @@ class Game {
 
     updateUpgradeUI() {
         const cur = this.player.weapons[this.player.currentWeapon];
-        const spdCost = this.getUpgradeCost(CONSTANTS.UPGRADE_ATK_SPEED_BASE, cur.atkSpeedLv);
+        const spdCost = this.getUpgradeCost(CONSTANTS.UPGRADE_ATK_SPEED_BASE, cur.atkSpeedLv, CONSTANTS.UPGRADE_COST_GROWTH_SPEED);
         const isSpdMax = cur.atkSpeedLv >= CONSTANTS.UPGRADE_LV_MAX;
 
         const spdLvSpan = document.getElementById('speed-up-lv');
@@ -2337,6 +2348,12 @@ class Game {
         Profiler.updateFrame();
 
         this.update(dt * this.timeScale);
+
+        // EconomyLogger update (with timeScale)
+        if (this.economyLogger) {
+            this.economyLogger.update(performance.now());
+        }
+
         this.draw();
         this.updatePerfOverlay(); // 新規追加
 
