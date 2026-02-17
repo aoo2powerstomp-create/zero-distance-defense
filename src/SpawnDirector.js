@@ -1153,19 +1153,19 @@ export class SpawnDirector {
             [CONSTANTS.ENEMY_TYPES.ELITE]: 1,       // D: Stage 1 (Default)
             [CONSTANTS.ENEMY_TYPES.ASSAULT]: 2,     // E: Stage 2
             [CONSTANTS.ENEMY_TYPES.SHIELDER]: 3,    // F: Stage 3
-            [CONSTANTS.ENEMY_TYPES.SPLITTER]: 3,    // J: Stage 3
+            [CONSTANTS.ENEMY_TYPES.SPLITTER]: 3,    // S1: Stage 3
             [CONSTANTS.ENEMY_TYPES.DASHER]: 4,      // H: Stage 4
             [CONSTANTS.ENEMY_TYPES.GUARDIAN]: 5,    // G: Stage 5
             [CONSTANTS.ENEMY_TYPES.ORBITER]: 5,     // I: Stage 5
-            [CONSTANTS.ENEMY_TYPES.OBSERVER]: 5,    // L: Stage 5
-            [CONSTANTS.ENEMY_TYPES.TRICKSTER]: 5,   // O: Stage 5 (New)
-            [CONSTANTS.ENEMY_TYPES.FLANKER]: 7,     // M: Stage 7
-            [CONSTANTS.ENEMY_TYPES.ATTRACTOR]: 7,   // P: Stage 7
-            [CONSTANTS.ENEMY_TYPES.BARRIER_PAIR]: 8,// N: Stage 8
-            [CONSTANTS.ENEMY_TYPES.REFLECTOR]: 8    // Q: Stage 8
+            [CONSTANTS.ENEMY_TYPES.OBSERVER]: 5,    // O: Stage 5
+            [CONSTANTS.ENEMY_TYPES.TRICKSTER]: 5,   // L: Stage 5
+            [CONSTANTS.ENEMY_TYPES.FLANKER]: 7,     // J: Stage 7
+            [CONSTANTS.ENEMY_TYPES.ATTRACTOR]: 7,   // M: Stage 7
+            [CONSTANTS.ENEMY_TYPES.BARRIER_PAIR]: 8,// K: Stage 8
+            [CONSTANTS.ENEMY_TYPES.REFLECTOR]: 8    // N: Stage 8
         };
 
-        const req = unlockMap[type] || 1;
+        const req = unlockMap[type] !== undefined ? unlockMap[type] : 999;
         return stage >= req;
     }
 
@@ -1485,6 +1485,7 @@ export class SpawnDirector {
     }
 
     executeSpawn(type, pattern = 'NONE', overrideX = null, overrideY = null, options = {}) {
+        console.log(`[DIRECTOR] executeSpawn: ${type}, Pattern: ${pattern}, Stage: ${this.game.currentStage + 1}`);
         // ... (NAN check or similar)
         // Cooldown設定 (ID -> Key変換がここでも必要だが、Switchで)
         this.setCooldown(type);

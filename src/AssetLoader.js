@@ -30,7 +30,7 @@ export class AssetLoader {
 
             // ロード失敗時
             img.onerror = () => {
-                // Failed to load: fallback is handled in get() returning null
+                console.error(`[AssetLoader] Failed to load: ${key} at ${assetMap[key]}`);
             };
         });
     }

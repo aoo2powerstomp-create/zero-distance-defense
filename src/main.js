@@ -99,8 +99,7 @@ class Game {
         this.runTotalDamageTaken = 0;
         this.runTotalItemsUsed = 0;
         this.runTotalTimeMs = 0;
-
-        this.runTotalTimeMs = 0;
+        this.runTotalGameTime = 0; // [NEW] ゲーム内経過時間の累積 (x1換算)
 
         this.economyLogger = new EconomyLogger(this);
         this.shieldZones = []; // ★設置型シールド管理用
@@ -577,6 +576,7 @@ class Game {
         this.enemiesRemaining = Math.round(stageData.enemyCount * stageData.spawnMul);
         this.spawnTimer = 0;
         this.stageTime = 0;
+        this.stageGameTime = 0; // [NEW] ステージ内ゲーム時間 (x1換算)
         this.killCount = 0;
         this.stageGoldEarned = 0;
 
@@ -652,7 +652,9 @@ class Game {
         const stage = this.currentStage + 1; // 1-indexed
 
         // タイム計測 (秒)
-        const durationMs = stats.endTime - stats.startTime;
+        // タイム計測 (秒)
+        // const durationMs = stats.endTime - stats.startTime; // OLD (Real Time)
+        const durationMs = this.stageGameTime || 0; // NEW (Game Time)
         const durationSec = durationMs / 1000;
 
         // ターゲットタイム
@@ -690,9 +692,14 @@ class Game {
 
     calculateTotalRank() {
         // トータルタイム計算 (現在の進行中のステージ分を加算)
-        const now = Date.now();
-        const currentStageDuration = this.runStats ? (now - this.runStats.startTime) : 0;
-        const totalDurationMs = this.runTotalTimeMs + currentStageDuration;
+        // トータルタイム計算 (現在の進行中のステージ分を加算)
+        // const now = Date.now();
+        // const currentStageDuration = this.runStats ? (now - this.runStats.startTime) : 0;
+        // const totalDurationMs = this.runTotalTimeMs + currentStageDuration;
+
+        // NEW: Game Time Base
+        const currentStageDuration = this.stageGameTime || 0;
+        const totalDurationMs = this.runTotalGameTime + currentStageDuration;
 
         // 目標タイムの合計 (到達したステージまで)
         let totalTargetSec = 0;
@@ -842,6 +849,7 @@ class Game {
         }
         this.runStats.endTime = Date.now();
         this.runTotalTimeMs += (this.runStats.endTime - this.runStats.startTime);
+        this.runTotalGameTime += this.stageGameTime; // [NEW] ゲーム時間の累積更新
 
         this.enemies.forEach(e => this.enemyPool.release(e));
         this.enemies = [];
@@ -930,7 +938,8 @@ class Game {
 
             // 新規: TIME, DAMAGE, ITEM の表示 (トータルを表示)
             const timeEl = document.getElementById('stat-time');
-            if (timeEl) timeEl.textContent = (totalResult.time / 1000).toFixed(2);
+            // if (timeEl) timeEl.textContent = (totalResult.time / 1000).toFixed(2);
+            if (timeEl) timeEl.textContent = this.formatTimeMMSS(totalResult.time);
             const damageEl = document.getElementById('stat-damage');
             if (damageEl) damageEl.textContent = totalResult.damage;
             const itemEl = document.getElementById('stat-item');
@@ -971,10 +980,16 @@ class Game {
         }
     }
 
-    handleBossSummon(bx, by) {
+    handleBossSummon(bx, by, boss) {
         if (this.enemies.length >= CONSTANTS.ENEMY_LIMIT - CONSTANTS.BOSS_SUMMON_COUNT) return;
-        const stageData = CONSTANTS.STAGE_DATA[this.currentStage] || { hpMul: 1.0, speedMul: 1.0 };
 
+        // Stage5Boss & Stage10Boss の場合、同時存在上限をチェック
+        if (boss && (boss.bossIndex === 4 || boss.bossIndex === 9)) {
+            const minionCount = this.enemies.filter(e => e.isMinion && !e.isMissile && e.active).length;
+            if (minionCount >= CONSTANTS.BOSS_STAGE5_SUMMON_MAX_MINIONS) return;
+        }
+
+        const stageData = CONSTANTS.STAGE_DATA[this.currentStage] || { hpMul: 1.0, speedMul: 1.0 };
         for (let i = 0; i < CONSTANTS.BOSS_SUMMON_COUNT; i++) {
             const enemy = this.enemyPool.get();
             if (enemy) {
@@ -983,9 +998,53 @@ class Game {
                 const sx = bx + Math.cos(angle) * dist;
                 const sy = by + Math.sin(angle) * dist;
                 enemy.init(sx, sy, this.player.x, this.player.y, CONSTANTS.ENEMY_TYPES.NORMAL, stageData.hpMul * 0.5, stageData.speedMul);
+                enemy.isMinion = true; // 明示的にミニオン扱いにする
                 this.enemies.push(enemy);
             }
         }
+    }
+
+    spawnPlasmaDrone(boss) {
+        // 同時最大数のチェック
+        const droneCount = this.enemies.filter(e => e.isDrone && e.active && e.ownerId === boss.id).length;
+        // Stage 10 でも Stage 5 の定数を流用（同じ密度を維持）
+        if (droneCount >= CONSTANTS.PLASMA_DRONE_STAGE5.maxActive) return false;
+
+        const drone = this.enemyPool.get();
+        if (drone) {
+            // ボスの上部から発射されるイメージ
+            const sx = boss.x;
+            const sy = boss.y - 40;
+            drone.initPlasmaDrone(sx, sy, this.player.x, this.player.y, boss.id);
+            drone.game = this; // 参照用
+            this.enemies.push(drone);
+
+            // 発射音
+            this.audio.play('shoot', { variation: 0.5, pitch: 0.5 });
+            return true;
+        }
+        return false;
+    }
+
+    spawnRimLaser(boss) {
+        // 同時最大数のチェック
+        const rimCount = this.enemies.filter(e => e.isRimLaser)
+            .filter(e => e.active && e.ownerId === boss.id).length;
+        if (rimCount >= CONSTANTS.RIM_LASER_STAGE5.maxActive) return false;
+
+        const rim = this.enemyPool.get();
+        if (rim) {
+            // ボスの位置から生成
+            rim.initRimLaser(boss.x, boss.y, boss.id);
+            rim.game = this;
+            rim.movementMode = 'RIM_LASER'; // 明示的にセット
+            this.enemies.push(rim);
+
+            // 音
+            this.audio.play('shoot', { variation: 0.3, pitch: 1.2 });
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -1288,6 +1347,9 @@ class Game {
 
         if (this.globalMarkTimer > 0) this.globalMarkTimer -= dt;
 
+        // [NEW] ゲーム内時間の加算 (Time Scaleの影響を受けたdtを加算することで、実質x1換算の時間になる)
+        this.stageGameTime += dt;
+
         Profiler.start('player_update');
         this.player.update(dt);
         this.player.shootTimer += dt;
@@ -1342,7 +1404,9 @@ class Game {
                 totalRemaining: totalRemaining,
                 onlyEvasiveLeft: onlyEvasiveLeft,
                 allEnemies: activeEnemies,
-                frameCount: this.optimizationFrameCount
+                frameCount: this.optimizationFrameCount,
+                spawnPlasmaDrone: (boss) => this.spawnPlasmaDrone(boss),
+                spawnRimLaser: (boss) => this.spawnRimLaser(boss)
             });
             if (e.didMark) {
                 this.globalMarkTimer = Math.max(this.globalMarkTimer, CONSTANTS.OBSERVER.globalBuffDurationMs);
@@ -1664,6 +1728,10 @@ class Game {
                             damageRatio *= (CONSTANTS.ELITE_DAMAGE_MUL || 1.0);
                         } else if (e.type === CONSTANTS.ENEMY_TYPES.FLANKER) {
                             damageRatio *= 4.0; // High damage for Flanker charge
+                        } else if (e.isDrone) {
+                            damageRatio = CONSTANTS.PLASMA_DRONE_STAGE5.damage;
+                        } else if (e.isRimLaser) {
+                            damageRatio = CONSTANTS.RIM_LASER_STAGE5.damage;
                         }
                         // アトラクターバフ（RED）を接触ダメージに適用
                         const finalDamage = damageRatio * (e.damageMultiplier || 1.0);
@@ -2054,16 +2122,24 @@ class Game {
                     return counts;
                 };
 
+                const report = Profiler.getReport();
                 const sideLatest = getHistoryCounts(sd.spawnSideHistory);
                 const formLatest = getHistoryCounts(sd.formationHistory);
 
+                // ドローン・RIM LASER 稼働数の集計
+                const activeDrones = this.enemies.filter(e => e.isDrone && e.active).length;
+                const activeRims = this.enemies.filter(e => e.isRimLaser && e.active).length;
+                const boss = this.enemies.find(e => e.isBoss && e.bossIndex === 4);
+                const droneCdStr = boss ? (boss.droneCd / 1000).toFixed(1) : 'OFF';
+                const rimCdStr = boss ? (boss.rimLaserCd / 1000).toFixed(1) : 'OFF';
+
                 statsDiv.innerHTML = `
-                    <div style="font-weight:bold; color:#fff; border-bottom:1px solid #0f0; margin-bottom:4px;">SPAWN STATISTICS</div>
-                    <div><b>SIDE (Latest 200):</b><br>${fmt(sideLatest)}</div>
-                    <div style="margin-top:4px;"><b>SIDE (Total):</b><br>${fmt(sd.spawnSideTotal)}</div>
+                    <div style="font-weight:bold; color:#fff; border-bottom:1px solid #0f0; margin-bottom:4px;">BATTLE & SPAWN STATS</div>
+                    <div>FPS: ${report.fps.toFixed(1)} | DRONES: <span style="color:${activeDrones >= 3 ? '#f00' : '#0f0'}">${activeDrones}/3</span> | RIMS: <span style="color:${activeRims >= 2 ? '#f00' : '#0f0'}">${activeRims}/2</span></div>
+                    <div>BOSS_CD: D:${droneCdStr}s / R:${rimCdStr}s</div>
                     <hr style="border:0; border-top:1px solid #333; margin:4px 0;">
-                    <div><b>FORMATION (Latest 200):</b><br>${fmt(formLatest)}</div>
-                    <div style="margin-top:4px;"><b>FORMATION (Total):</b><br>${fmt(sd.formationTotal)}</div>
+                    <div><b>SIDE (Latest 200):</b><br>${fmt(sideLatest)}</div>
+                    <div style="margin-top:4px;"><b>FORMATION (Latest 200):</b><br>${fmt(formLatest)}</div>
                 `;
             }
         } else {
@@ -2813,6 +2889,16 @@ class Game {
                 enemy.speedMultiplier = 1 + (blueBonus * blueCount * Math.pow(decay, blueCount - 1));
             }
         }
+    }
+
+    /**
+     * ミリ秒を mm:ss 形式に変換
+     */
+    formatTimeMMSS(ms) {
+        const totalSec = Math.floor(ms / 1000);
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     }
 }
 

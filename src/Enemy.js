@@ -59,6 +59,20 @@ export class Enemy {
         this.entry = null;         // { t, dur, vx, vy }
         this.formationInfo = null; // { t, anchor, offset, pattern }
         this.shieldAlpha = 0;      // 保護オーラ用透明度 (0.0 - 1.0)
+
+        // Stage5Boss プラズマ・ドローン用 [NEW]
+        this.droneCd = 0;
+        this.rimLaserCd = 0; // [NEW] RIM LASER 用クールダウン
+        this.isDrone = false;
+        this.isRimLaser = false; // [NEW] RIM LASER フラグ
+        this.dischargeTimer = 0; // 放電演出用タイマー
+
+        // RIM_LASER 状態
+        this.rimState = 'RIM_RUN'; // 'RIM_RUN', 'DIVE_WARN', 'DIVE'
+        this.rimSide = 0; // 0: 上, 1: 右, 2: 下, 3: 左
+        this.rimT = 0; // 周回進捗 (0.0 - 1.0)
+        this.rimTargetT = 0; // 突入予定位置
+        this.rimWarnTimer = 0;
     }
 
     init(x, y, targetX, targetY, type = CONSTANTS.ENEMY_TYPES.NORMAL, hpMul = 1.0, speedMul = 1.0, affinity = CONSTANTS.ENEMY_AFFINITIES.SWARM) {
@@ -117,7 +131,20 @@ export class Enemy {
         this.searchTimer = 0;
         this.revengeState = 0;
         this.revengeTimer = 0;
-        this.isBoss = false; // initBoss で上書きされる
+        this.isBoss = false;
+        this.ownerId = null;
+        this.isDrone = false;
+        this.isRimLaser = false;
+        this.dischargeTimer = 0;
+        this.rimState = 'RIM_RUN';
+        this.rimT = 0;
+        this.rimWarnTimer = 0;
+        this.droneCd = 0;
+        this.rimLaserCd = 0;
+
+        if (this.isRimLaser || this.isDrone) {
+            console.warn(`[POOL BUG] Enemy re-init with stale flags! Type: ${type}, ID: ${this.id}, isRimLaser: ${this.isRimLaser}, isDrone: ${this.isDrone}`);
+        }
 
         // タイプ別の基本速度倍率 (定数ファイルに個別定義がない場合の等倍フォールバック)
         let typeSpeedMul = 1.0;
@@ -178,6 +205,10 @@ export class Enemy {
         // configureMovement後にcurrentSpeedを設定（configureMovement内でbaseSpeedが変更される場合があるため）
         this.currentSpeed = this.baseSpeed;
         this.movementPhase = Math.random() * Math.PI * 2;
+
+        if (this.type === CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5) {
+            this.hasDirection = true;
+        }
 
         this.renderX = x;
         this.renderY = y;
@@ -251,6 +282,7 @@ export class Enemy {
             CONSTANTS.ENEMY_TYPES.ATTRACTOR,
             CONSTANTS.ENEMY_TYPES.BARRIER_PAIR,
             CONSTANTS.ENEMY_TYPES.ASSAULT,
+            CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5, // [NEW] 方向制御を有効化
             CONSTANTS.ENEMY_TYPES.NORMAL
         ];
         this.hasDirection = directionalTypes.includes(this.type);
@@ -264,14 +296,59 @@ export class Enemy {
         this.radius = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL;
         this.onSummon = onSummon;
         this.lastSummonTime = Date.now();
+        this.droneCd = CONSTANTS.PLASMA_DRONE_STAGE5.intervalMs; // 初期クールダウン
+    }
+
+    initPlasmaDrone(x, y, targetX, targetY, ownerId) {
+        console.log(`[SPAWN] PlasmaDrone Init. Owner: ${ownerId}`);
+        const cfg = CONSTANTS.PLASMA_DRONE_STAGE5;
+        this.init(x, y, targetX, targetY, CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5, 1.0, 1.0);
+        this.isDrone = true;
+        this.maxHp = cfg.maxHp;
+        this.hp = this.maxHp;
+        this.ownerId = ownerId;
+        this.lifespan = cfg.lifespanMs / 1000;
+        this.isMinion = true; // フェーズ進行に影響させない
+        this.currentSpeed = cfg.v0;
+        this.angle = Math.atan2(targetY - y, targetX - x);
+        this.vx = Math.cos(this.angle) * this.currentSpeed;
+        this.ownerId = ownerId;
+        this.hp = 1; // 1固定
+        this.maxHp = 1;
+        this.isMinion = true;
+        this.lifespan = 8;
+
+        // 挙動パターンのランダム割り当て
+        const patterns = ['straight', 'sine', 'zigzag'];
+        this.dronePattern = patterns[Math.floor(Math.random() * patterns.length)];
+        this.patternSeed = Math.random() * Math.PI * 2;
+        this.phase = 0;
+    }
+
+    initRimLaser(x, y, ownerId) {
+        console.log(`[SPAWN] RimLaser Init. Owner: ${ownerId}`);
+        const cfg = CONSTANTS.RIM_LASER_STAGE5;
+        this.init(x, y, x, y, CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5);
+        this.isRimLaser = true;
+        this.ownerId = ownerId;
+        this.hp = cfg.maxHp || 2;
+        this.maxHp = this.hp;
+        this.isMinion = true;
+        this.lifespan = 12; // 念のための寿命
+
+        this.rimState = 'RIM_RUN';
+        this.rimSide = Math.floor(Math.random() * 4); // どの辺から周回を始めるか
+        this.rimT = Math.random();
+        this.rimWarnTimer = 0;
+        this.rimTargetT = 0.2 + Math.random() * 0.6; // その辺の 20%-80% の位置でダイブ
     }
 
     applyKnockback(vx, vy, power) {
         // NaN Guard
         if (isNaN(vx) || isNaN(vy) || isNaN(power)) return;
 
-        // ボスは完全不動
-        if (this.isBoss) return;
+        // ボスおよびドローン、リムレーザーは不動
+        if (this.isBoss || this.isDrone || this.isRimLaser) return;
 
         // エリート耐性の適用
         let actualPower = power;
@@ -435,6 +512,9 @@ export class Enemy {
                 this.orbitRadius = 240;
                 this.turnRate = 0.05;
                 break;
+            case CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5:
+                this.movementMode = 'PLASMA_DRONE';
+                break;
             default:
                 this.movementMode = 'DIRECT';
                 break;
@@ -538,6 +618,16 @@ export class Enemy {
         this.x += (this.vx * freezeMul * this.speedMultiplier + this.knockVX) * dtMod;
         this.y += (this.vy * freezeMul * this.speedMultiplier + this.knockVY) * dtMod;
 
+        // 放電演出用タイマーの進行
+        if (this.dischargeTimer > 0) {
+            this.dischargeTimer -= dt / 1000;
+            if (this.dischargeTimer <= 0) {
+                this.dischargeTimer = 0;
+                this.active = false;
+                this.destroy('DISCHARGE_DONE', this.game); // 演出終了後に消滅
+            }
+        }
+
         // ノックバック減衰
         const damp = Math.pow(CONSTANTS.ENEMY_KNOCKBACK_DAMP, dtMod);
         this.knockVX *= damp;
@@ -561,27 +651,74 @@ export class Enemy {
             }
         }
 
-        // ボス召喚
+        // ボス更新
         if (this.isBoss && this.onSummon) {
             const hpPercent = this.hp / this.maxHp;
-            const interval = hpPercent <= 0.5 ? CONSTANTS.BOSS_SUMMON_INTERVAL_ENRAGED_MS : CONSTANTS.BOSS_SUMMON_INTERVAL_NORMAL_MS;
+            let interval = hpPercent <= 0.5 ? CONSTANTS.BOSS_SUMMON_INTERVAL_ENRAGED_MS : CONSTANTS.BOSS_SUMMON_INTERVAL_NORMAL_MS;
+
+            // Stage5Boss (bossIndex === 4) の召喚間隔を調整
+            if (this.bossIndex === 4) {
+                interval *= CONSTANTS.BOSS_STAGE5_SUMMON_INTERVAL_MUL;
+            }
+
             if (now - this.lastSummonTime > interval) {
-                this.onSummon(this.x, this.y);
+                // コールバック経由で main.js の handleBossSummon を呼ぶ
+                // main.js 側で bossIndex を見て数制限を行う
+                this.onSummon(this.x, this.y, this);
                 this.lastSummonTime = now;
             }
-        }
 
-        // Minion寿命チェック
-        if (this.isMinion && this.lifespan > 0) {
-            this.lifespan -= dt / 1000;
-            if (this.lifespan <= 0) {
-                // 時間切れで自然消滅
-                this.destroy('LIFETIME', this.game);
+            // プラズマ・ドローン ＆ RIM LASER 発射ロジック (Stage5Boss & Stage10Boss 共有)
+            if (this.bossIndex === 4 || this.bossIndex === 9) {
+                // ドローン
+                this.droneCd -= dt;
+                if (this.droneCd <= 0) {
+                    if (options.spawnPlasmaDrone) {
+                        if (options.spawnPlasmaDrone(this)) {
+                            // Stage 10 でも Stage 5 の定数を共有（同等の動き）
+                            this.droneCd = CONSTANTS.PLASMA_DRONE_STAGE5.intervalMs;
+                        } else {
+                            this.droneCd = 500;
+                        }
+                    }
+                }
+
+                // RIM LASER
+                this.rimLaserCd -= dt;
+                if (this.rimLaserCd <= 0) {
+                    if (options.spawnRimLaser) {
+                        if (options.spawnRimLaser(this)) {
+                            this.rimLaserCd = CONSTANTS.RIM_LASER_STAGE5.intervalMs;
+                        } else {
+                            this.rimLaserCd = 500;
+                        }
+                    }
+                }
             }
         }
 
-        // 画面外チェック (main.js 側で統一管理するため不要)
-        // this.checkBounds();
+        // Minion寿命 & 距離チェック
+        if (this.isMinion) {
+            // 寿命チェック
+            if (this.lifespan > 0) {
+                this.lifespan -= dt / 1000;
+                if (this.lifespan <= 0) {
+                    this.destroy('LIFETIME', this.game);
+                }
+            }
+            // 距離チェック (迷子防止: プレイヤーから1000px以上離れたら対処)
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 1000) {
+                if (this.isRimLaser) {
+                    // RIM LASER は削除せず、プレイヤーへ向けて再突進させる
+                    this.rimState = 'DIVE';
+                    this.angle = Math.atan2(dy, dx);
+                } else {
+                    // その他のミニオンは遠すぎたら削除
+                    this.destroy('OOB', this.game);
+                }
+            }
+        }
     }
 
     updateSpeed(dist, options) {
@@ -1457,6 +1594,109 @@ export class Enemy {
                 this.vy = Math.sin(this.angle) * this.currentSpeed;
                 break;
 
+                break;
+
+            case 'PLASMA_DRONE':
+                // プラズマ・ドローン専用ロジック: 多様な誘導パターン、特定距離で加速、至近距離で放電
+                const cfgPD = CONSTANTS.PLASMA_DRONE_STAGE5;
+                this.phase += dtMod * 0.05;
+
+                // 1. 各パターンに応じたターゲット角度のオフセット計算
+                let angleOffset = 0;
+                if (this.dronePattern === 'sine') {
+                    // ゆらゆらとサインカーブで接近
+                    angleOffset = Math.sin(this.phase * 1.5 + this.patternSeed) * 0.8;
+                } else if (this.dronePattern === 'zigzag') {
+                    // カクカクとジグザグに接近
+                    angleOffset = (Math.sin(this.phase * 2.5 + this.patternSeed) > 0 ? 0.7 : -0.7);
+                }
+
+                // 2. 旋回制限付き誘導 (オフセット適用)
+                this.turnTowards(targetAngle + angleOffset, (cfgPD.turnRate || 0.02) * dtMod);
+
+                // 3. 加速ロジック: 一定距離以内に入ると最大速度まで加速
+                // ※加速中は直進性が強まるようにオフセットの影響を減らす
+                const accelRange = (cfgPD.accelDist || 250);
+                if (dist < accelRange) {
+                    this.currentSpeed = Math.min(cfgPD.vMax, this.currentSpeed + 0.05 * dtMod);
+                    // 接近するほど「獲物を捉えた」ように補正を弱める
+                    const proximityMul = Math.max(0, (dist - 100) / (accelRange - 100));
+                    this.angle += angleOffset * proximityMul * 0.02;
+                }
+
+                this.vx = Math.cos(this.angle) * this.currentSpeed;
+                this.vy = Math.sin(this.angle) * this.currentSpeed;
+
+                // 4. 放電(DISCHARGE)判定: 至近距離で放電して消滅
+                if (dist < (cfgPD.dischargeDist || 60)) {
+                    this.destroy('DISCHARGE', this.game);
+                }
+                break;
+
+            case 'RIM_LASER':
+                // RIM LASER 専用移動ロジック (周回 -> 警告 -> ダイブ)
+                const rimCfg = CONSTANTS.RIM_LASER_STAGE5;
+                const margin = 30; // 画面端からの距離
+                const w = CONSTANTS.TARGET_WIDTH - margin * 2;
+                const h = CONSTANTS.TARGET_HEIGHT - margin * 2;
+
+                if (this.rimState === 'RIM_RUN') {
+                    // 1. 周回移動 (RIM_RUN): 画面端を矩形に回る
+                    this.rimT += (rimCfg.speed / 1000) * dtMod;
+                    if (this.rimT >= 1.0) {
+                        this.rimT -= 1.0;
+                        this.rimSide = (this.rimSide + 1) % 4; // 次の辺へ
+
+                        // ダイブ判定: 規定位置を通過したらダイブへ移行
+                        if (Math.random() < 0.3) { // 30%の確率でその辺でダイブ決定
+                            this.rimState = 'DIVE_WARN';
+                            this.rimWarnTimer = rimCfg.warnDuration || 0.25;
+                            this.vx = 0;
+                            this.vy = 0;
+                        }
+                    }
+
+                    // 辺ごとの位置計算
+                    let tx, ty;
+                    if (this.rimSide === 0) { // 上
+                        tx = margin + this.rimT * w;
+                        ty = margin;
+                    } else if (this.rimSide === 1) { // 右
+                        tx = margin + w;
+                        ty = margin + this.rimT * h;
+                    } else if (this.rimSide === 2) { // 下
+                        tx = margin + w - this.rimT * w;
+                        ty = margin + h;
+                    } else { // 左
+                        tx = margin;
+                        ty = margin + h - this.rimT * h;
+                    }
+
+                    // 目標地点へ向かう
+                    const angleToTarget = Math.atan2(ty - this.y, tx - this.x);
+                    this.angle = angleToTarget;
+                    this.vx = Math.cos(this.angle) * rimCfg.speed;
+                    this.vy = Math.sin(this.angle) * rimCfg.speed;
+
+                } else if (this.rimState === 'DIVE_WARN') {
+                    // 2. 侵入直前予告 (DIVE_WARN): その場で停止
+                    this.rimWarnTimer -= dt / 1000;
+                    this.vx = 0;
+                    this.vy = 0;
+                    // プレイヤーの方を向く
+                    this.angle = targetAngle;
+
+                    if (this.rimWarnTimer <= 0) {
+                        this.rimState = 'DIVE';
+                        if (this.game && this.game.audio) this.game.audio.play('shoot', { variation: 0.2, pitch: 1.5 });
+                    }
+                } else if (this.rimState === 'DIVE') {
+                    // 3. 直線侵入 (DIVE): 高速突撃
+                    this.vx = Math.cos(this.angle) * rimCfg.diveSpeed;
+                    this.vy = Math.sin(this.angle) * rimCfg.diveSpeed;
+                }
+                break;
+
             default:
                 // Fallback DIRECT
                 this.vx = Math.cos(targetAngle) * this.currentSpeed;
@@ -1633,9 +1873,122 @@ export class Enemy {
                 */
             } else {
                 // アセットがない場合：従来の図形描画
+                if (Math.random() < 0.01) console.warn(`[RENDER] Falling back to procedural drawing for type: ${this.type}`);
                 switch (this.type) {
                     case CONSTANTS.ENEMY_TYPES.NORMAL:
                         this.drawShape(ctx, 3, '#ff0000'); // Triangle
+                        break;
+                    case CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5:
+                        // プラズマ・ドローンの独自図形描画: コア + リング
+                        const sizePD = 20;
+
+                        // 1. 放電エフェクト (dischargeTimer 進行時)
+                        if (this.dischargeTimer > 0) {
+                            const progress = 1.0 - (this.dischargeTimer / 0.5);
+                            const r = progress * CONSTANTS.PLASMA_DRONE_STAGE5.dischargeRadius;
+                            ctx.save();
+                            ctx.strokeStyle = `rgba(0, 255, 255, ${1.0 - progress})`;
+                            ctx.lineWidth = 4;
+                            ctx.shadowBlur = 30;
+                            ctx.shadowColor = "#0ff";
+                            ctx.globalCompositeOperation = 'lighter';
+                            ctx.beginPath();
+                            ctx.arc(0, 0, r, 0, Math.PI * 2);
+                            ctx.stroke();
+
+                            // スパーク演出
+                            if (Math.random() < 0.5) {
+                                ctx.rotate(Math.random() * Math.PI * 2);
+                                ctx.strokeStyle = "#fff";
+                                ctx.lineWidth = 2;
+                                ctx.beginPath();
+                                ctx.moveTo(r * 0.8, 0);
+                                ctx.lineTo(r * 1.1, 0);
+                                ctx.stroke();
+                            }
+                            ctx.restore();
+                        }
+
+                        // 2. 本体コア (Glowing Core)
+                        ctx.save();
+                        const coreGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, 10);
+                        coreGlow.addColorStop(0, "#fff");
+                        coreGlow.addColorStop(0.4, "#0ff");
+                        coreGlow.addColorStop(1, "rgba(0, 150, 255, 0)");
+                        ctx.globalCompositeOperation = 'lighter';
+                        ctx.shadowBlur = 20;
+                        ctx.shadowColor = "#0ff";
+                        ctx.fillStyle = coreGlow;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+
+                        // 3. 外部リング (Rotating Ring) - 削除
+
+                        // 4. トレイル（微弱な粒子）
+                        if (Math.random() < 0.2) {
+                            Effects.createSpark(this.x, this.y, '#00ffff');
+                        }
+                        break;
+
+                    case CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5:
+                        // RIM LASER の描画: 発光する矩形（光弾）
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+
+                        // 1. 警告エフェクト
+                        if (this.rimState === 'DIVE_WARN') {
+                            const p = 1.0 - (this.rimWarnTimer / 0.25);
+                            ctx.shadowBlur = 40;
+                            ctx.shadowColor = "#fff";
+                            ctx.strokeStyle = `rgba(255, 255, 255, ${p})`;
+                            ctx.lineWidth = 2 + p * 8;
+                            ctx.beginPath();
+                            ctx.strokeRect(-15, -10, 30, 20);
+                        }
+
+                        // 2. 本体
+                        // [FIX] 進行方向に平行な（aligned）鋭いライン形状
+                        // ctx.rotate(rot + PI/2) により、ローカルY軸が進行方向
+                        ctx.shadowBlur = 25;
+                        ctx.shadowColor = "#0ff";
+                        ctx.strokeStyle = "#0ff";
+                        ctx.lineWidth = 2;
+
+                        ctx.beginPath();
+                        ctx.moveTo(0, -18);
+                        ctx.lineTo(0, 18);
+                        ctx.stroke();
+
+                        // 3. コア（光る芯）
+                        ctx.fillStyle = "#fff";
+                        ctx.fillRect(-1, -15, 2, 30);
+
+                        // 4. 電撃エフェクト (Electrical Discharge)
+                        // [FIX] 羽のようなトレイルを廃止し、本体周囲にジグザグの電撃を走らせる
+                        const now = Date.now();
+                        ctx.strokeStyle = "#fff";
+                        ctx.lineWidth = 1;
+                        ctx.shadowBlur = 10;
+                        ctx.shadowColor = "#0ff";
+
+                        for (let i = 0; i < 2; i++) {
+                            ctx.beginPath();
+                            let startY = -18;
+                            ctx.moveTo((Math.random() - 0.5) * 6, startY);
+                            for (let y = -10; y <= 18; y += 8) {
+                                ctx.lineTo((Math.random() - 0.5) * 10, y);
+                            }
+                            ctx.stroke();
+                        }
+
+                        // トレイル（微かな粒子のみ、頻度を大幅に下げるか廃止）
+                        if (Math.random() < 0.05) {
+                            Effects.createSpark(this.x, this.y, '#00ffff');
+                        }
+
+                        ctx.restore();
                         break;
                     case CONSTANTS.ENEMY_TYPES.ZIGZAG:
                         this.drawShape(ctx, 4, '#ff00ff'); // Square
@@ -2201,14 +2554,64 @@ export class Enemy {
 
     destroy(reason = 'damage', game) {
         if (!this.active) return;
+
+        // ドローンの放電(DISCHARGE)時は即座に active = false にせず、タイマーを回す
+        if (reason === 'DISCHARGE') {
+            if (this.dischargeTimer === 0) {
+                this.dischargeTimer = 0.5; // 0.5秒の演出時間
+
+                // [FIX] 演出待ちで return する前に、ダメージ判定を即座に行う
+                if (game && game.player) {
+                    const dx = game.player.x - this.x;
+                    const dy = game.player.y - this.y;
+                    const d = Math.sqrt(dx * dx + dy * dy);
+                    if (d < CONSTANTS.PLASMA_DRONE_STAGE5.dischargeRadius) {
+                        game.player.takeDamage(CONSTANTS.PLASMA_DRONE_STAGE5.damage);
+                    }
+                }
+
+                if (this.game && this.game.audio) this.game.audio.play('shoot', { variation: 0.8, pitch: 2.0 });
+            }
+            return; // 演出待ち
+        }
+
         this.active = false;
         this.deactivateReason = reason;
         this.destroyReason = reason;
 
         // 破壊エフェクト
-        if (reason === 'damage' || reason === 'bullet' || reason === 'bomb' || reason === 'nuke' || reason === 'BULLET' || reason === 'BARRIER_DAMAGE' || reason === 'LIFETIME') {
-            Effects.createExplosion(this.renderX, this.renderY, this.type === CONSTANTS.ENEMY_TYPES.BOSS ? 200 : 50);
-            game.audio.play('explosion', { variation: 0.3, priority: 'medium' });
+        if (reason === 'damage' || reason === 'bullet' || reason === 'bomb' || reason === 'nuke' || reason === 'BULLET' || reason === 'BARRIER_DAMAGE' || reason === 'LIFETIME' || reason === 'DETONATE' || reason === 'DISCHARGE') {
+            const isDischarge = (reason === 'DISCHARGE');
+            const splashRadius = (this.isDrone) ? CONSTANTS.PLASMA_DRONE_STAGE5.dischargeRadius : (this.type === CONSTANTS.ENEMY_TYPES.BOSS ? 200 : 50);
+
+            if (reason === 'DETONATE' || reason === 'DISCHARGE') {
+                // 爆発/放電ヒット判定 (プレイヤーのみ)
+                if (game && game.player) {
+                    const dx = game.player.x - this.x;
+                    const dy = game.player.y - this.y;
+                    const d = Math.sqrt(dx * dx + dy * dy);
+                    if (d < splashRadius) {
+                        const dmg = this.isDrone ? CONSTANTS.PLASMA_DRONE_STAGE5.damage : (CONSTANTS.MISSILE_STAGE5.damage || 1);
+                        game.player.takeDamage(dmg);
+                    }
+                }
+            }
+
+            // 演出
+            if (this.isDrone) {
+                // ドローン専用：スパーク円
+                Effects.createExplosion(this.x, this.y, splashRadius * 0.8, '#00ffff');
+                for (let i = 0; i < 15; i++) {
+                    Effects.createSpark(this.x, this.y, '#00ffff');
+                }
+            } else {
+                Effects.createExplosion(this.x, this.y, splashRadius, this.isBoss ? '#ffaa00' : '#ff5500');
+                if (this.isBoss) {
+                    for (let i = 0; i < 20; i++) {
+                        Effects.createSpark(this.x, this.y, '#ffaa00');
+                    }
+                }
+            }
         }
 
         // スコア・統計加算 (正当な撃破時のみ)
@@ -2226,7 +2629,7 @@ export class Enemy {
         }
 
         // ドロップ処理
-        if (reason !== 'glitch' && reason !== 'GLITCH' && reason !== 'return' && reason !== 'LIFETIME' && reason !== 'OOB') {
+        if (reason !== 'glitch' && reason !== 'GLITCH' && reason !== 'return' && reason !== 'LIFETIME' && reason !== 'OOB' && !this.isDrone && !this.isRimLaser) {
             // GOLD (100% drop)
             // Stage1 = 0, Stage2 = 1 ...
             // Debug Stage (999) -> Level 0 (x1.0)

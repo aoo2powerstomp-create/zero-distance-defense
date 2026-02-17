@@ -51,12 +51,13 @@ export const CONSTANTS = {
     BOSS_SIZE_MUL: 6, // 10 -> 6 (当たり判定縮小)
     BOSS_KB_RESIST: 1.0, // 100%軽減 (ノックバック無効)
     BOSS_SPEED_MUL: 0.6,
-    BOSS_SUMMON_INTERVAL_NORMAL_MS: 4000,
-    BOSS_SUMMON_INTERVAL_ENRAGED_MS: 2000,
-    BOSS_SUMMON_INTERVAL_ENRAGED_MS: 2000,
+    BOSS_SUMMON_INTERVAL_NORMAL_MS: 3000,
+    BOSS_SUMMON_INTERVAL_ENRAGED_MS: 1500,
+    BOSS_SUMMON_COUNT: 2,
+    BOSS_STAGE5_SUMMON_INTERVAL_MUL: 2.5, // [NEW] Stage5Bossの召喚間隔を2.5倍に延ばす
+    BOSS_STAGE5_SUMMON_MAX_MINIONS: 4,    // [NEW] Stage5Bossの同時雑魚存在上限
     BOSS_RETREAT_DISTANCE: 220,
     BOSS_STOP_DISTANCE: 280,
-    BOSS_SUMMON_COUNT: 3,
 
     // 画像アセット定義 (キー: 相対パス)
     // 実際にファイルが存在しない場合は既存の図形描画にフォールバックします
@@ -274,19 +275,22 @@ export const CONSTANTS = {
         ZIGZAG: 'B',
         EVASIVE: 'C',
         ELITE: 'D',
-        ASSAULT: 'E', // 突撃型
-        SHIELDER: 'F', // オーラ型バリア
-        GUARDIAN: 'G', // 全画面バフ型
-        DASHER: 'H',   // 突進型
-        ORBITER: 'I',  // 旋回型
-        SPLITTER: 'J', // 分裂型
-        SPLITTER_CHILD: 'K', // 分裂後の小型
-        OBSERVER: 'L',       // 観察者
-        FLANKER: 'M',        // 回り込み型 (Purple)
-        BARRIER_PAIR: 'N',   // バリアペア (Cyan)
-        TRICKSTER: 'O',      // 翻弄小型 (Yellow)
-        ATTRACTOR: 'P',      // 密集誘導体 (Green)
-        REFLECTOR: 'Q'        // 反射殻 (Red)
+        ASSAULT: 'E',
+        SHIELDER: 'F',
+        GUARDIAN: 'G',
+        DASHER: 'H',
+        ORBITER: 'I',
+        FLANKER: 'J',
+        BARRIER_PAIR: 'K',
+        TRICKSTER: 'L',
+        ATTRACTOR: 'M',
+        REFLECTOR: 'N',
+        OBSERVER: 'O',
+        SPLITTER: 'S1',
+        SPLITTER_CHILD: 'S2',
+        ASSAULT_CURVE: 'AC',
+        PLASMA_DRONE_STAGE5: 'PD5', // [NEW] 世界観に合わせた追尾プラズマ・ドローン
+        RIM_LASER_STAGE5: 'RL5'
     },
 
     // --- ACTIVE LAYER (Balance Test) ---
@@ -436,6 +440,28 @@ export const CONSTANTS = {
         spawnRate: 0.07,
         unlockStage: 8 // Stage 8
     },
+    PLASMA_DRONE_STAGE5: {
+        v0: 1.5,            // 初速 (90px/s)
+        vMax: 2.8,          // 最大速度 (170px/s)
+        turnRate: 0.026,    // 旋回制限 (1.6rad/s)
+        dischargeDist: 65,  // 放電開始距離
+        dischargeRadius: 80,// 放電半径
+        accelDist: 220,     // 加速開始距離
+        maxHp: 1,           // 耐久力 (1固定)
+        intervalMs: 1200,   // 発射間隔 (短縮)
+        maxActive: 6,       // 同時存在上限 (増加)
+        lifespanMs: 8000,   // 最大寿命
+        damage: 0.03        // 放電ダメージ (3% HP)
+    },
+    RIM_LASER_STAGE5: {
+        maxHp: 1,           // 耐久力 (1固定)
+        speed: 3.5,         // 外周移動速度
+        diveSpeed: 10.0,    // プレイヤーへの突進速度
+        intervalMs: 270,    // 発射間隔 (さらに3倍)
+        maxActive: 36,      // 同時存在上限 (増加)
+        damage: 0.01,       // 突進ダメージ (1% HP)
+        warnDuration: 0.25  // 侵入予告時間（秒）
+    },
 
     // --- 復活管理システム ---
     // 現在の安定セット（変更しない・基本抽選枠）
@@ -448,13 +474,13 @@ export const CONSTANTS = {
         'G', // GUARDIAN
         'H', // DASHER
         'I', // ORBITER
-        'J', // SPLITTER
-        'L', // OBSERVER
-        'M', // FLANKER
-        'N', // BARRIER_PAIR
-        'O', // TRICKSTER
-        'P', // ATTRACTOR
-        'Q'  // REFLECTOR
+        'J', // FLANKER
+        'N', // REFLECTOR
+        'L', // TRICKSTER
+        'M', // ATTRACTOR
+        'O', // OBSERVER
+        'K', // BARRIER_PAIR
+        'S1' // SPLITTER
     ],
 
     // 復活エネミー固有のクールダウン（ミリ秒）
@@ -862,6 +888,7 @@ export const CONSTANTS = {
         'N': '【BARRIER_PAIR】連結型。2体1組で現れ、その間に破壊不可能なレーザーバリアを張ります。',
         'O': '【TRICKSTER】幻惑型。テレポートや急な方向転換でプレイヤーを翻弄します。',
         'P': '【ATTRACTOR】追加型。周囲の敵を自身に引き寄せ、盾のような役割を果たします。',
-        'Q': '【REFLECTOR】反射型。一部の攻撃を弾き返したり、高い防御力を持ちます。'
+        'Q': '【REFLECTOR】反射型。一部の攻撃を弾き返したり、高い防御力を持ちます。',
+        'PD5': '【PLASMA DRONE】Stage5Bossが放つ追尾ドローン。低速だが高い誘導性能を持ち、接近すると加速・放電します。撃ち落とし可能。'
     }
 };

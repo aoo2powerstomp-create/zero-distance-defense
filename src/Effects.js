@@ -97,7 +97,8 @@ export class Effects {
         }
     }
 
-    static createExplosion(x, y, radius) {
+    static createExplosion(x, y, radius, color = '#ff4400') {
+        const particleColor = color === '#ff4400' ? '#ffaa00' : color;
         // 巨大リング
         this.list.push({
             type: 'ring',
@@ -106,7 +107,10 @@ export class Effects {
             targetRadius: radius,
             life: 0.4,
             maxLife: 0.4,
-            color: '#ff4400'
+            color: color,
+            shadowBlur: color === '#00ffff' ? 25 : 0,
+            shadowColor: color,
+            composite: color === '#00ffff' ? 'lighter' : 'source-over'
         });
 
         // 追加の白リング（衝撃波）
@@ -132,7 +136,10 @@ export class Effects {
                 size: 5 + Math.random() * 4,
                 life: 0.5,
                 maxLife: 0.5,
-                color: '#ffaa00'
+                color: particleColor,
+                shadowBlur: color === '#00ffff' ? 10 : 0,
+                shadowColor: color,
+                composite: color === '#00ffff' ? 'lighter' : 'source-over'
             });
         }
     }
@@ -190,7 +197,10 @@ export class Effects {
             maxLife: 0.15,
             color: color || '#fff',
             lines: 4,
-            angle: Math.random() * Math.PI
+            angle: Math.random() * Math.PI,
+            shadowBlur: (color === '#00ffff' || color === '#0ff') ? 15 : 0,
+            shadowColor: color,
+            composite: (color === '#00ffff' || color === '#0ff') ? 'lighter' : 'source-over'
         });
     }
 
@@ -290,6 +300,10 @@ export class Effects {
                 ctx.arc(e.x, e.y, e.radius * e.scale, 0, Math.PI * 2);
                 ctx.fill();
             } else if (e.type === 'spark') {
+                if (e.shadowBlur) {
+                    ctx.shadowBlur = e.shadowBlur * alpha;
+                    ctx.shadowColor = e.shadowColor;
+                }
                 for (let i = 0; i < e.lines; i++) {
                     const angle = e.angle + (Math.PI * 2 / e.lines) * i;
                     const rInner = e.radius * 0.3;
@@ -299,12 +313,23 @@ export class Effects {
                     ctx.lineTo(e.x + Math.cos(angle) * rOuter, e.y + Math.sin(angle) * rOuter);
                     ctx.stroke();
                 }
+                ctx.shadowBlur = 0;
             } else if (e.type === 'ring') {
                 ctx.beginPath();
                 ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+                if (e.shadowBlur) {
+                    ctx.shadowBlur = e.shadowBlur * alpha;
+                    ctx.shadowColor = e.shadowColor;
+                }
                 ctx.stroke();
+                ctx.shadowBlur = 0;
             } else if (e.type === 'particle') {
+                if (e.shadowBlur) {
+                    ctx.shadowBlur = e.shadowBlur * alpha;
+                    ctx.shadowColor = e.shadowColor;
+                }
                 ctx.fillRect(e.x - e.size / 2, e.y - e.size / 2, e.size, e.size);
+                ctx.shadowBlur = 0;
             } else if (e.type === 'line') {
                 ctx.lineWidth = e.width || 2;
                 ctx.beginPath();

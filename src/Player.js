@@ -169,27 +169,16 @@ export class Player {
 
         const damage = CONSTANTS.PLAYER_MAX_HP * ratio;
 
-        // デバッグステージでは体力を一時的に減らして、すぐ回復
+        // デバッグステージでは体力を一時的に減らす（視覚的演出用。実際の死亡は避ける）
         if (this.game && this.game.isDebugStage) {
-            // ダメージエフェクトは表示
             this.damageFlashTimer = 300;
+            const finalDamage = Math.min(this.hp - 1, damage); // 1残す
+            this.hp = Math.max(0, this.hp - finalDamage);
 
-            // HPを一時的に減らす（視覚的確認用）
-            this.hp = Math.max(0, this.hp - damage);
-
-            // ダメージ数値をポップアップ表示（整数）
             if (this.game.spawnDamageText) {
                 this.game.spawnDamageText(this.x, this.y - 30, `-${Math.round(damage)}`, "#ff4444");
             }
-
-            // 1秒後に回復
-            setTimeout(() => {
-                if (this.game && this.game.isDebugStage) {
-                    this.hp = CONSTANTS.PLAYER_MAX_HP;
-                }
-            }, 1000);
-
-            return; // 被弾カウントはしない
+            return;
         }
 
         this.hp = Math.max(0, this.hp - damage);
@@ -244,7 +233,13 @@ export class Player {
 
         // 自動回復
         const now = Date.now();
-        if (now - this.lastDamageTime > CONSTANTS.PLAYER_REGEN_STOP_MS) {
+        // デバッグステージでは即座に超高速回復
+        if (this.game && this.game.isDebugStage) {
+            if (this.hp < CONSTANTS.PLAYER_MAX_HP) {
+                const debugRegen = CONSTANTS.PLAYER_MAX_HP * 2.0 * (dt / 1000); // 0.5秒で全快する速度
+                this.hp = Math.min(CONSTANTS.PLAYER_MAX_HP, this.hp + debugRegen);
+            }
+        } else if (now - this.lastDamageTime > CONSTANTS.PLAYER_REGEN_STOP_MS) {
             const regen = CONSTANTS.PLAYER_MAX_HP * CONSTANTS.PLAYER_REGEN_PER_SEC * (dt / 1000);
             this.hp = Math.min(CONSTANTS.PLAYER_MAX_HP, this.hp + regen);
         }
