@@ -132,9 +132,10 @@ export const CONSTANTS = {
         SE_SHOT_RIFLE: { type: "se", file: "assets/sound/se/se_shot_rifle_01.mp3" },
         SE_SHOT_SHOTGUN: { type: "se", file: "assets/sound/se/se_shot_shotgun_01.mp3" },
 
-        SE_COUNTDOWN_PI: { type: "se", file: "assets/sound/se/se_shot_guard_02.mp3" },
-        SE_COUNTDOWN_PEEN: { type: "se", file: "assets/sound/se/se_barrier_01.mp3" },
-        SE_COIN: { type: "se", file: "assets/sound/se/se_shot_unknown_01.mp3" },
+        SE_COUNTDOWN_PI: { type: "se", file: "assets/sound/se/se_contdown_01.mp3" },
+        SE_COUNTDOWN_PEEN: { type: "se", file: "assets/sound/se/se_contdown_02.mp3" },
+        SE_COIN: { type: "se", file: "assets/sound/se/se_coin_01.mp3" },
+        SE_SELECT: { type: "se", file: "assets/sound/se/se_select_01.mp3" },
     },
 
     BGM_MAPPING: {
@@ -151,15 +152,23 @@ export const CONSTANTS = {
     },
 
     SOUND_DEFAULTS: {
-        BGM_VOLUME: 0.17,
+        BGM_VOLUME: 0.306,
         SE_VOLUME: 0.50,
     },
 
     SE_VOLUME_MULTIPLIER: {
         SE_SHOT_LASER: 0.3, // さらに引き下げ (0.85 -> 0.3)
-        SE_SHOT_RIFLE: 0.1, // 大幅に引き下げ (0.5 -> 0.1)
+        SE_SHOT_RIFLE: 0.36, // 3倍に強化 (0.12 -> 0.36)
         SE_SHOT_SHOTGUN: 0.7, // 少し引き下げ
         SE_COIN: 0.2, // コイン獲得音を引き下げ
+        SE_PULSE: 1.5, // パルス衝撃音 (+50%)
+    },
+
+    SE_POLYPHONY_LIMIT: {
+        SE_SHOT_LASER: 8,
+        SE_SHOT_RIFLE: 8,
+        SE_SHOT_SHOTGUN: 4,
+        DEFAULT: 3
     },
 
     // 武器タイプ
@@ -309,20 +318,20 @@ export const CONSTANTS = {
         A: 10,  // NORMAL
         B: 15,  // ZIGZAG
         C: 20,  // EVASIVE
-        D: 100, // ELITE (強敵は多め)
+        D: 100, // ELITE
         E: 15,  // ASSAULT
         F: 30,  // SHIELDER
-        G: 150, // GUARDIAN (準ボス級)
+        G: 150, // GUARDIAN
         H: 20,  // DASHER
         I: 25,  // ORBITER
-        J: 30,  // SPLITTER
-        K: 5,   // SPLITTER_CHILD (少なめ)
-        L: 40,  // OBSERVER
-        M: 20,  // FLANKER
-        N: 30,  // BARRIER_PAIR
-        O: 15,  // TRICKSTER
-        P: 25,  // ATTRACTOR
-        Q: 40   // REFLECTOR
+        J: 30,  // FLANKER
+        K: 30,  // BARRIER_PAIR
+        L: 15,  // TRICKSTER
+        M: 25,  // ATTRACTOR
+        N: 40,  // REFLECTOR
+        O: 40,  // OBSERVER
+        S1: 30, // SPLITTER
+        S2: 5   // SPLITTER_CHILD
     },
 
     // 敵タイプ
@@ -367,25 +376,19 @@ export const CONSTANTS = {
 
         C: 'HARASSER',  // EVASIVE
         H: 'HARASSER',  // DASHER
-        J: 'HARASSER',  // SPLITTER
-        K: 'HARASSER',  // SPLITTER_CHILD
-        M: 'HARASSER',  // TRICKSTER (FLANKER was used as M in previous snippet but let's check constants map)
-        N: 'HARASSER',  // FLANKER (Wait, let's verify map indices from file view)
+        J: 'HARASSER',  // FLANKER
+        L: 'HARASSER',  // TRICKSTER
+        S1: 'HARASSER', // SPLITTER
+        S2: 'HARASSER', // SPLITTER_CHILD
 
-        // Correction based on file view:
-        // FLANKER: 'M', BARRIER_PAIR: 'N', TRICKSTER: 'O', ATTRACTOR: 'P', REFLECTOR: 'Q'
-        // So:
-        M: 'HARASSER',  // FLANKER
-        O: 'HARASSER',  // TRICKSTER
-
-        N: 'CONTROLLER',// BARRIER_PAIR
+        K: 'CONTROLLER',// BARRIER_PAIR
         G: 'CONTROLLER',// GUARDIAN
 
-        P: 'DIRECTOR',  // ATTRACTOR
-        L: 'DIRECTOR',  // OBSERVER
+        M: 'DIRECTOR',  // ATTRACTOR
+        O: 'DIRECTOR',  // OBSERVER
 
         D: 'ELITE',     // ELITE
-        Q: 'ELITE'      // REFLECTOR
+        N: 'ELITE'      // REFLECTOR
     },
 
     // 役割ごとの同時出現上限 (厳格化)
@@ -513,13 +516,22 @@ export const CONSTANTS = {
         damage: 0.03        // 放電ダメージ (3% HP)
     },
     RIM_LASER_STAGE5: {
-        maxHp: 1,           // 耐久力 (1固定)
-        speed: 3.5,         // 外周移動速度
-        diveSpeed: 10.0,    // プレイヤーへの突進速度
-        intervalMs: 270,    // 発射間隔 (さらに3倍)
-        maxActive: 36,      // 同時存在上限 (増加)
+        maxHp: 2,           // 耐久力 (HP2)
+        speed: 4.5,         // 外周移動速度
+        diveSpeed: 11.0,    // プレイヤーへの突進速度
+        intervalMs: 1600,   // 発射間隔
+        maxActive: 24,      // 同時存在上限 (Update)
         damage: 0.01,       // 突進ダメージ (1% HP)
         warnDuration: 0.25  // 侵入予告時間（秒）
+    },
+    RIM_LASER_STAGE10: {
+        maxHp: 3,           // 10面は少し硬い
+        speed: 5.2,         // 外周早い
+        diveSpeed: 14.0,    // 突進も早い
+        intervalMs: 1200,   // 発射間隔も短い
+        maxActive: 32,      // 同時存在上限 (Stage 10)
+        damage: 0.01,
+        warnDuration: 0.22  // 猶予も少し短い
     },
 
     // --- 復活管理システム ---

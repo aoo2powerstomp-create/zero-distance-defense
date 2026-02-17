@@ -150,23 +150,26 @@ export class SpawnRulesRegistry {
         const scope = rule.scope;
 
         if (scope === 'alive') {
+            if (!ctx.aliveCounts) return 0;
             // Specialized checks
-            if (target === 'ATTRACTOR_RED') return ctx.attractorCounts.red;
-            if (target === 'ATTRACTOR_BLUE') return ctx.attractorCounts.blue;
-            if (target === 'REFLECTOR') return ctx.reflectorCount;
+            if (target === 'ATTRACTOR_RED') return (ctx.attractorCounts && ctx.attractorCounts.red) || 0;
+            if (target === 'ATTRACTOR_BLUE') return (ctx.attractorCounts && ctx.attractorCounts.blue) || 0;
+            if (target === 'REFLECTOR') return ctx.reflectorCount || 0;
             // Fallback for types
             return ctx.aliveCounts[target] || 0;
         }
 
         if (scope === 'perWave') {
-            // Should match TYPES.ATTRACTOR ('P')
-            if (target === 'P' || target === 'ATTRACTOR') return ctx.attractorWaveCount;
+            if (!ctx.waveCounts) return 0;
+            // Unified ID check (Attractor is 'M')
+            if (target === 'M' || target === 'ATTRACTOR') return ctx.attractorWaveCount || 0;
             return ctx.waveCounts[target] || 0;
         }
 
         if (scope === 'perTick') {
-            // Should match TYPES.ELITE ('D')
-            if (target === 'D' || target === 'ELITE') return ctx.eliteSpawnedThisTick;
+            if (!ctx.tickCounts) return 0;
+            // Unified ID check (Elite is 'D')
+            if (target === 'D' || target === 'ELITE') return ctx.eliteSpawnedThisTick || 0;
             return ctx.tickCounts[target] || 0;
         }
 

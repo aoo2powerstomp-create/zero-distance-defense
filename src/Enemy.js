@@ -337,11 +337,13 @@ export class Enemy {
         this.lifespan = 12; // 念のための寿命
 
         this.rimState = 'RIM_RUN';
-        this.rimSide = Math.floor(Math.random() * 4); // どの辺から周回を始めるか
-        this.rimT = Math.random();
+        // ボスから左右どちらかの画面端に向かわせるための初期設定
+        this.rimSide = (Math.random() < 0.5) ? 1 : 3; // 1:右, 3:左
+        this.rimT = 0; // 上端からスタート
         this.rimWarnTimer = 0;
-        this.rimTargetT = 0.2 + Math.random() * 0.6; // その辺の 20%-80% の位置でダイブ
-        this.diveCooldown = 1.0 + Math.random() * 1.5; // [NEW] ダイブの連射抑制
+        this.rimTargetT = 0.2 + Math.random() * 0.6;
+        this.diveCooldown = 1.0 + Math.random() * 1.5;
+        this.curveDir = (Math.random() < 0.5) ? 1 : -1;
     }
 
     applyKnockback(vx, vy, power) {
@@ -515,6 +517,9 @@ export class Enemy {
                 break;
             case CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5:
                 this.movementMode = 'PLASMA_DRONE';
+                break;
+            case CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5:
+                this.movementMode = 'RIM_LASER';
                 break;
             default:
                 this.movementMode = 'DIRECT';
@@ -1640,20 +1645,26 @@ export class Enemy {
 
             case 'RIM_LASER':
                 // RIM LASER 専用移動ロジック (周回 -> 警告 -> ダイブ)
-                const rimCfg = CONSTANTS.RIM_LASER_STAGE5;
-                const margin = 30; // 画面端からの距離
-                const w = CONSTANTS.TARGET_WIDTH - margin * 2;
-                const h = CONSTANTS.TARGET_HEIGHT - margin * 2;
+                const rimCfg = (this.game && this.game.currentStage >= 10) ? CONSTANTS.RIM_LASER_STAGE10 : CONSTANTS.RIM_LASER_STAGE5;
+                const margin = -80; // [RESTORED] 画面を大きく外周させる
+                const wEdge = CONSTANTS.TARGET_WIDTH - margin * 2;
+                const hEdge = CONSTANTS.TARGET_HEIGHT - margin * 2;
 
                 if (this.rimState === 'RIM_RUN') {
-                    // 1. 周回移動 (RIM_RUN): 画面端を矩形に回る
+                    // 1. 周回移動 (RIM_RUN): 画面端（外側）を矩形に回る [RESTORED]
+
                     this.rimT += (rimCfg.speed / 1000) * dtMod;
                     if (this.rimT >= 1.0) {
                         this.rimT -= 1.0;
-                        this.rimSide = (this.rimSide + 1) % 4; // 次の辺へ
+                        this.rimSide = (this.rimSide + 1) % 4;
+                    }
 
-                        // ダイブ判定: 規定位置を通過したらダイブへ移行
-                        if (this.diveCooldown <= 0 && Math.random() < 0.3) { // [FIX] クールダウン中ならダイブしない
+                    // ダイブ判定
+                    if (this.diveCooldown > 0) {
+                        this.diveCooldown -= dt / 1000;
+                    } else if (Math.random() < 0.04) {
+                        // 上端(0)以外からダイブするように制限
+                        if (this.rimSide !== 0) {
                             this.rimState = 'DIVE_WARN';
                             this.rimWarnTimer = rimCfg.warnDuration || 0.25;
                             this.vx = 0;
@@ -1661,29 +1672,27 @@ export class Enemy {
                         }
                     }
 
-                    if (this.diveCooldown > 0) this.diveCooldown -= dt / 1000;
-
-                    // 辺ごとの位置計算
                     let tx, ty;
                     if (this.rimSide === 0) { // 上
-                        tx = margin + this.rimT * w;
+                        tx = margin + this.rimT * wEdge;
                         ty = margin;
                     } else if (this.rimSide === 1) { // 右
-                        tx = margin + w;
-                        ty = margin + this.rimT * h;
+                        tx = margin + wEdge;
+                        ty = margin + this.rimT * hEdge;
                     } else if (this.rimSide === 2) { // 下
-                        tx = margin + w - this.rimT * w;
-                        ty = margin + h;
+                        tx = margin + wEdge - this.rimT * wEdge;
+                        ty = margin + hEdge;
                     } else { // 左
                         tx = margin;
-                        ty = margin + h - this.rimT * h;
+                        ty = margin + hEdge - this.rimT * hEdge;
                     }
 
-                    // 目標地点へ向かう
                     const angleToTarget = Math.atan2(ty - this.y, tx - this.x);
                     this.angle = angleToTarget;
-                    this.vx = Math.cos(this.angle) * rimCfg.speed;
-                    this.vy = Math.sin(this.angle) * rimCfg.speed;
+                    // ボス近傍は離脱を早める
+                    const spd = (dist < 150) ? rimCfg.speed * 2.5 : rimCfg.speed;
+                    this.vx = Math.cos(this.angle) * spd;
+                    this.vy = Math.sin(this.angle) * spd;
 
                 } else if (this.rimState === 'DIVE_WARN') {
                     // 2. 侵入直前予告 (DIVE_WARN): その場で停止
@@ -1698,7 +1707,19 @@ export class Enemy {
                         if (this.game && this.game.audio) this.game.audio.playSe('SE_SHOT_RIFLE', { variation: 0.2, pitch: 1.5 });
                     }
                 } else if (this.rimState === 'DIVE') {
-                    // 3. 直線侵入 (DIVE): 高速突撃
+                    // 3. 弧状突進 (DIVE): [RESTORED] 大きなカーブを描いてプレイヤーを追い詰める
+                    if (this.curveDir === undefined) {
+                        this.curveDir = (this.id % 2 === 0) ? 1 : -1;
+                    }
+
+                    // 距離に応じたカーブ（遠いほど膨らむ）
+                    const curveIntensity = Math.max(0.15, Math.min(1.0, dist / 450));
+                    const baseOffset = (Math.PI / 180) * 80; // 最大80度 (よりダイナミックに)
+                    const curveOffset = baseOffset * curveIntensity * this.curveDir;
+
+                    const finalTarget = targetAngle + curveOffset;
+                    this.turnTowards(finalTarget, 0.18 * dtMod); // 旋回性能を少し向上
+
                     this.vx = Math.cos(this.angle) * rimCfg.diveSpeed;
                     this.vy = Math.sin(this.angle) * rimCfg.diveSpeed;
                 }
@@ -1951,12 +1972,20 @@ export class Enemy {
                         // 1. 警告エフェクト
                         if (this.rimState === 'DIVE_WARN') {
                             const p = 1.0 - (this.rimWarnTimer / 0.25);
+                            ctx.save();
+                            // もし画面外にいる場合は、画面端（プレイエリア内）に警告枠を出す
+                            const screenMargin = 20;
+                            const drawX = Math.max(-this.renderX + screenMargin, Math.min(CONSTANTS.TARGET_WIDTH - this.renderX - screenMargin, 0));
+                            const drawY = Math.max(-this.renderY + screenMargin, Math.min(CONSTANTS.TARGET_HEIGHT - this.renderY - screenMargin, 0));
+
+                            ctx.translate(drawX, drawY);
                             ctx.shadowBlur = 40;
                             ctx.shadowColor = "#fff";
                             ctx.strokeStyle = `rgba(255, 255, 255, ${p})`;
                             ctx.lineWidth = 2 + p * 8;
                             ctx.beginPath();
-                            ctx.strokeRect(-15, -10, 30, 20);
+                            ctx.strokeRect(-20, -15, 40, 30);
+                            ctx.restore();
                         }
 
                         // 2. 本体

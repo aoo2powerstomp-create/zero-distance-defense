@@ -154,6 +154,8 @@ export class SpawnDirector {
         // Reset Spawn Tracking
         this.stageSpawnByType = {};
         this.stageSpawnTotalCount = 0;
+        this.waveCounts = {};
+        this.tickCounts = {};
 
         // Reset Attractor Wave Counter
         this.attractorWaveCount = 0;
@@ -401,6 +403,7 @@ export class SpawnDirector {
     update(dt) {
         // Reset per-tick counters
         this.eliteSpawnedThisTick = 0;
+        this.tickCounts = {};
 
         // Process Pending Queue (Density Control)
         this.processPendingSpawns(dt);
@@ -524,8 +527,9 @@ export class SpawnDirector {
 
     generateNextPhase(dt) {
 
-        // Reset attractor wave counter for new phase
+        // Reset counters for new phase
         this.attractorWaveCount = 0;
+        this.waveCounts = {};
 
         const stage = this.game.currentStage + 1;
 
@@ -1835,6 +1839,8 @@ export class SpawnDirector {
             stage: this.game.currentStage + 1,
             attractorCounts: this.countAliveAttractors(),
             attractorWaveCount: this.attractorWaveCount,
+            waveCounts: this.waveCounts,
+            tickCounts: this.tickCounts,
             eliteSpawnedThisTick: this.eliteSpawnedThisTick,
             recentSpawnPoints: this.recentSpawnPoints,
             decisionType: decision.type,
@@ -1934,6 +1940,9 @@ export class SpawnDirector {
         if (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
             this.attractorWaveCount++;
         }
+
+        this.waveCounts[type] = (this.waveCounts[type] || 0) + 1;
+        this.tickCounts[type] = (this.tickCounts[type] || 0) + 1;
 
         // Budget
         if (!enemy.isMinion) {

@@ -233,7 +233,7 @@ class Game {
                         }
                     } else {
                         this.player.currentWeapon = type;
-                        this.audio.playSe('SE_BARRIER_02');
+                        this.audio.playSe('SE_SELECT');
                     }
                 }
                 this.updateUI();
@@ -260,6 +260,14 @@ class Game {
 
         // 回転操作リスナー：マウスとタッチの両方に対応
         const handlePointerWrap = (e) => {
+            // UI判定を最優先で行い、UI操作時は一切のゲーム側入力を遮断し、ブラウザの標準動作を許可する
+            const target = e.target;
+            const isUI = target.closest('#hud') || target.closest('#controls') || target.closest('.overlay-base') ||
+                target.closest('#debug-ui-container') || target.closest('#debug-stats-panel');
+
+            // canvas 自体または透過している領域であれば処理を継続する（それ以外のUIならここで終了）
+            if (isUI && target !== this.canvas) return;
+
             const touch = (e.touches && e.touches.length > 0) ? e.touches[0] :
                 (e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0] : null;
 
@@ -268,9 +276,9 @@ class Game {
                 clientX = touch.clientX;
                 clientY = touch.clientY;
 
-                // ボタン類をクリックしたときはpreventDefaultしない（タップでのクリック操作を妨げない）
-                const target = e.target;
-                const isInteractive = target.tagName === 'BUTTON' || target.closest('button') || target.closest('.btn-stage');
+                // ゲーム領域でのタッチ移動やスクロールを防止
+                const isInteractive = target.tagName === 'BUTTON' || target.tagName === 'SELECT' || target.tagName === 'INPUT' ||
+                    target.closest('button') || target.closest('.btn-stage') || target.closest('select') || target.closest('input');
                 if (e.cancelable && !isInteractive) e.preventDefault();
             } else {
                 clientX = e.clientX;
@@ -279,13 +287,6 @@ class Game {
 
             // clientX/Y が NaN または undefined の場合は処理しない
             if (clientX === undefined || clientY === undefined || isNaN(clientX) || isNaN(clientY)) return;
-
-            // UIエリア（hud, controls）やオーバーレイを触っている場合は回転させない
-            const target = e.target;
-            const isUI = target.closest('#hud') || target.closest('#controls') || target.closest('.overlay-base');
-
-            // canvas 自体または透過している領域であれば処理を継続する
-            if (isUI && target !== this.canvas) return;
 
             const isAction = e.type === 'mousedown' || e.type === 'touchstart';
             this.handlePointer(clientX, clientY, isAction);
@@ -433,7 +434,7 @@ class Game {
 
             if (nextIndex !== currentIndex) {
                 this.player.currentWeapon = unlockedWeapons[nextIndex];
-                this.audio.playSe('SE_BARRIER_02');
+                this.audio.playSe('SE_SELECT');
                 this.updateUI();
             }
         }, { passive: true });
@@ -1126,9 +1127,10 @@ class Game {
     }
 
     spawnRimLaser(boss) {
+        const rimCfg = (this.currentStage >= 10) ? CONSTANTS.RIM_LASER_STAGE10 : CONSTANTS.RIM_LASER_STAGE5;
         const rimCount = this.enemies.filter(e => e.isRimLaser)
             .filter(e => e.active && e.ownerId === boss.id).length;
-        if (rimCount >= CONSTANTS.RIM_LASER_STAGE5.maxActive) return false;
+        if (rimCount >= rimCfg.maxActive) return false;
 
         const rim = this.spawnDirector.spawnEnemy({
             type: CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5,
@@ -2313,7 +2315,7 @@ class Game {
                 container.style.flexDirection = 'column';
                 container.style.gap = '10px';
                 container.style.pointerEvents = 'auto';
-                container.style.zIndex = '1000';
+                container.style.zIndex = '9999';
                 container.style.backgroundColor = 'rgba(0,0,0,0.8)';
                 container.style.padding = '10px';
                 container.style.border = '1px solid #0f0';
@@ -2579,7 +2581,8 @@ class Game {
                 btnSpawn.style.backgroundColor = '#033';
                 btnSpawn.style.border = '1px solid #0f0';
                 btnSpawn.style.color = '#0f0';
-                btnSpawn.onclick = () => {
+                btnSpawn.addEventListener('click', (e) => {
+                    e.stopPropagation();
                     if (this.debugTargetType === 'BOSS') {
                         this.debugSpawnQueue.push({ kind: 'BOSS', bossId: this.debugTargetBossId, forceRespawn: false });
                     } else {
@@ -2591,7 +2594,7 @@ class Game {
                             this.spawnDirector.executeSpawn(this.debugTargetType, this.debugFormation);
                         }
                     }
-                };
+                });
                 container.appendChild(btnSpawn);
 
                 // Info
@@ -2607,7 +2610,10 @@ class Game {
                 const btn = document.createElement('button');
                 btn.textContent = 'BACK TO TITLE';
                 btn.style.marginTop = '10px';
-                btn.onclick = () => this.goToTitle();
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.goToTitle();
+                });
                 container.appendChild(btn);
 
             } else {

@@ -111,10 +111,11 @@ export class AudioManager {
         const buffer = this.seBuffers.get(key);
         if (!buffer) return;
 
-        // Polyphony limit (Max 3 per type, Max 12 total for mobile)
+        // Polyphony limit (Relaxed for shots, Max 32 total for better performance)
+        const limit = CONSTANTS.SE_POLYPHONY_LIMIT[key] || CONSTANTS.SE_POLYPHONY_LIMIT.DEFAULT;
         if (!this.activeSeCount[key]) this.activeSeCount[key] = 0;
-        if (this.activeSeCount[key] >= 3) return;
-        if (this.totalActiveSeCount >= 12) return;
+        if (this.activeSeCount[key] >= limit) return;
+        if (this.totalActiveSeCount >= 32) return;
 
         try {
             const source = this.ctx.createBufferSource();
