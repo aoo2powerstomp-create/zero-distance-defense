@@ -136,6 +136,7 @@ export const CONSTANTS = {
         SE_COUNTDOWN_PEEN: { type: "se", file: "assets/sound/se/se_contdown_02.mp3" },
         SE_COIN: { type: "se", file: "assets/sound/se/se_coin_01.mp3" },
         SE_SELECT: { type: "se", file: "assets/sound/se/se_select_01.mp3" },
+        SE_DASH_IMPACT: { type: "se", file: "assets/sound/se/se_shot_unknown_01.mp3" },
     },
 
     BGM_MAPPING: {
@@ -152,15 +153,15 @@ export const CONSTANTS = {
     },
 
     SOUND_DEFAULTS: {
-        BGM_VOLUME: 0.306,
+        BGM_VOLUME: 0.07,
         SE_VOLUME: 0.50,
     },
 
     SE_VOLUME_MULTIPLIER: {
-        SE_SHOT_LASER: 0.3, // さらに引き下げ (0.85 -> 0.3)
-        SE_SHOT_RIFLE: 0.36, // 3倍に強化 (0.12 -> 0.36)
-        SE_SHOT_SHOTGUN: 0.7, // 少し引き下げ
-        SE_COIN: 0.2, // コイン獲得音を引き下げ
+        SE_SHOT_LASER: 0.4, // さらに引き下げ (0.85 -> 0.3)
+        SE_SHOT_RIFLE: 1.0, // 3倍に強化 (0.12 -> 0.36)
+        SE_SHOT_SHOTGUN: 1.0, // 少し引き下げ
+        SE_COIN: 0.3, // コイン獲得音を引き下げ
         SE_PULSE: 1.5, // パルス衝撃音 (+50%)
     },
 
@@ -952,14 +953,14 @@ export const CONSTANTS = {
         'G': '【GUARDIAN】守護者。周囲の敵の攻撃力や速度を強化するバフを付与します。',
         'H': '【DASHER】高速蛇行型。不規則に素早く揺れながら接近し、幻惑します。',
         'I': '【ORBITER】軌道周回型。自機の周囲を一定距離で回り続け、隙を伺います。',
-        'J': '【SPLITTER】分裂型。倒されると複数の小型エネミー（K）に分裂します。',
-        'K': '【CHILD】分裂後の小型個体。非常に弱いが数で攻めてきます。',
-        'L': '【OBSERVER】観測者。一定距離で停止し、じっと自機を観察（威圧）します。',
-        'M': '【FLANKER】暗殺型。側面や背後に回り込んで潜伏し、一瞬の隙を突いて超高速突撃します。',
-        'N': '【BARRIER_PAIR】連結型。2体1組で現れ、その間に破壊不可能なレーザーバリアを張ります。',
-        'O': '【TRICKSTER】幻惑型。テレポートや急な方向転換でプレイヤーを翻弄します。',
-        'P': '【ATTRACTOR】追加型。周囲の敵を自身に引き寄せ、盾のような役割を果たします。',
-        'Q': '【REFLECTOR】反射型。一部の攻撃を弾き返したり、高い防御力を持ちます。',
+        'J': '【FLANKER】暗殺型。側面や背後に回り込んで潜伏し、一瞬の隙を突いて超高速突撃します。',
+        'K': '【BARRIER_PAIR】連結型。2体1組で現れ、その間に破壊不可能なレーザーバリアを張ります。',
+        'L': '【TRICKSTER】幻惑型。テレポートや急な方向転換でプレイヤーを翻弄します。',
+        'M': '【ATTRACTOR】追加型。周囲の敵を自身に引き寄せ、盾のような役割を果たします。',
+        'N': '【REFLECTOR】反射型。一部の攻撃を弾き返したり、高い防御力を持ちます。',
+        'O': '【OBSERVER】観測者。一定距離で停止し、じっと自機を観察（威圧）します。',
+        'S1': '【SPLITTER】分裂型。倒されると複数の小型エネミー（S2）に分裂します。',
+        'S2': '【CHILD】分裂後の小型個体。非常に弱いが数で攻めてきます。',
         'PD5': '【PLASMA DRONE】Stage5Bossが放つ追尾ドローン。低速だが高い誘導性能を持ち、接近すると加速・放電します。撃ち落とし可能。'
     }
 };

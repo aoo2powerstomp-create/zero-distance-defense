@@ -36,7 +36,8 @@ export class Gold {
     }
 
     update(targetX, targetY) {
-        const elapsed = Date.now() - this.spawnTime;
+        const now = Date.now();
+        const elapsed = now - this.spawnTime;
 
         // 跳ねる物理シミュレーション (1秒間は強制的に跳ねるフェーズ)
         if (elapsed < 1000) {

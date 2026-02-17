@@ -283,6 +283,7 @@ export class Enemy {
             CONSTANTS.ENEMY_TYPES.BARRIER_PAIR,
             CONSTANTS.ENEMY_TYPES.ASSAULT,
             CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5, // [NEW] 方向制御を有効化
+            CONSTANTS.ENEMY_TYPES.BOSS,              // [NEW] ボスも回転を制御可能に
             CONSTANTS.ENEMY_TYPES.NORMAL
         ];
         this.hasDirection = directionalTypes.includes(this.type);
@@ -300,7 +301,6 @@ export class Enemy {
     }
 
     initPlasmaDrone(x, y, targetX, targetY, ownerId) {
-        console.log(`[SPAWN] PlasmaDrone Init. Owner: ${ownerId}`);
         const cfg = CONSTANTS.PLASMA_DRONE_STAGE5;
         this.init(x, y, targetX, targetY, CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5, 1.0, 1.0);
         this.isDrone = true;
@@ -326,7 +326,6 @@ export class Enemy {
     }
 
     initRimLaser(x, y, ownerId) {
-        console.log(`[SPAWN] RimLaser Init. Owner: ${ownerId}`);
         const cfg = CONSTANTS.RIM_LASER_STAGE5;
         this.init(x, y, x, y, CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5);
         this.isRimLaser = true;
@@ -676,13 +675,15 @@ export class Enemy {
 
             // プラズマ・ドローン ＆ RIM LASER 発射ロジック (Stage5Boss & Stage10Boss 共有)
             if (this.bossIndex === 4 || this.bossIndex === 9) {
+                const rimCfgBoss = (this.game && this.game.currentStage >= 9) ? CONSTANTS.RIM_LASER_STAGE10 : CONSTANTS.RIM_LASER_STAGE5;
+                const droneCfgBoss = CONSTANTS.PLASMA_DRONE_STAGE5; // ドローンは共通
+
                 // ドローン
                 this.droneCd -= dt;
                 if (this.droneCd <= 0) {
                     if (options.spawnPlasmaDrone) {
                         if (options.spawnPlasmaDrone(this)) {
-                            // Stage 10 でも Stage 5 の定数を共有（同等の動き）
-                            this.droneCd = CONSTANTS.PLASMA_DRONE_STAGE5.intervalMs;
+                            this.droneCd = droneCfgBoss.intervalMs;
                         } else {
                             this.droneCd = 500;
                         }
@@ -694,7 +695,10 @@ export class Enemy {
                 if (this.rimLaserCd <= 0) {
                     if (options.spawnRimLaser) {
                         if (options.spawnRimLaser(this)) {
-                            this.rimLaserCd = CONSTANTS.RIM_LASER_STAGE5.intervalMs;
+                            // 大量出現に対応するため、初期発射間隔を短く設定可能にする
+                            // 上限数が多い場合は少し早めに次を撃つ
+                            const rapidInterval = Math.min(rimCfgBoss.intervalMs, 800);
+                            this.rimLaserCd = rimCfgBoss.maxActive > 10 ? rapidInterval : rimCfgBoss.intervalMs;
                         } else {
                             this.rimLaserCd = 500;
                         }
@@ -1182,7 +1186,7 @@ export class Enemy {
                         this.vy = Math.sin(this.chargeAngle) * this.currentSpeed;
 
                         Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 4.0);
-                        if (this.game && this.game.audio) this.game.audio.playSe('SE_BARRIER_02', { volume: 0.6, pitch: 1.2 });
+                        if (this.game && this.game.audio) this.game.audio.playSe('SE_DASH_IMPACT', { volume: 0.6, pitch: 1.2 });
                     }
                 } else if (this.flankState === 3) {
                     // PHASE 3: SUPER CHARGE (12x)
@@ -1265,7 +1269,7 @@ export class Enemy {
                         this.chargeAngle = this.angle; // FINAL LOCK
                         Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 3.0);
                         if (this.game && this.game.audio) {
-                            this.game.audio.playSe('SE_BARRIER_02', { volume: 0.5 });
+                            this.game.audio.playSe('SE_DASH_IMPACT', { volume: 0.5 });
                         }
                     }
 
@@ -1765,6 +1769,13 @@ export class Enemy {
         // [ROBUST FIX] 描画状態を完全に分離するための外側ラッパー
         ctx.save();
         try {
+            // 画面外描画のスキップ (パフォーマンス最適化)
+            const margin = 100;
+            if (this.renderX < -margin || this.renderX > CONSTANTS.TARGET_WIDTH + margin ||
+                this.renderY < -margin || this.renderY > CONSTANTS.TARGET_HEIGHT + margin) {
+                return;
+            }
+
             ctx.translate(this.renderX, this.renderY);
 
             // 進行方向への回転適用 (本体のみに適用するため save)
@@ -1804,7 +1815,7 @@ export class Enemy {
                     break;
                 case CONSTANTS.ENEMY_TYPES.TRICKSTER:
                     assetKey = 'ENEMY_A';
-                    filter = "hue-rotate(60deg) brightness(1.2) drop-shadow(0 0 5px #ffff00)";
+                    filter = "hue-rotate(60deg) brightness(1.2)"; // drop-shadow 削除
                     break;
                 case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
                     assetKey = 'ENEMY_G';
@@ -2427,7 +2438,9 @@ export class Enemy {
             }
 
             // Apply Shadow to the main body drawing
-            ctx.shadowBlur = 10;
+            // [OPTIMIZED] モバイル負荷軽減のため、描画対象が画面内にあり、かつ生存時間が短い場合や特定の描画のみに限定することも検討。
+            // ひとまず shadowBlur を一律小さくするか、必要な時のみにする。
+            ctx.shadowBlur = this.isBoss ? 15 : 5;
             ctx.shadowColor = '#00ffaa';
 
             // GLOBAL GUARDIAN BUFF (Applied to all enemies)
@@ -2641,6 +2654,21 @@ export class Enemy {
         }
     }
 
+    isReflecting(bx, by) {
+        if (this.type !== CONSTANTS.ENEMY_TYPES.REFLECTOR) return false;
+
+        // 弾丸から見た敵への角度 (衝突点からの角度)
+        const hitAngle = Math.atan2(by - this.y, bx - this.x);
+
+        // 敵の盾の向き (renderAngle) との差
+        let diff = hitAngle - this.renderAngle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+
+        // 前方 ±60度 なら反射成功
+        return Math.abs(diff) < (Math.PI / 3);
+    }
+
     destroy(reason = 'damage', game) {
         if (!this.active) return;
 
@@ -2787,6 +2815,7 @@ export class Enemy {
                     type: CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD,
                     x: cx,
                     y: cy,
+                    pattern: 'NONE',
                     options: {
                         isMinion: true,
                         lifespan: 10.0,

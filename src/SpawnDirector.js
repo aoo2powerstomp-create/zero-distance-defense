@@ -87,7 +87,8 @@ export class SpawnDirector {
         this.rules.register({
             type: 'POSITION', target: 'ANY', severity: 'BLOCK',
             validator: (decision, ctx) => {
-                if (decision.options && decision.options.ignoreLimits) return true;
+                const options = decision.options || {};
+                if (options.ignoreLimits || options.isMinion) return true;
                 const minDist = (decision.type === TYPES.ELITE) ? 70 : 40;
                 for (const p of ctx.recentSpawnPoints) {
                     const d = Math.sqrt((decision.x - p.x) ** 2 + (decision.y - p.y) ** 2);
@@ -1277,8 +1278,8 @@ export class SpawnDirector {
         const typeCounts = this.game.frameCache.typeCounts;
 
         for (const type of combinedCandidatePool) {
-            // 絶対ルール: SPLITTER_CHILD(K) は直接抽選しない (Jの分裂のみ)
-            if (type === 'K' || type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) continue;
+            // 絶対ルール: SPLITTER_CHILD は直接抽選しない (Splitter の分裂のみ)
+            if (type === CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD) continue;
 
             // 2. Unlock Check (基本に従う)
             if (!this.isUnlocked(type)) continue;
@@ -1342,7 +1343,8 @@ export class SpawnDirector {
             [CONSTANTS.ENEMY_TYPES.FLANKER]: 7,     // J: Stage 7
             [CONSTANTS.ENEMY_TYPES.ATTRACTOR]: 7,   // M: Stage 7
             [CONSTANTS.ENEMY_TYPES.BARRIER_PAIR]: 8,// K: Stage 8
-            [CONSTANTS.ENEMY_TYPES.REFLECTOR]: 8    // N: Stage 8
+            [CONSTANTS.ENEMY_TYPES.REFLECTOR]: 8,   // N: Stage 8
+            [CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD]: 3 // S2: Stage 3 (Splitter 同等)
         };
 
         const req = unlockMap[type] !== undefined ? unlockMap[type] : 999;
@@ -1779,7 +1781,9 @@ export class SpawnDirector {
         // TODO: Move these to Phase 3 Registry logic
         if (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
             if (this.attractorWaveCount >= CONSTANTS.ATTRACTOR.MAX_PER_WAVE) {
-                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[ATTRACTOR] Wave limit reached, replacing spawn`);
+                if (this.game.debugEnabled && this.game.debugSpawnLog && !this.game.isSimulation) {
+                    console.warn(`[ATTRACTOR] Wave limit reached, replacing spawn`);
+                }
                 decision.type = this.replaceAttractorSpawn(type);
             } else {
                 const counts = this.countAliveAttractors();
@@ -1787,7 +1791,9 @@ export class SpawnDirector {
                 const canSpawnBlue = counts.blue < CONSTANTS.ATTRACTOR.MAX_ALIVE_BLUE;
 
                 if (!canSpawnRed && !canSpawnBlue) {
-                    if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[ATTRACTOR] Both colors at cap, replacing spawn`);
+                    if (this.game.debugEnabled && this.game.debugSpawnLog && !this.game.isSimulation) {
+                        console.warn(`[ATTRACTOR] Both colors at cap, replacing spawn`);
+                    }
                     decision.type = this.replaceAttractorSpawn(type);
                 } else if (!canSpawnRed) {
                     decision.options.attractorKind = CONSTANTS.ATTRACTOR_KIND.BLUE;
@@ -1802,7 +1808,9 @@ export class SpawnDirector {
         if (decision.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
             const reflectorCount = this.game.enemies.filter(e => e.active && e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR).length;
             if (reflectorCount >= CONSTANTS.REFLECTOR.MAX_ALIVE) {
-                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[REFLECTOR] Alive limit reached, replacing spawn`);
+                if (this.game.debugEnabled && this.game.debugSpawnLog && !this.game.isSimulation) {
+                    console.warn(`[REFLECTOR] Alive limit reached, replacing spawn`);
+                }
                 decision.type = this.replaceReflectorSpawn(decision.type);
             }
         }
@@ -1853,8 +1861,11 @@ export class SpawnDirector {
         if (violations.length > 0) {
             let hasBlock = false;
             for (const v of violations) {
-                if (!this.game.isSimulation) {
-                    console.warn(`[SPAWN VIOLATION] ${v.severity} ${v.ruleType} target:${v.target} current:${v.currentValue} threshold:${v.threshold}`);
+                if (this.game.debugEnabled && this.game.debugSpawnLog && !this.game.isSimulation) {
+                    // [FIX] ログがスパム化しないよう、60フレームに1回のみ出力
+                    if (this.game.optimizationFrameCount % 60 === 0) {
+                        console.warn(`[SPAWN VIOLATION] ${v.severity} ${v.ruleType} target:${v.target} current:${v.currentValue} threshold:${v.threshold}`);
+                    }
                 }
                 if (v.severity === 'BLOCK') hasBlock = true;
             }
@@ -2042,8 +2053,8 @@ export class SpawnDirector {
         const EXCLUDED = [
             T.SHIELDER,     // 'F'
             T.GUARDIAN,     // 'G'
-            T.BARRIER_PAIR, // 'N'
-            T.SPLITTER_CHILD // 'K'
+            T.BARRIER_PAIR, // 'K'
+            T.SPLITTER_CHILD // 'S2'
         ];
         return !EXCLUDED.includes(type);
     }
@@ -2697,11 +2708,38 @@ export class SpawnDirector {
             return this.spawnEnemy(decision);
         }
 
-        // Generic Fallback to NORMAL
+        // Generic Relaxation/Fallback Logic
         if (decision.type !== TYPES.NORMAL) {
-            if (!this.game.isSimulation) console.warn(`[SPAWN] Blocking ${decision.type}, replacing with NORMAL`);
-            decision.type = TYPES.NORMAL;
-            return this.spawnEnemy(decision);
+            const depth = decision._replacementDepth;
+
+            if (depth < 5) {
+                // Tiered Relaxation
+                if (depth === 1) {
+                    // 1. 同タイプ単体化 (隊列解除)
+                    decision.pattern = 'NONE';
+                    if (decision.options) decision.options.formationInfo = null;
+                } else if (depth === 2) {
+                    // 2. 位置制限緩和
+                    if (decision.options) decision.options.ignoreLimits = true;
+                } else {
+                    // 3. その他、さらに試行
+                }
+
+                if (!this.game.isSimulation && this.game.optimizationFrameCount % 30 === 0) {
+                    console.warn(`[SPAWN] Relaxing constraints for ${decision.type} (Depth:${depth})`);
+                }
+                return this.spawnEnemy(decision);
+            } else {
+                // 4. それでも無理なら NORMAL
+                if (!this.game.isSimulation) console.warn(`[SPAWN] Blocking ${decision.type}, final fallback to NORMAL`);
+                decision.type = TYPES.NORMAL;
+                decision.pattern = 'NONE';
+                if (decision.options) {
+                    decision.options.formationInfo = null;
+                    decision.options.ignoreLimits = true;
+                }
+                return this.spawnEnemy(decision);
+            }
         }
 
         return null; // Should not happen if NORMAL is allowed

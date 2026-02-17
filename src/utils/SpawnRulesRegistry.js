@@ -51,6 +51,11 @@ export class SpawnRulesRegistry {
                 case 'CAP':
                 case 'LIMIT':
                 case 'FLOOR':
+                    // [FIX] threshold が未定義、null、NaN の場合は常に違反とみなさない
+                    if (rule.threshold === undefined || rule.threshold === null || !Number.isFinite(rule.threshold)) {
+                        continue;
+                    }
+
                     currentValue = this._getCurrentValue(rule, ctx);
                     if (rule.type === 'FLOOR') {
                         if (currentValue < rule.threshold) isViolated = true;
@@ -151,6 +156,9 @@ export class SpawnRulesRegistry {
 
         if (scope === 'alive') {
             if (!ctx.aliveCounts) return 0;
+            if (target === 'ANY') {
+                return Object.values(ctx.aliveCounts).reduce((a, b) => a + b, 0);
+            }
             // Specialized checks
             if (target === 'ATTRACTOR_RED') return (ctx.attractorCounts && ctx.attractorCounts.red) || 0;
             if (target === 'ATTRACTOR_BLUE') return (ctx.attractorCounts && ctx.attractorCounts.blue) || 0;
@@ -161,6 +169,9 @@ export class SpawnRulesRegistry {
 
         if (scope === 'perWave') {
             if (!ctx.waveCounts) return 0;
+            if (target === 'ANY') {
+                return Object.values(ctx.waveCounts).reduce((a, b) => a + b, 0);
+            }
             // Unified ID check (Attractor is 'M')
             if (target === 'M' || target === 'ATTRACTOR') return ctx.attractorWaveCount || 0;
             return ctx.waveCounts[target] || 0;
@@ -168,6 +179,9 @@ export class SpawnRulesRegistry {
 
         if (scope === 'perTick') {
             if (!ctx.tickCounts) return 0;
+            if (target === 'ANY') {
+                return Object.values(ctx.tickCounts).reduce((a, b) => a + b, 0);
+            }
             // Unified ID check (Elite is 'D')
             if (target === 'D' || target === 'ELITE') return ctx.eliteSpawnedThisTick || 0;
             return ctx.tickCounts[target] || 0;

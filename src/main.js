@@ -90,8 +90,13 @@ class Game {
 
         // デバッグ設定
         this.debugEnabled = DEBUG_ENABLED;
+        this.debugSpawnLog = false; // [NEW] 
         this.debugInvincible = false;
         this.timeScale = 1.0;
+
+        this.fixedDt = 1 / 60; // 60Hz [NEW]
+        this.accumulator = 0;
+        this.maxUpdatesPerFrame = 5;
 
         this.frameCache = new FrameCache();
         this.spawnDirector = new SpawnDirector(this);
@@ -114,14 +119,39 @@ class Game {
         this.assetLoader.loadAll(CONSTANTS.ASSET_MAP);
 
         this.generateStageButtons();
-        this.lastTime = performance.now();
-        requestAnimationFrame((t) => this.loop(t));
 
         const upgradePanel = document.getElementById('upgrade-panel');
         if (upgradePanel) upgradePanel.classList.add('hidden');
 
-        // 初回フェードイン
+        // 初回フェードイン [RESTORED]
         this.triggerFade('in', 1000);
+
+        this.lastTime = performance.now();
+        requestAnimationFrame((t) => this.loop(t));
+    }
+
+    loop(currentTime) {
+        let frameTime = (currentTime - this.lastTime) / 1000;
+        this.lastTime = currentTime;
+
+        // クランプ（最大100ms）
+        if (frameTime > 0.1) frameTime = 0.1;
+
+        this.accumulator += frameTime;
+
+        let updateCount = 0;
+        while (this.accumulator >= this.fixedDt) {
+            this.update(this.fixedDt * 1000); // ms単位で渡す
+            this.accumulator -= this.fixedDt;
+            updateCount++;
+            if (updateCount >= this.maxUpdatesPerFrame) {
+                this.accumulator = 0; // スパイラル防止
+                break;
+            }
+        }
+
+        this.draw();
+        requestAnimationFrame((t) => this.loop(t));
     }
 
     resize() {
@@ -1284,6 +1314,16 @@ class Game {
                     isAuraProtected: enemy.isShielded
                 });
 
+                // [REQ] SE再生
+                if (this.audio) {
+                    const isExplosionReflected = (enemy.type === CONSTANTS.ENEMY_TYPES.REFLECTOR && enemy.isReflecting(x, y));
+                    if (enemy.isShielded || this.guardianBuffActive || isExplosionReflected) {
+                        this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.1, volume: 0.4 });
+                    } else if (enemy.hp > 0) {
+                        this.audio.playSe('SE_BREAK_SPECIAL', { variation: 0.1, volume: 0.4 });
+                    }
+                }
+
                 if (enemy.hp <= 0) {
                     enemy.destroy('explosion', this);
                 }
@@ -1380,21 +1420,6 @@ class Game {
     update(dt) {
         this.optimizationFrameCount++;
 
-        // --- Phase X: Debug Spawn Queue Processing [NEW] ---
-        if (this.debugSpawnQueue && this.debugSpawnQueue.length > 0) {
-            const req = this.debugSpawnQueue.shift();
-            if (req.kind === 'BOSS') {
-                if (this.spawnDirector) {
-                    this.spawnDirector.spawnBossDebug(req.bossId, { forceRespawn: req.forceRespawn });
-                }
-            } else if (req.kind === 'ENEMY') {
-                // 通常エネミーの即時生成要求（将来用）
-                if (this.spawnDirector) {
-                    this.spawnDirector.executeSpawn(req.type, req.formation || 'NONE');
-                }
-            }
-        }
-
         // ゴールドカウンターのアニメーション
         if (this.displayGoldCount < this.goldCount) {
             // 1桁ずつ増えるような演出（差分の一定割合か、最低1ずつ増やす）
@@ -1421,11 +1446,17 @@ class Game {
         this.grid.build(activeEnemies);
         Profiler.end('grid_build');
 
-        // シールド判定のキャッシュ更新 (3フレームに1回)
-        if (this.optimizationFrameCount % 3 === 0) {
-            Profiler.start('shield_update');
-            this.updateShieldCache();
-            Profiler.end('shield_update');
+        // シールド判定のキャッシュ更新 (50ms毎) [OPTIMIZED]
+        this.shieldCacheTimer = (this.shieldCacheTimer || 0) + dt;
+        if (this.shieldCacheTimer >= 50) {
+            this.shieldCacheTimer = 0;
+            // シールド持ちがいない or シールドゾーンがない場合はスキップ
+            const hasShielders = this.enemies.some(e => e.type === CONSTANTS.ENEMY_TYPES.SHIELDER && e.active);
+            if (hasShielders || this.shieldZones.length > 0) {
+                Profiler.start('shield_update');
+                this.updateShieldCache();
+                Profiler.end('shield_update');
+            }
         }
 
         // アイテム更新
@@ -1478,7 +1509,8 @@ class Game {
 
         Profiler.start('spawning');
         // SpawnDirector による管理 (ボスステージ以外)
-        if (!isBossStage) {
+        // [FIX] 二重呼び出し排除。update(dt)内はこの1箇所のみ。
+        if (!isBossStage && this.spawnDirector) {
             this.spawnDirector.update(dt);
         }
         Profiler.end('spawning');
@@ -1543,10 +1575,12 @@ class Game {
         }
 
         // 敵同士の緩やかな斥力 (重なりすぎ防止)
-        // 負荷軽減：2フレームに1回のみ計算し、さらに生存中の敵のみを対象とする
-        Profiler.start('enemy_repulsion');
-        if (this.optimizationFrameCount % 2 === 0) {
-            const activeEnemies = this.frameCache.enemiesAlive;
+        // 負荷軽減：100ms毎に実行 [OPTIMIZED]
+        this.repulsionTimer = (this.repulsionTimer || 0) + dt;
+        if (this.repulsionTimer >= 100) {
+            this.repulsionTimer = 0;
+            Profiler.start('enemy_repulsion');
+            const activeEnemies = this.frameCache.enemiesAlive || this.enemies.filter(e => e.active);
             const r = CONSTANTS.ENEMY_SIZE * 0.8;
             const rSq = r * r;
 
@@ -1590,13 +1624,8 @@ class Game {
         }
         Profiler.end('enemy_repulsion');
 
-        // コインの吸引先を画面端のUIアイコン(DOM)に正確に合わせる
-        const { scale, offsetX, offsetY } = this.getRenderTransform();
-        // スクリーン座標: アイコン中央 (左から約23px, 下から約106px [26+80])
-        const goldTargetX = (23 - offsetX) / scale;
-        const goldTargetY = (this.canvas.height - 106 - offsetY) / scale;
-
-        this.golds.forEach(g => g.update(goldTargetX, goldTargetY));
+        // ゴールド更新は updateGolds(dt) で一括処理されるため、ここでの明示的な呼び出しは削除
+        // this.golds.forEach(g => g.update(goldTargetX, goldTargetY));
         this.damageTexts.forEach(d => d.update());
 
         // パルスCDとエフェクト更新 (多層対応)
@@ -1705,31 +1734,25 @@ class Game {
                         damage *= b.burstDamageMul;
                     }
 
-                    // REFLECTOR
-                    if (e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR && e.isReflectActive) {
+                    // [REQ] 反射判定
+                    const isReflecting = (e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR && e.isReflecting(b.x, b.y));
+                    if (isReflecting) {
+                        // 跳ね返り処理: 速度を反転し、フラグを立てる
+                        const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
                         const edx = e.x - this.player.x;
                         const edy = e.y - this.player.y;
                         const angleToEnemy = Math.atan2(edy, edx);
-                        const bulletAngle = Math.atan2(b.vy, b.vx);
-                        let diff = bulletAngle - angleToEnemy;
-                        while (diff < -Math.PI) diff += Math.PI * 2;
-                        while (diff > Math.PI) diff -= Math.PI * 2;
+                        const reflectAngle = angleToEnemy + (Math.random() - 0.5) * 0.4;
+                        b.vx = -Math.cos(reflectAngle) * speed * 0.8;
+                        b.vy = -Math.sin(reflectAngle) * speed * 0.8;
+                        b.angle = Math.atan2(b.vy, b.vx);
+                        b.isReflected = true;
+                        b.hitEnemies.clear();
 
-                        if (Math.abs(diff) < CONSTANTS.REFLECTOR.reflectAngle) {
-                            // 跳ね返り処理: 速度を反転し、フラグを立てる
-                            const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-                            const reflectAngle = angleToEnemy + (Math.random() - 0.5) * 0.4; // 少しバラけさせる
-                            b.vx = -Math.cos(reflectAngle) * speed * 0.8; // 速度を少し落とす
-                            b.vy = -Math.sin(reflectAngle) * speed * 0.8;
-                            b.angle = Math.atan2(b.vy, b.vx);
-                            b.isReflected = true;
-                            b.hitEnemies.clear(); // 再びエネミーに当たる可能性（または自分に当たる）
-
-                            this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.5, priority: 'low' });
-                            this.spawnDamageText(e.renderX, e.renderY, "REFLECT!", "#ffd700");
-                            bulletConsumed = true;
-                            break;
-                        }
+                        if (this.audio) this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.1, volume: 0.6 });
+                        this.spawnDamageText(e.renderX, e.renderY, "REFLECT!", "#ffd700");
+                        bulletConsumed = true;
+                        break;
                     }
 
                     const actualDamage = e.takeDamage(damage, {
@@ -1737,7 +1760,15 @@ class Game {
                         isAuraProtected: e.isShielded
                     });
 
-                    this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.2, priority: 'low' });
+                    // [REQ] ヒットサウンド (ガード vs 通常ダメージ)
+                    if (this.audio) {
+                        const isGuarded = (e.isShielded || globalBuffActive);
+                        if (isGuarded) {
+                            this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.05, volume: 0.6 });
+                        } else if (e.hp > 0) {
+                            this.audio.playSe('SE_BREAK_SPECIAL', { variation: 0.1, volume: 0.45 });
+                        }
+                    }
                     b.hitEnemies.add(e);
 
                     // RIM_LASER: ダメージ表示なし（静かに消える）
@@ -1881,6 +1912,15 @@ class Game {
                 let d = CONSTANTS.BARRIER_DPS * (dt / 1000);
                 if (e.isBoss) d *= 0.5;
                 e.takeDamage(d, { globalBuffActive, isAuraProtected: e.isShielded });
+
+                // [REQ] SE再生（継続ダメージなので周期的に再生）
+                if (this.audio && this.optimizationFrameCount % 12 === 0) {
+                    if (e.isShielded || globalBuffActive) {
+                        this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.1, volume: 0.3 });
+                    } else if (e.hp > 0) {
+                        this.audio.playSe('SE_BREAK_SPECIAL', { variation: 0.1, volume: 0.3 });
+                    }
+                }
 
                 if (!e.isBoss && CONSTANTS.BARRIER_INSTANT_KILL_TYPES.includes(e.type) && !this.player.barrierKillConsumedThisFrame && this.player.barrierCharges > 0) {
                     this.player.barrierCharges--;
@@ -2287,9 +2327,12 @@ class Game {
                 const droneCdStr = boss ? (boss.droneCd / 1000).toFixed(1) : 'OFF';
                 const rimCdStr = boss ? (boss.rimLaserCd / 1000).toFixed(1) : 'OFF';
 
+                const rimCfgHud = (this.currentStage >= 9) ? CONSTANTS.RIM_LASER_STAGE10 : CONSTANTS.RIM_LASER_STAGE5;
+                const droneLimit = 3; // ドローンは固定
+
                 statsDiv.innerHTML = `
                     <div style="font-weight:bold; color:#fff; border-bottom:1px solid #0f0; margin-bottom:4px;">BATTLE & SPAWN STATS</div>
-                    <div>FPS: ${report.fps.toFixed(1)} | DRONES: <span style="color:${activeDrones >= 3 ? '#f00' : '#0f0'}">${activeDrones}/3</span> | RIMS: <span style="color:${activeRims >= 2 ? '#f00' : '#0f0'}">${activeRims}/2</span></div>
+                    <div>FPS: ${report.fps.toFixed(1)} | DRONES: <span style="color:${activeDrones >= droneLimit ? '#f00' : '#0f0'}">${activeDrones}/${droneLimit}</span> | RIMS: <span style="color:${activeRims >= rimCfgHud.maxActive ? '#f00' : '#0f0'}">${activeRims}/${rimCfgHud.maxActive}</span></div>
                     <div>BOSS_CD: D:${droneCdStr}s / R:${rimCdStr}s</div>
                     <hr style="border:0; border-top:1px solid #333; margin:4px 0;">
                     <div><b>SIDE (Latest 200):</b><br>${fmt(sideLatest)}</div>
@@ -2766,9 +2809,9 @@ class Game {
             const alpha = Math.min(1.0, life * 5.0); // フェードアウト用
             const color = '0, 255, 255';
 
-            // 六角形グリッド描画 (全て点灯版)
+            // 六角形グリッド描画 (一回の path でまとめて描画して負荷軽減)
             const radius = sz.radius;
-            const hexSize = 10;
+            const hexSize = 15; // サイズを少し大きくして個数を減らす (10->15)
             const gridRadius = Math.ceil(radius / (hexSize * 1.5));
 
             this.ctx.globalCompositeOperation = 'lighter';
@@ -2776,18 +2819,16 @@ class Game {
             this.ctx.fillStyle = `rgba(${color}, ${0.2 * alpha})`;
             this.ctx.lineWidth = 1;
 
+            this.ctx.beginPath();
             for (let q = -gridRadius; q <= gridRadius; q++) {
                 for (let r = -gridRadius; r <= gridRadius; r++) {
                     const hx = hexSize * (3 / 2 * q);
                     const hy = hexSize * (Math.sqrt(3) / 2 * q + Math.sqrt(3) * r);
 
                     if (hx * hx + hy * hy < radius * radius) {
-                        // ★追加: 残り時間に応じてランダムに消えていく演出
-                        // 座標をベースにした疑似乱数で、各六角形が消えるタイミングを固定
                         const hash = Math.abs(Math.sin(q * 12.9898 + r * 78.233) * 43758.5453) % 1;
                         if (hash > life) continue;
 
-                        this.ctx.beginPath();
                         for (let i = 0; i < 6; i++) {
                             const angle = (i / 6) * Math.PI * 2;
                             const px = hx + Math.cos(angle) * (hexSize - 1);
@@ -2795,12 +2836,11 @@ class Game {
                             if (i === 0) this.ctx.moveTo(px, py);
                             else this.ctx.lineTo(px, py);
                         }
-                        this.ctx.closePath();
-                        this.ctx.fill();
-                        this.ctx.stroke();
                     }
                 }
             }
+            this.ctx.fill();
+            this.ctx.stroke();
             this.ctx.restore();
         });
 
