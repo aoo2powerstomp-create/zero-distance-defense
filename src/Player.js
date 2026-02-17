@@ -167,7 +167,7 @@ export class Player {
         // INVINCIBLE中は無敵 (アイテム効果 or 被弾後無敵 or デバッグ無敵)
         if (Date.now() < this.invincibleUntilMs || this.invincibleFrames > 0 || (this.game && this.game.debugInvincible)) return;
 
-        const damage = CONSTANTS.PLAYER_MAX_HP * ratio;
+        const damage = CONSTANTS.PLAYER_MAX_HP * ratio * 2;
 
         // デバッグステージでは体力を一時的に減らす（視覚的演出用。実際の死亡は避ける）
         if (this.game && this.game.isDebugStage) {
