@@ -95,7 +95,7 @@ export const CONSTANTS = {
         ITEM_BOMB: './assets/item/item_bomb.png',
         ITEM_OVERDRIVE: './assets/item/item_overdrive.png',
         ITEM_INVINCIBLE: './assets/item/item_invincible.png',
-        ITEM_NUKE: './assets/item/item_nuke.png',
+        ITEM_NUKE: './assets/item/item_bomb.png', // Fallback as original is missing
         GOLD: './assets/item/item_coin.png',
         BULLET_RIFLE: './assets/bullet/bullet_Rifle.png',
         BULLET_SHOT: './assets/bullet/bullet_shotgun.png',
@@ -105,6 +105,61 @@ export const CONSTANTS = {
         UI_ICON_LASER: './assets/ui/ui_icon_laser.png',
         UI_ICON_SPEED: './assets/ui/ui_icon_speed.png',
         UI_ICON_PULSE: './assets/ui/ui_icon_pulse.png',
+    },
+
+    // --- Sound System (SSOT) ---
+    SOUND_ASSETS: {
+        // BGM
+        BGM_STAGE_01: { type: "bgm", file: "assets/sound/bgm/bgm_stage_01.mp3" },
+        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3" },
+        BGM_BOSS_01: { type: "bgm", file: "assets/sound/bgm/bgm_boss_01.mp3" },
+
+        // SE
+        SE_BARRIER_01: { type: "se", file: "assets/sound/se/se_barrier_01.mp3" },
+        SE_BARRIER_02: { type: "se", file: "assets/sound/se/se_barrier_02.mp3" },
+
+        SE_BREAK_NORMAL: { type: "se", file: "assets/sound/se/se_break_01.mp3" },
+        SE_BREAK_SPECIAL: { type: "se", file: "assets/sound/se/se_break_02.mp3" },
+
+        SE_DAMAGE: { type: "se", file: "assets/sound/se/se_damage_01.mp3" },
+        SE_PULSE: { type: "se", file: "assets/sound/se/se_impact_01.mp3" },
+        SE_HP: { type: "se", file: "assets/sound/se/se_hp.mp3" },
+
+        SE_GUARD_HIT_01: { type: "se", file: "assets/sound/se/se_shot_guard_01.mp3" },
+        SE_GUARD_HIT_02: { type: "se", file: "assets/sound/se/se_shot_guard_02.mp3" },
+
+        SE_SHOT_LASER: { type: "se", file: "assets/sound/se/se_shot_laser_03.mp3" },
+        SE_SHOT_RIFLE: { type: "se", file: "assets/sound/se/se_shot_rifle_01.mp3" },
+        SE_SHOT_SHOTGUN: { type: "se", file: "assets/sound/se/se_shot_shotgun_01.mp3" },
+
+        SE_COUNTDOWN_PI: { type: "se", file: "assets/sound/se/se_shot_guard_02.mp3" },
+        SE_COUNTDOWN_PEEN: { type: "se", file: "assets/sound/se/se_barrier_01.mp3" },
+        SE_COIN: { type: "se", file: "assets/sound/se/se_shot_unknown_01.mp3" },
+    },
+
+    BGM_MAPPING: {
+        1: "BGM_STAGE_01",
+        2: "BGM_STAGE_01",
+        3: "BGM_STAGE_03",
+        4: "BGM_STAGE_03",
+        5: "BGM_BOSS_01",
+        6: "BGM_STAGE_03",
+        7: "BGM_STAGE_03",
+        8: "BGM_STAGE_03",
+        9: "BGM_STAGE_03",
+        10: "BGM_BOSS_01",
+    },
+
+    SOUND_DEFAULTS: {
+        BGM_VOLUME: 0.17,
+        SE_VOLUME: 0.50,
+    },
+
+    SE_VOLUME_MULTIPLIER: {
+        SE_SHOT_LASER: 0.3, // さらに引き下げ (0.85 -> 0.3)
+        SE_SHOT_RIFLE: 0.1, // 大幅に引き下げ (0.5 -> 0.1)
+        SE_SHOT_SHOTGUN: 0.7, // 少し引き下げ
+        SE_COIN: 0.2, // コイン獲得音を引き下げ
     },
 
     // 武器タイプ

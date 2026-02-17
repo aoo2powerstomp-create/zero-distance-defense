@@ -272,8 +272,8 @@ export class ItemManager {
                 if (isInstant) {
                     if (item.state !== 'pickup' && item.active) {
                         item.active = false;
-                        const soundKey = (item.type === CONSTANTS.ITEM_TYPES.HEAL) ? 'upgrade' : 'item_pickup';
-                        game.audio.play(soundKey, { priority: 'high' });
+                        const soundKey = (item.type === CONSTANTS.ITEM_TYPES.HEAL) ? 'SE_HP' : 'item_pickup'; // item_pickup fallback or new key?
+                        game.audio.playSe((item.type === CONSTANTS.ITEM_TYPES.HEAL) ? 'SE_HP' : 'SE_BARRIER_01', { priority: 'high' }); // Placeholder SE_BARRIER_01 for generic pickup if needed, but the requirements said SE_HP for heal.
                         this.applyEffect(item, player, game);
                         return true;
                     }
@@ -285,8 +285,8 @@ export class ItemManager {
                     item.pickupTarget = player; // プレイヤーへ吸い込み
 
                     // 取得SE
-                    const soundKey = (item.type === CONSTANTS.ITEM_TYPES.HEAL) ? 'upgrade' : 'item_pickup';
-                    game.audio.play(soundKey, { priority: 'high' });
+                    const soundKey = (item.type === CONSTANTS.ITEM_TYPES.HEAL) ? 'SE_HP' : 'SE_BARRIER_01'; // Instruction says SE_HP for heal. 
+                    game.audio.playSe(soundKey, { priority: 'high' });
 
                     // this.update 内で完了時に applyEffect されるように game 参照を保持
                     // (コンストラクタで渡された this.game を既に使用している)
@@ -388,7 +388,7 @@ export class ItemManager {
         }
         // 爆発エフェクト（大）
         Effects.createExplosion(x, y, CONSTANTS.ITEM_CONFIG.bombRadius);
-        game.audio.play('explosion');
+        game.audio.playSe('SE_BREAK_SPECIAL');
     }
 
     triggerNuke(game) {
@@ -398,7 +398,7 @@ export class ItemManager {
 
         // 画面フラッシュ演出（仮に爆発エフェクトをプレイヤー中心に特大で出す）
         Effects.createExplosion(game.player.x, game.player.y, 800);
-        game.audio.play('explosion'); // 重ねて再生
+        game.audio.playSe('SE_BREAK_SPECIAL'); // 重ねて再生
 
         for (const e of game.enemies) {
             if (!e.active) continue;

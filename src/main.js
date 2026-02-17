@@ -149,7 +149,13 @@ class Game {
     setupDebugMenu() {
         const el = document.getElementById("debugMenu");
         if (!el) return;
-        el.style.display = DEBUG_ENABLED ? "block" : "none";
+        if (DEBUG_ENABLED) {
+            el.style.display = "block";
+            el.classList.remove('hidden');
+        } else {
+            el.style.display = "none";
+            el.classList.add('hidden');
+        }
     }
 
     initUI() {
@@ -162,7 +168,7 @@ class Game {
                 this.isStarting = true;
 
                 await this.audio.init();
-                this.audio.play('menu_select', { priority: 'high' });
+                this.audio.playSe('SE_BARRIER_01', { priority: 'high' });
 
                 // フェードアウトしてから開始
                 await this.triggerFade('out', 500);
@@ -193,7 +199,7 @@ class Game {
             btnToggleStage.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const isHidden = stageSelectList.classList.toggle('hidden');
-                this.audio.play('menu_move');
+                this.audio.playSe('SE_BARRIER_02');
                 btnToggleStage.textContent = isHidden ? 'STAGE SELECT' : 'CLOSE SELECT';
             });
         }
@@ -213,7 +219,7 @@ class Game {
                         this.goldCount -= config.unlockCost;
                         data.unlocked = true;
                         this.player.currentWeapon = type;
-                        this.audio.play('upgrade');
+                        this.audio.playSe('SE_BARRIER_01');
                         this.spawnDamageText(this.player.x, this.player.y - 20, "UNLOCKED!", "#ffffff");
                     }
                 } else {
@@ -222,12 +228,12 @@ class Game {
                         if (this.goldCount >= cost && data.level < CONSTANTS.UPGRADE_LV_MAX) {
                             this.goldCount -= cost;
                             data.level++;
-                            this.audio.play('upgrade');
+                            this.audio.playSe('SE_BARRIER_01');
                             this.spawnDamageText(this.player.x, this.player.y - 20, "POWER UP!", "#ffff00");
                         }
                     } else {
                         this.player.currentWeapon = type;
-                        this.audio.play('menu_move');
+                        this.audio.playSe('SE_BARRIER_02');
                     }
                 }
                 this.updateUI();
@@ -246,7 +252,7 @@ class Game {
             if (this.goldCount >= cost && data.atkSpeedLv < CONSTANTS.UPGRADE_LV_MAX) {
                 this.goldCount -= cost;
                 data.atkSpeedLv++;
-                this.audio.play('upgrade');
+                this.audio.playSe('SE_BARRIER_01');
                 this.spawnDamageText(this.player.x, this.player.y - 20, "SPEED UP!", "#00ff88");
                 this.updateUI();
             }
@@ -254,10 +260,13 @@ class Game {
 
         // 回転操作リスナー：マウスとタッチの両方に対応
         const handlePointerWrap = (e) => {
+            const touch = (e.touches && e.touches.length > 0) ? e.touches[0] :
+                (e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0] : null;
+
             let clientX, clientY;
-            if (e.touches && e.touches.length > 0) {
-                clientX = e.touches[0].clientX;
-                clientY = e.touches[0].clientY;
+            if (touch) {
+                clientX = touch.clientX;
+                clientY = touch.clientY;
 
                 // ボタン類をクリックしたときはpreventDefaultしない（タップでのクリック操作を妨げない）
                 const target = e.target;
@@ -268,22 +277,28 @@ class Game {
                 clientY = e.clientY;
             }
 
+            // clientX/Y が NaN または undefined の場合は処理しない
+            if (clientX === undefined || clientY === undefined || isNaN(clientX) || isNaN(clientY)) return;
+
             // UIエリア（hud, controls）やオーバーレイを触っている場合は回転させない
             const target = e.target;
             const isUI = target.closest('#hud') || target.closest('#controls') || target.closest('.overlay-base');
-            if (isUI) return;
+
+            // canvas 自体または透過している領域であれば処理を継続する
+            if (isUI && target !== this.canvas) return;
 
             const isAction = e.type === 'mousedown' || e.type === 'touchstart';
             this.handlePointer(clientX, clientY, isAction);
         };
 
-        this.canvas.addEventListener('mousedown', handlePointerWrap);
-        this.canvas.addEventListener('mousemove', handlePointerWrap);
-        this.canvas.addEventListener('mouseup', handlePointerWrap);
+        const inputTarget = this.canvas.parentElement || this.canvas;
+        inputTarget.addEventListener('mousedown', handlePointerWrap);
+        inputTarget.addEventListener('mousemove', handlePointerWrap);
+        inputTarget.addEventListener('mouseup', handlePointerWrap);
 
-        this.canvas.addEventListener('touchstart', handlePointerWrap, { passive: false });
-        this.canvas.addEventListener('touchmove', handlePointerWrap, { passive: false });
-        this.canvas.addEventListener('touchend', handlePointerWrap, { passive: false });
+        inputTarget.addEventListener('touchstart', handlePointerWrap, { passive: false });
+        inputTarget.addEventListener('touchmove', handlePointerWrap, { passive: false });
+        inputTarget.addEventListener('touchend', handlePointerWrap, { passive: false });
 
         window.addEventListener('resize', () => this.resize());
         this.resize();
@@ -323,7 +338,7 @@ class Game {
                     e.stopPropagation();
                     this.goldCount += 100000;
                     this.totalGoldEarned += 100000;
-                    this.audio.play('money');
+                    this.audio.playSe('SE_HP');
                     this.spawnDamageText(this.player.x, this.player.y - 20, "+100,000G", "#ffd700");
                     this.updateUI();
                 });
@@ -378,6 +393,16 @@ class Game {
                     this.stageClear();
                 });
             }
+
+            // [NEW] デバッグルールダンプボタン
+            const btnDebugRules = document.getElementById('btn-debug-rules');
+            if (btnDebugRules) {
+                btnDebugRules.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    console.log(this.spawnDirector.rules.dumpRules());
+                    alert(this.spawnDirector.rules.dumpRules());
+                });
+            }
         }
 
         // PC向け：マウスホイールでの武器切り替え
@@ -408,18 +433,19 @@ class Game {
 
             if (nextIndex !== currentIndex) {
                 this.player.currentWeapon = unlockedWeapons[nextIndex];
-                this.audio.play('menu_move');
+                this.audio.playSe('SE_BARRIER_02');
                 this.updateUI();
             }
         }, { passive: true });
     }
 
     handlePointer(clientX, clientY, isAction = false) {
-        const rect = this.canvas.getBoundingClientRect();
+        const inputTarget = this.canvas.parentElement || this.canvas;
+        const rect = inputTarget.getBoundingClientRect();
 
-        // Phase 3: Input Handling (Pause Button)
-        const mouseX = clientX - rect.left;
-        const mouseY = clientY - rect.top;
+        // 座標計算。NaNガード付き
+        const mouseX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+        const mouseY = Math.max(0, Math.min(rect.height, clientY - rect.top));
 
         if (isAction && this.checkPauseButton(mouseX, mouseY)) {
             this.togglePause();
@@ -446,7 +472,7 @@ class Game {
             // Next
             if (this.currentStage < CONSTANTS.STAGE_DATA.length - 1) {
                 if (Math.abs(x - cX) < btnW / 2 && Math.abs(y - startY) < btnH / 2) {
-                    this.audio.play('menu_select');
+                    this.audio.playSe('SE_BARRIER_01');
                     this.startNextWave();
                     return;
                 }
@@ -454,14 +480,14 @@ class Game {
 
             // Retry
             if (Math.abs(x - (cX - 150)) < btnW / 2 && Math.abs(y - startY) < btnH / 2) {
-                this.audio.play('menu_select');
+                this.audio.playSe('SE_BARRIER_01');
                 this.startCountdown(); // 同じステージを再開
                 return;
             }
 
             // Title
             if (Math.abs(x - (cX + 150)) < btnW / 2 && Math.abs(y - startY) < btnH / 2) {
-                this.audio.play('menu_select');
+                this.audio.playSe('SE_BARRIER_01');
                 this.triggerFade('out', 500).then(() => location.reload());
                 return;
             }
@@ -480,8 +506,13 @@ class Game {
         // const mouseY = clientY - rect.top;
 
         // 仮想空間上の座標へ逆写像
-        this.player.targetX = (mouseX - offsetX) / scale;
-        this.player.targetY = mouseY / scale;
+        const targetX = (mouseX - offsetX) / (scale || 1.0);
+        const targetY = mouseY / (scale || 1.0);
+
+        if (!isNaN(targetX) && !isNaN(targetY)) {
+            this.player.targetX = targetX;
+            this.player.targetY = targetY;
+        }
     }
 
     distToSegment(px, py, x1, y1, x2, y2) {
@@ -545,11 +576,16 @@ class Game {
 
             btn.addEventListener('click', async () => {
                 await this.audio.init();
-                this.audio.play('menu_select', { priority: 'high' });
+                this.audio.playSe('SE_BARRIER_01', { priority: 'high' }); // Placeholder for menu_select
                 const titleScreen = document.getElementById('title-screen');
                 if (titleScreen) titleScreen.classList.add('hidden');
 
                 this.currentStage = index;
+
+                // BGM switching based on stage mapping
+                const bgmKey = CONSTANTS.BGM_MAPPING[index + 1] || 'BGM_STAGE_01';
+                this.audio.playBgm(bgmKey);
+
                 this.startCountdown();
             });
 
@@ -567,7 +603,7 @@ class Game {
 
             btn.addEventListener('click', async () => {
                 await this.audio.init();
-                this.audio.play('menu_select', { priority: 'high' });
+                this.audio.playSe('SE_BARRIER_01', { priority: 'high' });
                 const titleScreen = document.getElementById('title-screen');
                 if (titleScreen) titleScreen.classList.add('hidden');
 
@@ -584,6 +620,13 @@ class Game {
     }
 
     startWave() {
+        // ステージに応じたBGM再生 (SSOT)
+        const stageNum = this.currentStage + 1;
+        const bgmKey = CONSTANTS.BGM_MAPPING[stageNum];
+        if (bgmKey) {
+            this.audio.playBgm(bgmKey);
+        }
+
         // Debug Stage Check
         this.isDebugStage = (this.currentStage === CONSTANTS.STAGE_DEBUG);
 
@@ -671,8 +714,7 @@ class Game {
         const controls = document.getElementById('controls');
         if (controls) controls.classList.remove('hidden');
         if (DEBUG_ENABLED) {
-            const dbMenu = document.getElementById('debugMenu');
-            if (dbMenu) dbMenu.classList.remove('hidden');
+            this.setupDebugMenu();
         }
 
         this.updateUI();
@@ -844,12 +886,12 @@ class Game {
         let count = 3;
         const process = () => {
             if (count > 0) {
-                this.audio.play('countdown');
+                this.audio.playSe('SE_COUNTDOWN_PI');
                 text.textContent = count;
                 count--;
                 setTimeout(process, 1000);
             } else if (count === 0) {
-                this.audio.play('countdown_start');
+                this.audio.playSe('SE_COUNTDOWN_PEEN');
                 text.textContent = "START!";
 
                 // スライド演出の適用
@@ -1016,28 +1058,27 @@ class Game {
     spawnBoss() {
         const x = CONSTANTS.TARGET_WIDTH / 2;
         const y = -150;
-        const stageData = CONSTANTS.STAGE_DATA[this.currentStage];
-        const boss = this.enemyPool.get();
-        if (boss) {
-            boss.initBoss(x, y, this.player.x, this.player.y, stageData.hpMul, (bx, by) => {
-                this.handleBossSummon(bx, by);
-            });
-            boss.bossIndex = this.currentStage; // 進行度を識別子として設定
 
-            // 10面ボス (Stage 10) も Stage 5 と同じ接近・停止挙動にする
-            if (this.currentStage === 9) {
-                boss.movementMode = 'DIRECT';
+        const boss = this.spawnDirector.spawnEnemy({
+            type: CONSTANTS.ENEMY_TYPES.BOSS,
+            x: x,
+            y: y,
+            options: {
+                isBoss: true,
+                bossIndex: this.currentStage,
+                movementMode: (this.currentStage === 9) ? 'DIRECT' : undefined,
+                onSummon: (bx, by) => this.handleBossSummon(bx, by)
             }
+        });
 
-            this.enemies.push(boss);
-            this.bossSpawned = true; // ボス出現済み
+        if (boss) {
+            this.bossSpawned = true;
         }
     }
 
     handleBossSummon(bx, by, boss) {
         if (this.enemies.length >= CONSTANTS.ENEMY_LIMIT - CONSTANTS.BOSS_SUMMON_COUNT) return;
 
-        // Stage5Boss & Stage10Boss の場合、同時存在上限をチェック
         if (boss && (boss.bossIndex === 4 || boss.bossIndex === 9)) {
             const minionCount = this.enemies.filter(e => e.isMinion && !e.isMissile && e.active).length;
             if (minionCount >= CONSTANTS.BOSS_STAGE5_SUMMON_MAX_MINIONS) return;
@@ -1045,57 +1086,62 @@ class Game {
 
         const stageData = CONSTANTS.STAGE_DATA[this.currentStage] || { hpMul: 1.0, speedMul: 1.0 };
         for (let i = 0; i < CONSTANTS.BOSS_SUMMON_COUNT; i++) {
-            const enemy = this.enemyPool.get();
-            if (enemy) {
-                const angle = Math.random() * Math.PI * 2;
-                const dist = 120 + Math.random() * 60;
-                const sx = bx + Math.cos(angle) * dist;
-                const sy = by + Math.sin(angle) * dist;
-                enemy.init(sx, sy, this.player.x, this.player.y, CONSTANTS.ENEMY_TYPES.NORMAL, stageData.hpMul * 0.5, stageData.speedMul);
-                enemy.isMinion = true; // 明示的にミニオン扱いにする
-                this.enemies.push(enemy);
-            }
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 120 + Math.random() * 60;
+            const sx = bx + Math.cos(angle) * dist;
+            const sy = by + Math.sin(angle) * dist;
+
+            this.spawnDirector.spawnEnemy({
+                type: CONSTANTS.ENEMY_TYPES.NORMAL,
+                x: sx,
+                y: sy,
+                options: {
+                    isMinion: true,
+                    hpMul: stageData.hpMul * 0.5,
+                    speedMul: stageData.speedMul
+                }
+            });
         }
     }
 
     spawnPlasmaDrone(boss) {
-        // 同時最大数のチェック
         const droneCount = this.enemies.filter(e => e.isDrone && e.active && e.ownerId === boss.id).length;
-        // Stage 10 でも Stage 5 の定数を流用（同じ密度を維持）
         if (droneCount >= CONSTANTS.PLASMA_DRONE_STAGE5.maxActive) return false;
 
-        const drone = this.enemyPool.get();
-        if (drone) {
-            // ボスの上部から発射されるイメージ
-            const sx = boss.x;
-            const sy = boss.y - 40;
-            drone.initPlasmaDrone(sx, sy, this.player.x, this.player.y, this.currentStage + 1);
-            drone.game = this; // 参照用
-            this.enemies.push(drone);
+        const drone = this.spawnDirector.spawnEnemy({
+            type: CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5,
+            x: boss.x,
+            y: boss.y - 40,
+            options: {
+                isDrone: true,
+                ownerId: boss.bossIndex // bossIndex/owner
+            }
+        });
 
-            // 発射音
-            this.audio.play('shoot', { variation: 0.5, pitch: 0.5 });
+        if (drone) {
+            this.audio.playSe('SE_SHOT_LASER', { variation: 0.5, pitch: 0.5 });
             return true;
         }
         return false;
     }
 
     spawnRimLaser(boss) {
-        // 同時最大数のチェック
         const rimCount = this.enemies.filter(e => e.isRimLaser)
             .filter(e => e.active && e.ownerId === boss.id).length;
         if (rimCount >= CONSTANTS.RIM_LASER_STAGE5.maxActive) return false;
 
-        const rim = this.enemyPool.get();
-        if (rim) {
-            // ボスの位置から生成
-            rim.initRimLaser(boss.x, boss.y, this.currentStage + 1);
-            rim.game = this;
-            rim.movementMode = 'RIM_LASER'; // 明示的にセット
-            this.enemies.push(rim);
+        const rim = this.spawnDirector.spawnEnemy({
+            type: CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5,
+            x: boss.x,
+            y: boss.y,
+            options: {
+                isRimLaser: true,
+                ownerId: boss.bossIndex // bossIndex/owner
+            }
+        });
 
-            // 音
-            this.audio.play('shoot', { variation: 0.3, pitch: 1.2 });
+        if (rim) {
+            this.audio.playSe('SE_SHOT_LASER', { variation: 0.3, pitch: 1.2 });
             return true;
         }
         return false;
@@ -1173,12 +1219,20 @@ class Game {
             b.init(this.player.x, this.player.y, this.player.angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, laserExtra);
             this.bullets.push(b);
         } else {
+            // STANDARD / RIFLE
             const b = this.bulletPool.get();
-            b.init(this.player.x, this.player.y, this.player.angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, extraStats);
-            this.bullets.push(b);
+            if (b) {
+                b.init(this.player.x, this.player.y, this.player.angle, stats.speed, stats.damage, stats.pierce, stats.lifetime, weaponType, extraStats);
+                this.bullets.push(b);
+            }
         }
 
-        this.audio.play('shoot', { variation: 0.1, priority: 'low' });
+        // Determines SE by weapon type
+        let seKey = 'SE_SHOT_RIFLE';
+        if (weaponType === CONSTANTS.WEAPON_TYPES.SHOT) seKey = 'SE_SHOT_SHOTGUN';
+        if (weaponType === CONSTANTS.WEAPON_TYPES.PIERCE) seKey = 'SE_SHOT_LASER';
+
+        this.audio.playSe(seKey, { variation: 0.1, priority: 'low' });
     }
 
     /**
@@ -1669,7 +1723,7 @@ class Game {
                             b.isReflected = true;
                             b.hitEnemies.clear(); // 再びエネミーに当たる可能性（または自分に当たる）
 
-                            this.audio.play('hit', { variation: 0.5, priority: 'low' });
+                            this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.5, priority: 'low' });
                             this.spawnDamageText(e.renderX, e.renderY, "REFLECT!", "#ffd700");
                             bulletConsumed = true;
                             break;
@@ -1681,7 +1735,7 @@ class Game {
                         isAuraProtected: e.isShielded
                     });
 
-                    this.audio.play('hit', { variation: 0.2, priority: 'low' });
+                    this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.2, priority: 'low' });
                     b.hitEnemies.add(e);
 
                     // RIM_LASER: ダメージ表示なし（静かに消える）
@@ -1769,7 +1823,7 @@ class Game {
                     const d = this.distToSegment(b.x, b.y, bar.ax, bar.ay, bar.bx, bar.by);
                     if (d < 10) {
                         b.active = false;
-                        this.audio.play('hit', { variation: 0.5, priority: 'low' });
+                        this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.5, priority: 'low' });
                         Effects.spawnHitEffect(b.x, b.y, 0);
                         continue;
                     }
@@ -1808,7 +1862,7 @@ class Game {
                         this.player.takeDamage(finalDamage);
                         this.player.invincibleFrames = 18;
                         frameTouchHitApplied = true;
-                        this.audio.play('damage', { priority: 'high' });
+                        this.audio.playSe('SE_DAMAGE', { priority: 'high' });
                         e.lastContactTime = now;
                     }
                 }
@@ -1829,7 +1883,7 @@ class Game {
                 if (!e.isBoss && CONSTANTS.BARRIER_INSTANT_KILL_TYPES.includes(e.type) && !this.player.barrierKillConsumedThisFrame && this.player.barrierCharges > 0) {
                     this.player.barrierCharges--;
                     this.player.barrierKillConsumedThisFrame = true;
-                    this.audio.play('barrier_hit', { variation: 0.1 });
+                    this.audio.playSe('SE_GUARD_HIT_02', { variation: 0.1 });
                     e.destroy('LIFETIME', this); // バリア即死は寿命(LIFETIME)とする
                 } else {
                     if (Math.random() < 0.1) this.spawnDamageText(e.renderX, e.renderY, ".", "#ffffff");
@@ -1850,7 +1904,7 @@ class Game {
                 const playerHitR = CONSTANTS.PLAYER_SIZE || 20;
                 if (distSq < playerHitR * playerHitR) {
                     this.player.takeDamage(0.1); // 反射弾ダメージ (10%)
-                    this.audio.play('damage', { priority: 'high' });
+                    this.audio.playSe('SE_DAMAGE', { priority: 'high' });
                     b.active = false;
                     Effects.spawnHitEffect(b.x, b.y, 0);
                 }
@@ -1867,7 +1921,7 @@ class Game {
             // Failsafe: If a boss exists, ensure the flag is true
             if (hasActiveBoss) this.bossSpawned = true;
 
-            if (this.bossSpawned && !hasActiveBoss && this.golds.length === 0) {
+            if (this.bossSpawned && !hasActiveBoss) {
                 if (this.isDebugStage) {
                     // デバッグ時はリザルトに行かず、フラグをリセットして次を待つ
                     this.bossSpawned = false;
@@ -1921,7 +1975,7 @@ class Game {
                 // 獲得ポップアップ演出 (+いくら)
                 this.spawnDamageText(textTargetX, goldTargetY - 40, `+${val}`, "#ffcc00");
 
-                this.audio.play('gold_collect', { volume: 0.5 });
+                this.audio.playSe('SE_COIN', { volume: 0.5 });
 
                 // プールへ返却
                 this.goldPool.release(this.golds.splice(k, 1)[0]);
@@ -1973,7 +2027,7 @@ class Game {
         });
 
         // 生成SEなどがあればここで追加
-        if (this.audio) this.audio.play('barrier', { volume: 0.4, pitch: 0.8 });
+        if (this.audio) this.audio.playSe('SE_BARRIER_01', { volume: 0.4, pitch: 0.8 });
     }
 
     cleanupEntities() {
@@ -2028,7 +2082,7 @@ class Game {
         if (this.lastPulseSoundTime && now - this.lastPulseSoundTime < 200) return;
         this.lastPulseSoundTime = now;
 
-        this.audio.play('pulse_knockback', { priority: 'high' });
+        this.audio.playSe('SE_PULSE', { priority: 'high' });
         this.pulseCooldownTimer = CONSTANTS.PULSE_COOLDOWN_MS;
 
         // 画面シェイクの発動
@@ -2158,7 +2212,11 @@ class Game {
             btnPulse.classList.toggle('countdown-locked', this.isCountdownActive());
         }
 
-        this.updateDebugHUD();
+        // 定期的なデバッグHUD更新 (毎フレーム更新によるチラつき防止)
+        this.uiUpdateCounter = (this.uiUpdateCounter || 0) + 1;
+        if (this.uiUpdateCounter % 10 === 0) {
+            this.updateDebugHUD();
+        }
     }
 
     updateDebugHUD() {

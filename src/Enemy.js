@@ -341,6 +341,7 @@ export class Enemy {
         this.rimT = Math.random();
         this.rimWarnTimer = 0;
         this.rimTargetT = 0.2 + Math.random() * 0.6; // その辺の 20%-80% の位置でダイブ
+        this.diveCooldown = 1.0 + Math.random() * 1.5; // [NEW] ダイブの連射抑制
     }
 
     applyKnockback(vx, vy, power) {
@@ -1176,7 +1177,7 @@ export class Enemy {
                         this.vy = Math.sin(this.chargeAngle) * this.currentSpeed;
 
                         Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 4.0);
-                        if (this.game && this.game.audio) this.game.audio.play('dash', { volume: 0.6, pitch: 1.2 });
+                        if (this.game && this.game.audio) this.game.audio.playSe('SE_BARRIER_02', { volume: 0.6, pitch: 1.2 });
                     }
                 } else if (this.flankState === 3) {
                     // PHASE 3: SUPER CHARGE (12x)
@@ -1259,7 +1260,7 @@ export class Enemy {
                         this.chargeAngle = this.angle; // FINAL LOCK
                         Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 3.0);
                         if (this.game && this.game.audio) {
-                            this.game.audio.play('dash', { volume: 0.5 });
+                            this.game.audio.playSe('SE_BARRIER_02', { volume: 0.5 });
                         }
                     }
 
@@ -1382,7 +1383,7 @@ export class Enemy {
                             this.movementMode = 'AVOID';
                             e.movementMode = 'AVOID';
 
-                            if (this.game && this.game.audio) this.game.audio.play('buff', { volume: 0.4, pitch: 1.5 });
+                            if (this.game && this.game.audio) this.game.audio.playSe('SE_BARRIER_02', { volume: 0.4, pitch: 1.5 });
                             break;
                         }
                     }
@@ -1423,7 +1424,7 @@ export class Enemy {
                     if (this.revengeTimer <= 0) {
                         this.revengeState = 1; // ZIGZAG CHARGE
                         this.currentSpeed = this.baseSpeed * 5.4; // [FIX] 3.0倍に強化 (1.8 * 3)
-                        if (this.game && this.game.audio) this.game.audio.play('dash', { volume: 0.4 });
+                        if (this.game && this.game.audio) this.game.audio.playSe('SE_BARRIER_02', { volume: 0.4 });
                     }
                 } else if (this.revengeState === 1) {
                     // 1: ZIGZAG CHARGE
@@ -1652,13 +1653,15 @@ export class Enemy {
                         this.rimSide = (this.rimSide + 1) % 4; // 次の辺へ
 
                         // ダイブ判定: 規定位置を通過したらダイブへ移行
-                        if (Math.random() < 0.3) { // 30%の確率でその辺でダイブ決定
+                        if (this.diveCooldown <= 0 && Math.random() < 0.3) { // [FIX] クールダウン中ならダイブしない
                             this.rimState = 'DIVE_WARN';
                             this.rimWarnTimer = rimCfg.warnDuration || 0.25;
                             this.vx = 0;
                             this.vy = 0;
                         }
                     }
+
+                    if (this.diveCooldown > 0) this.diveCooldown -= dt / 1000;
 
                     // 辺ごとの位置計算
                     let tx, ty;
@@ -1692,7 +1695,7 @@ export class Enemy {
 
                     if (this.rimWarnTimer <= 0) {
                         this.rimState = 'DIVE';
-                        if (this.game && this.game.audio) this.game.audio.play('shoot', { variation: 0.2, pitch: 1.5 });
+                        if (this.game && this.game.audio) this.game.audio.playSe('SE_SHOT_RIFLE', { variation: 0.2, pitch: 1.5 });
                     }
                 } else if (this.rimState === 'DIVE') {
                     // 3. 直線侵入 (DIVE): 高速突撃
@@ -1885,8 +1888,8 @@ export class Enemy {
                     case CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5:
                         // プラズマ・ドローンの独自図形描画: コア + リング
                         const sizePD = 20;
-                        // Stage 10 (ownerId >= 10) は赤系、Stage 5 は青系
-                        const isStage10 = this.ownerId && this.ownerId >= 10;
+                        // Stage 10 (ownerId === 9) は赤系、Stage 5 は青系 [FIX]
+                        const isStage10 = this.ownerId === 9;
                         const droneColor = isStage10 ? '#ff5555' : '#0ff';
                         const droneColorRGB = isStage10 ? '255, 85, 85' : '0, 255, 255';
 
@@ -1959,8 +1962,8 @@ export class Enemy {
                         // 2. 本体
                         // [FIX] 進行方向に平行な（aligned）鋭いライン形状
                         // ctx.rotate(rot + PI/2) により、ローカルY軸が進行方向
-                        // Stage 10 (ownerId >= 10) は赤系、Stage 5 は青系
-                        const isStage10Rim = this.ownerId && this.ownerId >= 10;
+                        // Stage 10 (ownerId === 9) は赤系、Stage 5 は青系 [FIX]
+                        const isStage10Rim = this.ownerId === 9;
                         const rimColor = isStage10Rim ? '#ff5555' : '#0ff';
 
                         ctx.shadowBlur = 25;
@@ -2627,7 +2630,7 @@ export class Enemy {
                     }
                 }
 
-                if (this.game && this.game.audio) this.game.audio.play('shoot', { variation: 0.8, pitch: 2.0 });
+                if (this.game && this.game.audio) this.game.audio.playSe('SE_SHOT_LASER', { variation: 0.8, pitch: 2.0 });
             }
             return; // 演出待ち
         }
@@ -2657,8 +2660,8 @@ export class Enemy {
             // 演出
             if (this.isDrone) {
                 // ドローン専用：スパーク円
-                // Stage 10 (ownerId >= 10) は赤系、Stage 5 は青系
-                const isStage10Drone = this.ownerId && this.ownerId >= 10;
+                // Stage 10 (ownerId === 9) は赤系、Stage 5 は青系 [FIX]
+                const isStage10Drone = this.ownerId === 9;
                 const droneDestroyColor = isStage10Drone ? '#ff5555' : '#00ffff';
 
                 Effects.createExplosion(this.x, this.y, splashRadius * 0.8, droneDestroyColor);
@@ -2674,6 +2677,16 @@ export class Enemy {
                 }
             }
         }
+
+        // 破壊音
+        if (this.game && this.game.audio) {
+            const deathSound = (this.isBoss || this.type === CONSTANTS.ENEMY_TYPES.ELITE) ? 'SE_BREAK_SPECIAL' : 'SE_BREAK_NORMAL';
+            this.game.audio.playSe(deathSound);
+        }
+
+        this.active = false;
+        this.deactivateReason = reason;
+        this.destroyReason = reason;
 
         // スコア・統計加算 (正当な撃破時のみ)
         if (this.hp <= 0) {
@@ -2736,27 +2749,25 @@ export class Enemy {
             }
 
             for (let i = 0; i < childrenCount; i++) {
-                const child = game.enemyPool.get();
-                if (child) {
-                    const offsetAngle = (Math.PI * 2 / childrenCount) * i + Math.random();
-                    const dist = 30;
-                    const cx = this.x + Math.cos(offsetAngle) * dist;
-                    const cy = this.y + Math.sin(offsetAngle) * dist;
+                const offsetAngle = (Math.PI * 2 / childrenCount) * i + Math.random();
+                const dist = 30;
+                const cx = this.x + Math.cos(offsetAngle) * dist;
+                const cy = this.y + Math.sin(offsetAngle) * dist;
 
-                    // SPLITTER_CHILD を生成
-                    child.init(cx, cy, game.player.x, game.player.y, CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD, stageData.hpMul * 0.5, stageData.speedMul);
-
-                    // Minion設定
-                    child.isMinion = true;
-                    child.lifespan = 10.0; // 10秒で消滅
-
-                    // 少し散らす
-                    child.vx = Math.cos(offsetAngle) * child.baseSpeed * 1.5;
-                    child.vy = Math.sin(offsetAngle) * child.baseSpeed * 1.5;
-
-                    game.enemies.push(child);
-                    // Minionなので enemiesRemaining は減らさない (フェーズ生成数に含まれないため)
-                }
+                game.spawnDirector.spawnEnemy({
+                    type: CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD,
+                    x: cx,
+                    y: cy,
+                    options: {
+                        isMinion: true,
+                        lifespan: 10.0,
+                        hpMul: stageData.hpMul * 0.5,
+                        speedMul: stageData.speedMul,
+                        // Splatter effect
+                        vx: Math.cos(offsetAngle) * 2.0, // Simplified speed boost
+                        vy: Math.sin(offsetAngle) * 2.0
+                    }
+                });
             }
         }
     }

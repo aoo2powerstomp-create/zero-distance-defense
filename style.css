@@ -10,6 +10,8 @@ body {
     justify-content: center;
     align-items: center;
     height: 100vh;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #game-container {
@@ -319,6 +321,11 @@ body {
     gap: 15px;
     border-top: 1px solid rgba(0, 255, 255, 0.2);
     z-index: 10;
+    pointer-events: none;
+}
+
+#controls * {
+    pointer-events: auto;
 }
 
 .gold-display {
@@ -1018,6 +1025,13 @@ body {
 
 .debug-row {
     margin-bottom: 2px;
+}
+
+#debugMenu,
+#debug-ui-container,
+#debug-stats-panel {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .perf-overlay {

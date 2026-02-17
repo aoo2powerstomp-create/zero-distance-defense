@@ -2,6 +2,7 @@ import { CONSTANTS } from './constants.js';
 import { DEBUG_ENABLED } from './utils/env.js';
 import { Enemy } from './Enemy.js';
 import { Formations } from './formations.js';
+import { SpawnRulesRegistry } from './utils/SpawnRulesRegistry.js';
 
 export class SpawnDirector {
     constructor(game) {
@@ -43,8 +44,64 @@ export class SpawnDirector {
         //     mainType: CONSTANTS.ENEMY_TYPES.NORMAL
         // };
 
-        // 初期化
+        // Initialized in resetForStage
         this.resetForStage();
+
+        // Registry & Validation
+        this.rules = new SpawnRulesRegistry();
+        this.initRules();
+    }
+
+    initRules() {
+        const TYPES = CONSTANTS.ENEMY_TYPES;
+
+        // 1. CAP ATTR_RED alive <= 4
+        this.rules.register({
+            type: 'CAP', target: 'ATTRACTOR_RED', threshold: CONSTANTS.ATTRACTOR.MAX_ALIVE_RED,
+            scope: 'alive', severity: 'BLOCK'
+        });
+
+        // 2. CAP ATTR_BLUE alive <= 4
+        this.rules.register({
+            type: 'CAP', target: 'ATTRACTOR_BLUE', threshold: CONSTANTS.ATTRACTOR.MAX_ALIVE_BLUE,
+            scope: 'alive', severity: 'BLOCK'
+        });
+
+        // 3. LIMIT ATTRACTOR perWave <= 2
+        this.rules.register({
+            type: 'LIMIT', target: TYPES.ATTRACTOR, threshold: CONSTANTS.ATTRACTOR.MAX_PER_WAVE,
+            scope: 'perWave', severity: 'BLOCK'
+        });
+
+        // 4. LIMIT ELITE perTick
+        this.rules.register({
+            type: 'LIMIT', target: TYPES.ELITE, threshold: 1, scope: 'perTick',
+            stageCondition: (ctx) => ctx.stage === 1, severity: 'BLOCK'
+        });
+        this.rules.register({
+            type: 'LIMIT', target: TYPES.ELITE, threshold: 2, scope: 'perTick',
+            stageCondition: (ctx) => ctx.stage >= 2, severity: 'BLOCK'
+        });
+
+        // 5. POSITION minSpawnDistance
+        this.rules.register({
+            type: 'POSITION', target: 'ANY', severity: 'BLOCK',
+            validator: (decision, ctx) => {
+                if (decision.options && decision.options.ignoreLimits) return true;
+                const minDist = (decision.type === TYPES.ELITE) ? 70 : 40;
+                for (const p of ctx.recentSpawnPoints) {
+                    const d = Math.sqrt((decision.x - p.x) ** 2 + (decision.y - p.y) ** 2);
+                    if (d < minDist) return false;
+                }
+                return true;
+            }
+        });
+
+        // 6. EXCLUSION formation禁止タイプ
+        this.rules.register({
+            type: 'EXCLUSION', target: 'ANY', scope: 'formation', severity: 'BLOCK',
+            stageCondition: (ctx) => !this.canFormFormation(ctx.decisionType)
+        });
     }
 
     resetForStage() {
@@ -296,14 +353,13 @@ export class SpawnDirector {
 
     processPendingSpawns(dt) {
         // 1. Clean up old spawn points history (keep last 500ms)
-        const now = Date.now();
+        const now = this.game.getTime();
         this.recentSpawnPoints = this.recentSpawnPoints.filter(p => now - p.time < 500);
 
         if (this.pendingSpawnQueue.length === 0) return;
 
         // 2. Safety Valve: If queue is huge, force flush oldest to prevent stagnation
         if (this.pendingSpawnQueue.length > 20) {
-            // console.warn('[SPAWN] Queue Overflow! Safety Valve Activated.');
             const overflowCount = this.pendingSpawnQueue.length - 20;
             for (let i = 0; i < overflowCount; i++) {
                 const pending = this.pendingSpawnQueue.shift();
@@ -323,76 +379,18 @@ export class SpawnDirector {
         }
 
         // 3. Normal Queue Processing
-        // Limit processing per tick to avoid lag spike (e.g., max 5 redos per frame)
         const processCount = Math.min(this.pendingSpawnQueue.length, 5);
 
         for (let i = 0; i < processCount; i++) {
             const pending = this.pendingSpawnQueue[0]; // Peek
 
-            // Check delay (wait for next frame or specific delay)
             if (pending.nextDelay > 0) {
                 pending.nextDelay -= dt;
-                // If still waiting, stop processing queue to maintain order (FIFO)
                 if (pending.nextDelay > 0) break;
             }
 
-            // Ready to try spawn
             this.pendingSpawnQueue.shift(); // Remove from queue
 
-            // Try spawn again (respect limits)
-            this.executeSpawn(pending.type, pending.pattern, pending.x, pending.y, {
-                ...pending.options,
-                fromQueue: true
-            });
-        }
-    }
-
-    processPendingSpawns(dt) {
-        // 1. Clean up old spawn points history (keep last 500ms)
-        const now = Date.now();
-        this.recentSpawnPoints = this.recentSpawnPoints.filter(p => now - p.time < 500);
-
-        if (this.pendingSpawnQueue.length === 0) return;
-
-        // 2. Safety Valve: If queue is huge, force flush oldest to prevent stagnation
-        if (this.pendingSpawnQueue.length > 20) {
-            // console.warn('[SPAWN] Queue Overflow! Safety Valve Activated.');
-            const overflowCount = this.pendingSpawnQueue.length - 20;
-            for (let i = 0; i < overflowCount; i++) {
-                const pending = this.pendingSpawnQueue.shift();
-                if (!pending) break;
-
-                // Downgrade Elite to Normal to ensure progress without overwhelming
-                if (pending.type === CONSTANTS.ENEMY_TYPES.ELITE) {
-                    pending.type = CONSTANTS.ENEMY_TYPES.NORMAL;
-                }
-
-                // Force spawn (ignore limits)
-                this.executeSpawn(pending.type, pending.pattern, pending.x, pending.y, {
-                    ...pending.options,
-                    ignoreLimits: true
-                });
-            }
-        }
-
-        // 3. Normal Queue Processing
-        // Limit processing per tick to avoid lag spike (e.g., max 5 redos per frame)
-        const processCount = Math.min(this.pendingSpawnQueue.length, 5);
-
-        for (let i = 0; i < processCount; i++) {
-            const pending = this.pendingSpawnQueue[0]; // Peek
-
-            // Check delay (wait for next frame or specific delay)
-            if (pending.nextDelay > 0) {
-                pending.nextDelay -= dt;
-                // If still waiting, stop processing queue to maintain order (FIFO)
-                if (pending.nextDelay > 0) break;
-            }
-
-            // Ready to try spawn
-            this.pendingSpawnQueue.shift(); // Remove from queue
-
-            // Try spawn again (respect limits)
             this.executeSpawn(pending.type, pending.pattern, pending.x, pending.y, {
                 ...pending.options,
                 fromQueue: true
@@ -1682,28 +1680,19 @@ export class SpawnDirector {
     executeSpawn(type, pattern = 'NONE', overrideX = null, overrideY = null, options = {}) {
         // --- 1. DENSITY CONTROL (Elite & Overlap Guard) ---
         if (!options.ignoreLimits) {
-            // A. Elite Time Interval (Global Cooldown for Elites)
             if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
                 const now = this.game.getTime();
-                const MIN_ELITE_INTERVAL = 500; // 0.5s gap minimum between *batches*
-
-                // Determine Max Elites per "Burst" (Tick)
-                // Stage 1 (Index 0): 1 body
-                // Stage 2+ (Index 1+): 2 bodies
+                const MIN_ELITE_INTERVAL = 500;
                 const maxElites = (this.game.currentStage === 0) ? 1 : 2;
 
-                // Check 1: Tick Limit
                 if (this.eliteSpawnedThisTick >= maxElites) {
                     this.pendingSpawnQueue.push({
                         type, pattern, x: overrideX, y: overrideY,
-                        options, nextDelay: 100 // Delay to next frames
+                        options, nextDelay: 100
                     });
                     return;
                 }
 
-                // Check 2: Time Interval
-                // Only enforce interval for the FIRST elite of the batch.
-                // Subsequent elites in the same tick (up to maxElites) are allowed to burst.
                 if (this.eliteSpawnedThisTick === 0) {
                     if (now - this.lastEliteSpawnTime < MIN_ELITE_INTERVAL) {
                         const delay = MIN_ELITE_INTERVAL - (now - this.lastEliteSpawnTime);
@@ -1716,24 +1705,6 @@ export class SpawnDirector {
                 }
             }
         }
-        if (!this.game.isSimulation) {
-            console.log(`[DIRECTOR] executeSpawn: ${type}, Pattern: ${pattern}, Stage: ${this.game.currentStage + 1}`);
-        }
-        // ... (NAN check or similar)
-        // Cooldown設定 (ID -> Key変換がここでも必要だが、Switchで)
-        this.setCooldown(type);
-
-        // 履歴更新 (Recent 8 for Anti-Streak)
-        this.recentTypes.push(type);
-        if (this.recentTypes.length > 8) this.recentTypes.shift();
-
-        // History for Ratio (Last 200)
-        this.historyTypes.push(type);
-        if (this.historyTypes.length > this.historyMax) this.historyTypes.shift();
-
-        // Cumulative Stats Update
-        this.stageSpawnTotalCount++;
-        this.stageSpawnByType[type] = (this.stageSpawnByType[type] || 0) + 1;
 
         // Spawn Position & Side Selection
         let x = overrideX;
@@ -1746,13 +1717,10 @@ export class SpawnDirector {
             x = pos.x;
             y = pos.y;
 
-            // --- B. Minimum Distance Check (Retry Logic) ---
             if (!options.ignoreLimits) {
-                const minDist = (type === CONSTANTS.ENEMY_TYPES.ELITE) ? 70 : 40; // MIN_SPAWN_DIST_ELITE / ANY
+                const minDist = (type === CONSTANTS.ENEMY_TYPES.ELITE) ? 70 : 40;
                 let valid = true;
-                const now = this.game.getTime();
 
-                // Check against recent spawns
                 for (const p of this.recentSpawnPoints) {
                     const d = Math.sqrt((x - p.x) ** 2 + (y - p.y) ** 2);
                     if (d < minDist) {
@@ -1761,11 +1729,10 @@ export class SpawnDirector {
                     }
                 }
 
-                // Retry if invalid
                 if (!valid) {
                     let retries = 8;
                     while (retries > 0) {
-                        const newPos = this.calculateSpawnPos(side); // Try same side again
+                        const newPos = this.calculateSpawnPos(side);
                         let retryValid = true;
                         for (const p of this.recentSpawnPoints) {
                             const d = Math.sqrt((newPos.x - p.x) ** 2 + (newPos.y - p.y) ** 2);
@@ -1783,12 +1750,10 @@ export class SpawnDirector {
                         retries--;
                     }
 
-                    // If still invalid, queue for later frame (scatter in time)
                     if (!valid) {
-                        // console.warn('[SPAWN] Too Crowded/Stacked. Queueing.');
                         this.pendingSpawnQueue.push({
-                            type, pattern, x: null, y: null, // Recalculate next time
-                            options, nextDelay: 100 // Delay 100ms
+                            type, pattern, x: null, y: null,
+                            options, nextDelay: 100
                         });
                         return;
                     }
@@ -1796,70 +1761,134 @@ export class SpawnDirector {
             }
         }
 
-        // Record for HUD stats
-        this.recordSpawnStats(side, pattern);
+        // Build Spawn Decision
+        const decision = {
+            type,
+            x,
+            y,
+            pattern,
+            side,
+            options: { ...options }
+        };
 
-        // Game側へ委譲
-        const stageData = CONSTANTS.STAGE_DATA[this.game.currentStage] || { hpMul: 1.0, speedMul: 1.0 };
-        const enemy = this.game.enemyPool.get();
-        if (!enemy) return;
-
-        enemy.init(x, y, this.game.player.x, this.game.player.y, type, stageData.hpMul, stageData.speedMul);
-
-        // アトラクター属性決定（制限チェック付き）
+        // --- 2. LOGIC WRAPPING (Attractor/Reflector replacement) ---
+        // TODO: Move these to Phase 3 Registry logic
         if (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
-            // ウェーブ内上限チェック
             if (this.attractorWaveCount >= CONSTANTS.ATTRACTOR.MAX_PER_WAVE) {
-                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[ATTRACTOR] Wave limit reached (${this.attractorWaveCount}/${CONSTANTS.ATTRACTOR.MAX_PER_WAVE}), replacing spawn`);
-                const replacementType = this.replaceAttractorSpawn(type);
-                enemy.returnToPool(); // 現在のenemyを返却
-                return this.executeSpawn(replacementType, pattern, overrideX, overrideY, options);
-            }
-
-            const counts = this.countAliveAttractors();
-
-            // 両方上限チェック
-            const canSpawnRed = counts.red < CONSTANTS.ATTRACTOR.MAX_ALIVE_RED;
-            const canSpawnBlue = counts.blue < CONSTANTS.ATTRACTOR.MAX_ALIVE_BLUE;
-
-            if (!canSpawnRed && !canSpawnBlue) {
-                // 両方上限 → 置換
-                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[ATTRACTOR] Both colors at cap (R:${counts.red}/${CONSTANTS.ATTRACTOR.MAX_ALIVE_RED}, B:${counts.blue}/${CONSTANTS.ATTRACTOR.MAX_ALIVE_BLUE}), replacing spawn`);
-                const replacementType = this.replaceAttractorSpawn(type);
-                enemy.returnToPool();
-                return this.executeSpawn(replacementType, pattern, overrideX, overrideY, options);
-            } else if (!canSpawnRed) {
-                // REDのみ上限 → BLUE確定
-                enemy.attractorKind = CONSTANTS.ATTRACTOR_KIND.BLUE;
-            } else if (!canSpawnBlue) {
-                // BLUEのみ上限 → RED確定
-                enemy.attractorKind = CONSTANTS.ATTRACTOR_KIND.RED;
+                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[ATTRACTOR] Wave limit reached, replacing spawn`);
+                decision.type = this.replaceAttractorSpawn(type);
             } else {
-                // 両方OK → ランダム
-                enemy.attractorKind = this.random() < 0.5 ? CONSTANTS.ATTRACTOR_KIND.RED : CONSTANTS.ATTRACTOR_KIND.BLUE;
-            }
+                const counts = this.countAliveAttractors();
+                const canSpawnRed = counts.red < CONSTANTS.ATTRACTOR.MAX_ALIVE_RED;
+                const canSpawnBlue = counts.blue < CONSTANTS.ATTRACTOR.MAX_ALIVE_BLUE;
 
-            // ウェーブカウント増加
-            this.attractorWaveCount++;
+                if (!canSpawnRed && !canSpawnBlue) {
+                    if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[ATTRACTOR] Both colors at cap, replacing spawn`);
+                    decision.type = this.replaceAttractorSpawn(type);
+                } else if (!canSpawnRed) {
+                    decision.options.attractorKind = CONSTANTS.ATTRACTOR_KIND.BLUE;
+                } else if (!canSpawnBlue) {
+                    decision.options.attractorKind = CONSTANTS.ATTRACTOR_KIND.RED;
+                } else {
+                    decision.options.attractorKind = this.random() < 0.5 ? CONSTANTS.ATTRACTOR_KIND.RED : CONSTANTS.ATTRACTOR_KIND.BLUE;
+                }
+            }
         }
 
-        // リフレクター上限チェック
-        if (type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
-            const reflectorCount = this.game.enemies.filter(e =>
-                e.active && e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR
-            ).length;
-
+        if (decision.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
+            const reflectorCount = this.game.enemies.filter(e => e.active && e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR).length;
             if (reflectorCount >= CONSTANTS.REFLECTOR.MAX_ALIVE) {
-                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[REFLECTOR] Alive limit reached (${reflectorCount}/${CONSTANTS.REFLECTOR.MAX_ALIVE}), replacing spawn`);
-                const replacementType = this.replaceReflectorSpawn(type);
-                enemy.returnToPool();
-                return this.executeSpawn(replacementType, pattern, overrideX, overrideY, options);
+                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[REFLECTOR] Alive limit reached, replacing spawn`);
+                decision.type = this.replaceReflectorSpawn(decision.type);
             }
         }
 
-        // --- PRODUCTION: Apply Entry & Formation Meta ---
+        // --- 3. EXECUTE UNIFIED SPAWN ---
+        const spawned = this.spawnEnemy(decision);
+
+        // --- 4. Special Handling (Partner Spawning) ---
+        if (spawned && spawned.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR) {
+            const partnerDecision = {
+                type: spawned.type,
+                x: spawned.x + 40,
+                y: spawned.y + 40,
+                pattern: decision.pattern,
+                side: decision.side,
+                options: { ...decision.options }
+            };
+            const partner = this.spawnEnemy(partnerDecision);
+            if (partner) {
+                spawned.partner = partner;
+                partner.partner = spawned;
+            }
+        }
+
+        return spawned;
+    }
+
+    /**
+     * @param {Object} decision
+     */
+    spawnEnemy(decision) {
+        // Build Context for Validation
+        const ctx = {
+            stage: this.game.currentStage + 1,
+            attractorCounts: this.countAliveAttractors(),
+            attractorWaveCount: this.attractorWaveCount,
+            eliteSpawnedThisTick: this.eliteSpawnedThisTick,
+            recentSpawnPoints: this.recentSpawnPoints,
+            decisionType: decision.type,
+            aliveCounts: this._getAliveCounts()
+        };
+
+        // Validation
+        const violations = this.rules.validate(decision, ctx);
+
+        if (violations.length > 0) {
+            let hasBlock = false;
+            for (const v of violations) {
+                if (!this.game.isSimulation) {
+                    console.warn(`[SPAWN VIOLATION] ${v.severity} ${v.ruleType} target:${v.target} current:${v.currentValue} threshold:${v.threshold}`);
+                }
+                if (v.severity === 'BLOCK') hasBlock = true;
+            }
+
+            if (hasBlock) {
+                return this.applyReplacementRule(decision, ctx);
+            }
+        }
+
+        const type = decision.type;
+        const options = decision.options || {};
+        const stageData = CONSTANTS.STAGE_DATA[this.game.currentStage] || { hpMul: 1.0, speedMul: 1.0 };
+
+        const enemy = this.game.enemyPool.get();
+        if (!enemy) return null;
+
+        if (options.isBoss) {
+            enemy.initBoss(decision.x, decision.y, this.game.player.x, this.game.player.y, options.hpMul !== undefined ? options.hpMul : stageData.hpMul, options.onSummon);
+        } else if (options.isDrone) {
+            enemy.initPlasmaDrone(decision.x, decision.y, this.game.player.x, this.game.player.y, options.ownerId);
+        } else if (options.isRimLaser) {
+            enemy.initRimLaser(decision.x, decision.y, options.ownerId);
+        } else {
+            const hpMul = options.hpMul !== undefined ? options.hpMul : stageData.hpMul;
+            const speedMul = options.speedMul !== undefined ? options.speedMul : stageData.speedMul;
+            enemy.init(decision.x, decision.y, this.game.player.x, this.game.player.y, type, hpMul, speedMul);
+        }
+
+        // Apply Meta
         if (options.entry) enemy.entry = options.entry;
         if (options.formationInfo) enemy.formationInfo = options.formationInfo;
+        if (options.isMinion) enemy.isMinion = true;
+        if (options.lifespan) enemy.lifespan = options.lifespan;
+        if (options.attractorKind) enemy.attractorKind = options.attractorKind;
+        if (options.ownerId) enemy.ownerId = options.ownerId; // Redundant but safe if already set by init
+
+        if (options.vx !== undefined) enemy.vx = options.vx;
+        if (options.vy !== undefined) enemy.vy = options.vy;
+        if (options.bossIndex !== undefined) enemy.bossIndex = options.bossIndex;
+        if (options.movementMode) enemy.movementMode = options.movementMode;
 
         enemy.id = Enemy.nextId++;
         enemy.age = 0;
@@ -1867,46 +1896,59 @@ export class SpawnDirector {
 
         this.game.enemies.push(enemy);
 
-        // --- Update State for Density Control ---
+        // Finalize Record
+        this.recordSpawn(enemy, decision);
+
+        return enemy;
+    }
+
+    recordSpawn(enemy, decision) {
+        const type = decision.type;
+        const options = decision.options || {};
+
+        // Update Density Control State
         if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
             this.eliteSpawnedThisTick++;
             this.lastEliteSpawnTime = this.game.getTime();
         }
-        this.recentSpawnPoints.push({ x: x, y: y, time: this.game.getTime() });
+        if (decision.x !== null && decision.y !== null) {
+            this.recentSpawnPoints.push({ x: decision.x, y: decision.y, time: this.game.getTime() });
 
-        // --- STATISTICS TRACKING (Unified for Game & Sim) ---
+            // Prune old points (older than 1000ms) to maintain performance
+            const now = this.game.getTime();
+            while (this.recentSpawnPoints.length > 0 && now - this.recentSpawnPoints[0].time > 1000) {
+                this.recentSpawnPoints.shift();
+            }
+        }
+
+        // Update Stats
         this.stageSpawnTotalCount++;
         this.stageSpawnByType[type] = (this.stageSpawnByType[type] || 0) + 1;
+        this.recordSpawnStats(decision.side, decision.pattern);
 
         if (this.game.economyLogger) {
             this.game.economyLogger.recordSpawn(type);
         }
-        this.game.enemiesRemaining--;
-        this.game.currentSpawnBudget--;
 
-        if (this.game.debugEnabled) {
-            // console.log(`[SPAWN OK] id:${enemy.id} stage:${this.game.currentStage + 1} rem:${this.game.enemiesRemaining + 1}->${this.game.enemiesRemaining} type:${type} total:${this.game.enemies.length}`);
+        // Attractor counts
+        if (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
+            this.attractorWaveCount++;
         }
 
-        // 特殊: Barrier Pair
-        if (type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR) {
-            const partner = this.game.enemyPool.get();
-            if (partner) {
-                partner.init(x + 40, y + 40, this.game.player.x, this.game.player.y, type, stageData.hpMul, stageData.speedMul);
-                partner.id = Enemy.nextId++;
-                partner.age = 0;
-                partner.oobFrames = 0;
-
-                this.game.enemies.push(partner);
-                enemy.partner = partner;
-                partner.partner = enemy;
-                this.game.enemiesRemaining--;
-                this.game.currentSpawnBudget--;
-                if (this.game.debugEnabled) {
-                    // console.log(`[SPAWN OK] (PARTNER) id:${partner.id} stage:${this.game.currentStage + 1} rem:${this.game.enemiesRemaining + 1}->${this.game.enemiesRemaining} type:${type} total:${this.game.enemies.length}`);
-                }
-            }
+        // Budget
+        if (!enemy.isMinion) {
+            this.game.enemiesRemaining--;
+            this.game.currentSpawnBudget--;
         }
+
+        // Anti-streak history
+        this.recentTypes.push(type);
+        if (this.recentTypes.length > 8) this.recentTypes.shift();
+        this.historyTypes.push(type);
+        if (this.historyTypes.length > this.historyMax) this.historyTypes.shift();
+
+        // Cooldown
+        this.setCooldown(type);
     }
 
     setCooldown(type) {
@@ -2420,54 +2462,49 @@ export class SpawnDirector {
 
     spawnPair(w, h, margin, type) {
         // Simple Barrier Pair Spawn Logic (reused or simplified)
-        const e1 = this.game.enemyPool.get();
-        const e2 = this.game.enemyPool.get();
+        const cx = w / 2;
+        const cy = -margin;
+        const ox = 60;
+        const hpMul = 1.0;
+        const speedMul = 1.0;
+
+        const e1 = this.spawnEnemy({
+            type, x: cx - ox, y: cy, pattern: 'PAIR',
+            options: { hpMul, speedMul }
+        });
+        const e2 = this.spawnEnemy({
+            type, x: cx + ox, y: cy, pattern: 'PAIR',
+            options: { hpMul, speedMul }
+        });
+
         if (e1 && e2) {
-            // Offset for pair
-            const ox = 60;
-            const cx = w / 2;
-            const cy = -margin;
-
-            const speedMul = 1.0;
-            const hpMul = 1.0;
-
-            e1.id = Enemy.nextId++;
-            e2.id = Enemy.nextId++;
-            e1.init(cx - ox, cy, this.game.player.x, this.game.player.y, type, hpMul, speedMul);
-            e2.init(cx + ox, cy, this.game.player.x, this.game.player.y, type, hpMul, speedMul);
-
-            // Link them
             e1.partner = e2;
             e2.partner = e1;
-
-            this.game.enemies.push(e1);
-            this.game.enemies.push(e2);
         }
     }
 
     spawnPairDebug(type) {
-        const e1 = this.game.enemyPool.get();
-        const e2 = this.game.enemyPool.get();
+        const angle = this.random() * Math.PI * 2;
+        const dist = 450;
+        const cx = 400 + Math.cos(angle) * dist;
+        const cy = 400 + Math.sin(angle) * dist;
+
+        const ox = 40; // Pair offset
+        const speedMul = this.game.debugSpeedMul || 1.0;
+        const hpMul = this.game.debugHpMul || 1.0;
+
+        const e1 = this.spawnEnemy({
+            type, x: cx - ox, y: cy - ox, pattern: 'PAIR_DEBUG',
+            options: { hpMul, speedMul }
+        });
+        const e2 = this.spawnEnemy({
+            type, x: cx + ox, y: cy + ox, pattern: 'PAIR_DEBUG',
+            options: { hpMul, speedMul }
+        });
+
         if (e1 && e2) {
-            const angle = this.random() * Math.PI * 2;
-            const dist = 450;
-            const cx = 400 + Math.cos(angle) * dist;
-            const cy = 400 + Math.sin(angle) * dist;
-
-            const ox = 40; // Pair offset
-            const speedMul = this.game.debugSpeedMul || 1.0;
-            const hpMul = this.game.debugHpMul || 1.0;
-
-            e1.id = Enemy.nextId++;
-            e2.id = Enemy.nextId++;
-            e1.init(cx - ox, cy - ox, this.game.player.x, this.game.player.y, type, hpMul, speedMul);
-            e2.init(cx + ox, cy + ox, this.game.player.x, this.game.player.y, type, hpMul, speedMul);
-
             e1.partner = e2;
             e2.partner = e1;
-
-            this.game.enemies.push(e1);
-            this.game.enemies.push(e2);
         }
     }
 
@@ -2499,7 +2536,7 @@ export class SpawnDirector {
                 existingBoss.orbitAngle = -Math.PI / 2;
             }
 
-            if (this.game.audio) this.game.audio.play('upgrade', { volume: 0.5 });
+            if (this.game.audio) this.game.audio.playSe('SE_BARRIER_01', { volume: 0.5 });
             return existingBoss;
         }
 
@@ -2508,29 +2545,26 @@ export class SpawnDirector {
         }
 
         // 2. 新規生成
-        const boss = this.game.enemyPool.get();
+        const x = CONSTANTS.TARGET_WIDTH / 2;
+        const y = -100;
+        const hpMul = this.game.debugHpMul || 1.0;
+        const targetStage = parseInt(bossId);
+        const stageData = CONSTANTS.STAGE_DATA[targetStage] || { hpMul: 1.0 };
+
+        const boss = this.spawnEnemy({
+            type: CONSTANTS.ENEMY_TYPES.BOSS,
+            x, y,
+            options: {
+                isBoss: true,
+                hpMul: stageData.hpMul * hpMul,
+                bossIndex: targetStage,
+                movementMode: 'DIRECT',
+                onSummon: (bx, by) => this.game.handleBossSummon(bx, by)
+            }
+        });
+
         if (boss) {
-            const x = CONSTANTS.TARGET_WIDTH / 2;
-            const y = -100;
-            const hpMul = this.game.debugHpMul || 1.0;
-
-            // ステージごとのボス設定を模倣
-            // bossId は内部的には 0-indexed (4: Stage 5, 9: Stage 10) と想定
-            const targetStage = parseInt(bossId);
-            const stageData = CONSTANTS.STAGE_DATA[targetStage] || { hpMul: 1.0 };
-
-            boss.initBoss(x, y, this.game.player.x, this.game.player.y, stageData.hpMul * hpMul, (bx, by) => {
-                this.game.handleBossSummon(bx, by);
-            });
-            boss.bossIndex = targetStage; // 識別子を設定
-
-            // 両方とも Stage 5 の接近・停止挙動に統一
-            boss.movementMode = 'DIRECT'; // Enemy.js 内で isBoss なら停止するロジックが動く
-            boss.orbitRadius = 180;
-            boss.turnRate = 0.03;
-
-            this.game.enemies.push(boss);
-            if (this.game.audio) this.game.audio.play('dash', { volume: 0.6 });
+            if (this.game.audio) this.game.audio.playSe('SE_BARRIER_02', { volume: 0.6 });
             return boss;
         }
         return null;
@@ -2621,6 +2655,47 @@ export class SpawnDirector {
     random() {
         if (this.rng) return this.rng.next();
         return Math.random();
+    }
+
+    _getAliveCounts() {
+        const counts = {};
+        for (const e of this.game.enemies) {
+            if (e.active) {
+                counts[e.type] = (counts[e.type] || 0) + 1;
+            }
+        }
+        return counts;
+    }
+
+    applyReplacementRule(decision, ctx) {
+        // Prevent infinite loops
+        decision._replacementDepth = (decision._replacementDepth || 0) + 1;
+        if (decision._replacementDepth > 5) {
+            if (!this.game.isSimulation) console.warn('[SPAWN] Max replacement depth reached. Cancelling spawn.');
+            return null;
+        }
+
+        const TYPES = CONSTANTS.ENEMY_TYPES;
+
+        // Specialized Replacement Logic
+        if (decision.type === TYPES.ATTRACTOR) {
+            decision.type = this.replaceAttractorSpawn(decision.type);
+            return this.spawnEnemy(decision);
+        }
+
+        if (decision.type === TYPES.REFLECTOR) {
+            decision.type = this.replaceReflectorSpawn(decision.type);
+            return this.spawnEnemy(decision);
+        }
+
+        // Generic Fallback to NORMAL
+        if (decision.type !== TYPES.NORMAL) {
+            if (!this.game.isSimulation) console.warn(`[SPAWN] Blocking ${decision.type}, replacing with NORMAL`);
+            decision.type = TYPES.NORMAL;
+            return this.spawnEnemy(decision);
+        }
+
+        return null; // Should not happen if NORMAL is allowed
     }
 }
 

@@ -1,30 +1,32 @@
+import { CONSTANTS } from './constants.js';
+
 /**
  * AudioManager.js
- * WebAudio API を使用した音声管理クラス
- * アセットなしでも動作するデモ音生成機能を内蔵
+ * Hybrid Sound System:
+ * - SE: AudioBuffer (WebAudio API) for low latency and polyphony.
+ * - BGM: HTMLAudioElement for streaming and looping.
  */
 export class AudioManager {
     constructor() {
         this.ctx = null;
-        this.masterGain = null;
-        this.sfxGain = null;
-        this.bgmGain = null;
+        this.seBuffers = new Map(); // key -> AudioBuffer
+        this.bgmElements = new Map(); // key -> HTMLAudioElement
 
-        this.buffers = new Map(); // key -> AudioBuffer
-        this.lastPlayTimes = new Map(); // key -> timestamp
-        this.activeNodes = new Set(); // 追跡用
-
-        this.bgmSource = null;
+        this.currentBgm = null;
         this.currentBgmKey = null;
 
-        this.sfxVolume = 0.35;
-        this.bgmVolume = 0.2;
+        this.seVolume = CONSTANTS.SOUND_DEFAULTS.SE_VOLUME;
+        this.bgmVolume = CONSTANTS.SOUND_DEFAULTS.BGM_VOLUME;
 
+        this.activeSeCount = {}; // key -> count
+        this.totalActiveSeCount = 0; // Global limit for mobile
         this.isInitialized = false;
+
+        this.fades = new Map(); // audio -> animationFrameId
     }
 
     /**
-     * 初期化 (ユーザー操作に連動して呼び出す必要がある)
+     * Initializer: Must be called via user interaction.
      */
     async init() {
         if (this.isInitialized) return;
@@ -32,318 +34,214 @@ export class AudioManager {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         this.ctx = new AudioContext();
 
-        // ゲインノードの階層構築
-        this.masterGain = this.ctx.createGain();
-        this.sfxGain = this.ctx.createGain();
-        this.bgmGain = this.ctx.createGain();
-
-        this.sfxGain.connect(this.masterGain);
-        this.bgmGain.connect(this.masterGain);
-        this.masterGain.connect(this.ctx.destination);
-
-        this.sfxGain.gain.value = this.sfxVolume;
-        this.bgmGain.gain.value = this.bgmVolume;
-
-        // デモ音の生成
-        await this.generateDemoSounds();
-
-        this.isInitialized = true;
-        // console.log("AudioManager initialized and demo sounds generated.");
-    }
-
-    setSfxVolume(val) {
-        this.sfxVolume = val;
-        if (this.sfxGain) this.sfxGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.1);
-    }
-
-    setBgmVolume(val) {
-        this.bgmVolume = val;
-        if (this.bgmGain) this.bgmGain.gain.setTargetAtTime(val, this.ctx.currentTime, 0.1);
-    }
-
-    /**
-     * 音声の登録（外部ファイルまたはバッファ）
-     */
-    async register(key, source) {
-        if (source instanceof AudioBuffer) {
-            this.buffers.set(key, source);
-        } else if (typeof source === 'string') {
-            try {
-                const response = await fetch(source);
-                const arrayBuffer = await response.arrayBuffer();
-                const audioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
-                this.buffers.set(key, audioBuffer);
-            } catch (e) {
-                console.error(`Failed to load audio: ${source}`, e);
+        // Sequential weight loading for mobile stability (Prevents memory spikes)
+        for (const [key, asset] of Object.entries(CONSTANTS.SOUND_ASSETS)) {
+            if (asset.type === 'se') {
+                await this.loadSe(key, asset.file);
+            } else if (asset.type === 'bgm') {
+                this.loadBgm(key, asset.file);
             }
         }
+
+        this.isInitialized = true;
+
+        // Final unlock for mobile browsers
+        await this.unlock();
+
+        console.log("AudioManager: All sounds loaded (Sequential for Stability).");
     }
 
     /**
-     * 再生
+     * Explicitly resume AudioContext and play a dummy sound to unlock on mobile.
      */
-    async play(key, options = {}) {
-        if (!this.isInitialized) {
-            console.warn(`AudioManager: key "${key}" played before init.`);
-            return;
-        }
-
-        // ブラウザ制限により suspended になっている場合は再開を試みる
+    async unlock() {
+        if (!this.ctx) return;
         if (this.ctx.state === 'suspended') {
             await this.ctx.resume();
         }
 
-        const buffer = this.buffers.get(key);
-        if (!buffer) {
-            console.warn(`AudioManager: key "${key}" not found.`);
-            return;
-        }
-
-        const priority = options.priority || 'normal';
-        const now = this.ctx.currentTime;
-
-        // 同一キーの重複再生制限 (60ms)
-        const lastTime = this.lastPlayTimes.get(key) || 0;
-        if (priority !== 'high' && (now - lastTime) < 0.06) return;
-
-        // 同時再生数制限 (簡易版: 15以上ある場合は古い順に一部停止はせず無視)
-        if (this.activeNodes.size > 15 && priority === 'low') return;
-
+        // Play a silent short buffer
+        const buffer = this.ctx.createBuffer(1, 1, 22050);
         const source = this.ctx.createBufferSource();
         source.buffer = buffer;
-
-        // ピッチランダム (±5%)
-        const variation = options.variation || 0.05;
-        source.playbackRate.value = 1 + (Math.random() - 0.5) * 2 * variation;
-
-        const panner = this.ctx.createStereoPanner();
-        panner.pan.value = options.pan || 0;
-
-        source.connect(panner);
-        panner.connect(this.sfxGain);
-
+        source.connect(this.ctx.destination);
         source.start(0);
-        this.lastPlayTimes.set(key, now);
-        this.activeNodes.add(source);
+    }
 
-        source.onended = () => {
-            this.activeNodes.delete(source);
-        };
+    async loadSe(key, p) {
+        try {
+            const resp = await fetch(p);
+            const ab = await resp.arrayBuffer();
 
-        return source;
+            // Compatible decoding (Promise/Callback)
+            const buffer = await new Promise((resolve, reject) => {
+                const promise = this.ctx.decodeAudioData(ab, resolve, reject);
+                if (promise) promise.catch(reject);
+            });
+
+            this.seBuffers.set(key, buffer);
+        } catch (e) {
+            console.warn(`AudioManager: SE Load failed - ${key} (${p})`, e);
+        }
+    }
+
+    loadBgm(key, p) {
+        const audio = new Audio(p);
+        audio.loop = true;
+        audio.volume = 0; // Starts muted for fade-in
+        this.bgmElements.set(key, audio);
+    }
+
+    setSeVolume(v) {
+        this.seVolume = Math.max(0, Math.min(1, v));
+    }
+
+    setBgmVolume(v) {
+        this.bgmVolume = Math.max(0, Math.min(1, v));
+        if (this.currentBgm) {
+            this.currentBgm.volume = this.bgmVolume;
+        }
     }
 
     /**
-     * BGM再生 (簡易クロスフェード)
+     * Play SE (Polyphonic, Low Latency)
      */
-    playBGM(key, loop = true) {
+    playSe(key, options = {}) {
+        if (!this.isInitialized) return;
+        const buffer = this.seBuffers.get(key);
+        if (!buffer) return;
+
+        // Polyphony limit (Max 3 per type, Max 12 total for mobile)
+        if (!this.activeSeCount[key]) this.activeSeCount[key] = 0;
+        if (this.activeSeCount[key] >= 3) return;
+        if (this.totalActiveSeCount >= 12) return;
+
+        try {
+            const source = this.ctx.createBufferSource();
+            source.buffer = buffer;
+
+            const gainNode = this.ctx.createGain();
+
+            // Weapon volume multipliers (SSOT)
+            const multiplier = CONSTANTS.SE_VOLUME_MULTIPLIER[key] ?? 1.0;
+
+            // Allow override volume if provided
+            const vol = ((options.volume !== undefined) ? options.volume : this.seVolume) * multiplier;
+            gainNode.gain.value = vol;
+
+            // Pitch variation (Disabled for laser as requested)
+            let variation = options.variation || 0;
+            if (key === 'SE_SHOT_LASER') variation = 0;
+
+            if (variation > 0) {
+                source.playbackRate.value = 1 + (Math.random() - 0.5) * 2 * variation;
+            } else if (options.pitch) {
+                source.playbackRate.value = options.pitch;
+            } else {
+                source.playbackRate.value = 1.0;
+            }
+
+            source.connect(gainNode).connect(this.ctx.destination);
+
+            if (this.ctx.state === 'suspended') {
+                this.ctx.resume();
+            }
+
+            // Count management
+            this.activeSeCount[key]++;
+            this.totalActiveSeCount++;
+
+            source.onended = () => {
+                this.activeSeCount[key]--;
+                this.totalActiveSeCount--;
+            };
+
+            source.start(0);
+        } catch (e) {
+            console.warn("AudioManager: SE playback error:", key, e);
+        }
+    }
+
+    /**
+     * Play BGM (Pseudo-crossfade: 0.15s)
+     */
+    playBgm(key) {
         if (!this.isInitialized) return;
         if (this.currentBgmKey === key) return;
 
-        const buffer = this.buffers.get(key);
-        if (!buffer) return;
+        const next = this.bgmElements.get(key);
+        if (!next) {
+            console.warn("AudioManager: BGM not found:", key);
+            return;
+        }
 
-        this.stopBGM();
+        const FADE_TIME = 0.15; // 0.15s specified
 
-        const source = this.ctx.createBufferSource();
-        source.buffer = buffer;
-        source.loop = loop;
+        // Fade out current
+        if (this.currentBgm) {
+            const prev = this.currentBgm;
+            this.fadeOut(prev, FADE_TIME);
+        }
 
-        const fadeGain = this.ctx.createGain();
-        fadeGain.gain.setValueAtTime(0, this.ctx.currentTime);
-        fadeGain.gain.linearRampToValueAtTime(1, this.ctx.currentTime + 0.5);
+        // Fade in next
+        next.currentTime = 0;
+        next.volume = 0;
+        next.play().catch(e => console.warn("AudioManager: BGM play blocked:", e));
+        this.fadeIn(next, this.bgmVolume, FADE_TIME);
 
-        source.connect(fadeGain);
-        fadeGain.connect(this.bgmGain);
-
-        source.start(0);
-        this.bgmSource = { source, fadeGain };
+        this.currentBgm = next;
         this.currentBgmKey = key;
     }
 
-    stopBGM() {
-        if (this.bgmSource) {
-            const { source, fadeGain } = this.bgmSource;
-            fadeGain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5);
-            setTimeout(() => {
-                try { source.stop(); } catch (e) { }
-            }, 500);
-            this.bgmSource = null;
+    stopBgm(fadeTime = 0.15) {
+        if (this.currentBgm) {
+            this.fadeOut(this.currentBgm, fadeTime);
+            this.currentBgm = null;
             this.currentBgmKey = null;
         }
     }
 
-    /**
-     * WebAudio を使用してデモ用の音声を生成する
-     */
-    async generateDemoSounds() {
-        const create = async (key, duration, genFn) => {
-            const sampleRate = this.ctx.sampleRate;
-            const length = sampleRate * duration;
-            const buffer = this.ctx.createBuffer(1, length, sampleRate);
-            const data = buffer.getChannelData(0);
-            genFn(data, sampleRate);
-            this.buffers.set(key, buffer);
+    fadeIn(audio, targetVol, duration) {
+        this.stopExistingFade(audio);
+        const startVol = audio.volume;
+        const startTime = Date.now();
+
+        const tick = () => {
+            const elapsed = (Date.now() - startTime) / 1000;
+            const t = Math.min(1, elapsed / duration);
+            audio.volume = startVol + (targetVol - startVol) * t;
+            if (t < 1) {
+                this.fades.set(audio, requestAnimationFrame(tick));
+            } else {
+                this.fades.delete(audio);
+            }
         };
+        this.fades.set(audio, requestAnimationFrame(tick));
+    }
 
-        // shoot: 短いノイズ + 減衰
-        await create('shoot', 0.1, (data) => {
-            for (let i = 0; i < data.length; i++) {
-                const env = Math.pow(1 - i / data.length, 2);
-                data[i] = (Math.random() * 2 - 1) * 0.2 * env;
+    fadeOut(audio, duration) {
+        this.stopExistingFade(audio);
+        const startVol = audio.volume;
+        const startTime = Date.now();
+
+        const tick = () => {
+            const elapsed = (Date.now() - startTime) / 1000;
+            const t = Math.min(1, elapsed / duration);
+            audio.volume = startVol * (1 - t);
+            if (t < 1) {
+                this.fades.set(audio, requestAnimationFrame(tick));
+            } else {
+                audio.pause();
+                this.fades.delete(audio);
             }
-        });
+        };
+        this.fades.set(audio, requestAnimationFrame(tick));
+    }
 
-        // hit: 敵への着弾音（低く重い「ボン」という音）
-        await create('hit', 0.15, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                // 指数的な減衰 (Math.pow で急峻な減衰からなだらかな響きへ)
-                const env = Math.pow(1 - i / data.length, 2.5);
-                // 周波数を下げて「ボン」という低い響きを生成 (0.15 -> 0.08)
-                data[i] = Math.sin(i * 0.08) * 0.5 * env;
-            }
-        });
-
-        // gold_collect: 高音クリック（以前の着弾音）
-        await create('gold_collect', 0.05, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const env = 1 - i / data.length;
-                data[i] = Math.sin(i * 0.5) * 0.3 * env;
-            }
-        });
-
-        // countdown: ピ（中音）
-        await create('countdown', 0.15, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const env = Math.pow(1 - i / data.length, 2);
-                data[i] = Math.sin(i * 0.25) * 0.3 * env;
-            }
-        });
-
-        // countdown_start: ピ↑（高音）
-        await create('countdown_start', 0.25, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const env = Math.pow(1 - i / data.length, 2);
-                data[i] = Math.sin(i * 0.5) * 0.4 * env;
-            }
-        });
-
-        // damage: 低音パルス
-        await create('damage', 0.2, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const env = Math.pow(1 - i / data.length, 3);
-                data[i] = Math.sin(i * 0.05) * 0.5 * env;
-            }
-        });
-
-        // explosion: ノイズ + 長い減衰
-        await create('explosion', 0.6, (data) => {
-            for (let i = 0; i < data.length; i++) {
-                const env = Math.pow(1 - i / data.length, 2);
-                data[i] = (Math.random() * 2 - 1) * 0.5 * env;
-            }
-        });
-
-        // upgrade: 上昇トーン
-        await create('upgrade', 0.8, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const t = i / data.length;
-                const freq = 440 + t * 440;
-                const env = Math.sin(Math.PI * t);
-                data[i] = Math.sin(i * freq * 2 * Math.PI / rate) * 0.3 * env;
-            }
-        });
-
-        // menu_move: 短いUI音
-        await create('menu_move', 0.05, (data) => {
-            for (let i = 0; i < data.length; i++) {
-                data[i] = Math.sin(i * 0.8) * 0.2 * (1 - i / data.length);
-            }
-        });
-
-        // menu_select: UI決定音
-        await create('menu_select', 0.15, (data) => {
-            for (let i = 0; i < data.length; i++) {
-                const t = i / data.length;
-                data[i] = (Math.sin(i * 0.4) + Math.sin(i * 0.8)) * 0.2 * (1 - t);
-            }
-        });
-
-        // barrier_hit: 硬い反射音
-        await create('barrier_hit', 0.1, (data) => {
-            for (let i = 0; i < data.length; i++) {
-                const env = Math.pow(1 - i / data.length, 4);
-                data[i] = Math.sin(i * 1.2) * 0.4 * env;
-            }
-        });
-
-        // shield_on: 低い起動音
-        await create('shield_on', 0.4, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const t = i / data.length;
-                const freq = 200 - t * 100;
-                data[i] = Math.sin(i * freq * 2 * Math.PI / rate) * 0.3 * (1 - t);
-            }
-        });
-
-        // pulse_knockback: 低周波の重い衝撃音
-        await create('pulse_knockback', 0.45, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const t = i / data.length;
-                const env = Math.pow(1 - t, 2.5);
-                // 複数の周波数を混ぜて厚みを出す
-                const osc1 = Math.sin(i * 0.015); // 極低音
-                const osc2 = (Math.random() * 2 - 1) * 0.1; // ノイズ成分
-                data[i] = (osc1 + osc2) * 0.6 * env;
-            }
-        });
-
-        // drop_spawn: 軽いバウンド音
-        await create('drop_spawn', 0.1, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const t = i / data.length;
-                const env = (1 - t) * Math.sin(t * Math.PI); // ポップなエンベロープ
-                const freq = 300 - t * 100;
-                data[i] = Math.sin(i * freq * 2 * Math.PI / rate) * 0.3 * env;
-            }
-        });
-
-        // item_pickup: キラキラ高い音
-        await create('item_pickup', 0.2, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const t = i / data.length;
-                const env = Math.pow(1 - t, 2);
-                // アルペジオ的な響き
-                const s1 = Math.sin(i * 1200 * 2 * Math.PI / rate);
-                const s2 = Math.sin(i * 1800 * 2 * Math.PI / rate);
-                data[i] = (s1 + s2) * 0.2 * env;
-            }
-        });
-
-        // dash: 重厚な「ゴー」という咆哮・エンジン音
-        await create('dash', 0.5, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const t = i / data.length;
-                // 立ち上がりは速く、後半に響きを残すエンベロープ
-                const env = Math.pow(1 - t, 1.5) * (t < 0.1 ? t / 0.1 : 1);
-
-                // 低周波の唸り (40Hz - 80Hz)
-                const lowFreq = Math.sin(i * 0.01 + Math.sin(i * 0.005) * 2);
-                // ノイズ成分
-                const noise = (Math.random() * 2 - 1) * 0.4;
-
-                // 混合して重み付け
-                data[i] = (lowFreq * 0.5 + noise * 0.5) * 0.6 * env;
-            }
-        });
-
-        // barrier: シールド設置時の低い起動音
-        await create('barrier', 0.4, (data, rate) => {
-            for (let i = 0; i < data.length; i++) {
-                const t = i / data.length;
-                const freq = 180 - t * 40;
-                data[i] = Math.sin(i * freq * 2 * Math.PI / rate) * 0.3 * (1 - t);
-            }
-        });
+    stopExistingFade(audio) {
+        if (this.fades && this.fades.has(audio)) {
+            cancelAnimationFrame(this.fades.get(audio));
+            this.fades.delete(audio);
+        }
     }
 }
