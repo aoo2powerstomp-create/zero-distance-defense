@@ -336,5 +336,14 @@ export class AudioManager {
                 data[i] = (lowFreq * 0.5 + noise * 0.5) * 0.6 * env;
             }
         });
+
+        // barrier: シールド設置時の低い起動音
+        await create('barrier', 0.4, (data, rate) => {
+            for (let i = 0; i < data.length; i++) {
+                const t = i / data.length;
+                const freq = 180 - t * 40;
+                data[i] = Math.sin(i * freq * 2 * Math.PI / rate) * 0.3 * (1 - t);
+            }
+        });
     }
 }

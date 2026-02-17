@@ -43,7 +43,8 @@ export const CONSTANTS = {
         telegraphDuration: 1000,
         chargeDuration: 1500,
         cooldownDuration: 1000,
-        chargeSpeedMul: 3.5
+        chargeSpeedMul: 3.5,
+        minChargeDistance: 250  // Must be within this distance to start charge
     },
 
     // ボス設定
@@ -288,7 +289,6 @@ export const CONSTANTS = {
         OBSERVER: 'O',
         SPLITTER: 'S1',
         SPLITTER_CHILD: 'S2',
-        ASSAULT_CURVE: 'AC',
         PLASMA_DRONE_STAGE5: 'PD5', // [NEW] 世界観に合わせた追尾プラズマ・ドローン
         RIM_LASER_STAGE5: 'RL5'
     },
@@ -426,7 +426,10 @@ export const CONSTANTS = {
         RED_BONUS: 0.20,   // 攻撃強化ベース値（1スタック当たり）
         BLUE_BONUS: 0.25,  // 機動力強化ベース値（1スタック当たり）
         STACK_MAX: 3,      // 同色最大スタック数
-        DECAY: 0.7         // 減衰係数（スタック増加による効果減衰）
+        DECAY: 0.7,        // 減衰係数（スタック増加による効果減衰）
+        MAX_ALIVE_RED: 4,  // RED同時存在上限
+        MAX_ALIVE_BLUE: 4, // BLUE同時存在上限
+        MAX_PER_WAVE: 2    // 1ウェーブ内生成上限
     },
     ATTRACTOR_KIND: {
         RED: 'RED',   // 攻撃強化型
@@ -438,7 +441,8 @@ export const CONSTANTS = {
         activeDurationMs: 7000,   // 反射有効時間
         vulnerableDurationMs: 3000, // 解除（脆弱）時間
         spawnRate: 0.07,
-        unlockStage: 8 // Stage 8
+        unlockStage: 8, // Stage 8
+        MAX_ALIVE: 10  // 同時存在上限
     },
     PLASMA_DRONE_STAGE5: {
         v0: 1.5,            // 初速 (90px/s)

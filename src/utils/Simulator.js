@@ -1,6 +1,7 @@
 import { RNG } from './RNG.js';
 import { CONSTANTS } from '../constants.js';
 import { SpawnDirector } from '../SpawnDirector.js';
+import { Enemy } from '../Enemy.js';
 
 export class Simulator {
     constructor() {
@@ -39,12 +40,15 @@ export class Simulator {
                         id: 0,
                         age: 0,
                         oobFrames: 0,
-                        active: true
+                        active: true,
+                        returnToPool: () => { } // Mock for SpawnDirector logic [FIX]
                     };
                 }
             },
             currentSpawnBudget: 0,
-            debugEnabled: false
+            debugEnabled: false,
+            isSimulation: true, // Flag to suppress logs in other classes [NEW]
+            getTime: () => this.simTime * 1000
         };
 
         this.spawnDirector = null;
@@ -65,6 +69,9 @@ export class Simulator {
         this.simTime = 0;
         this.activeEnemies = [];
         this.resetStats();
+
+        // [NEW] Reset global ID to ensure deterministic IDs across runs
+        Enemy.nextId = 0;
 
         // Initialize Mock Game State for Stage
         this.gameMock.currentStage = stage - 1; // 0-indexed
@@ -126,8 +133,8 @@ export class Simulator {
         // Reset SD for stage
         this.spawnDirector.resetForStage(this.gameMock.currentStage);
 
-        const dt = 1 / 60; // 60fps simulation
-        const maxFrames = durationSeconds * 60; // Safety cap
+        const dt = 1 / 10; // Optimized: 10fps simulation (100ms step)
+        const maxFrames = durationSeconds * 10; // Adjusted cap
 
         // console.log(`[SIM] Starting Stage ${stage} (Seed: ${seed}) Candidates: ${this.gameMock.enemiesRemaining}`);
 
@@ -165,19 +172,14 @@ export class Simulator {
             }
 
             // Mock Game.enemies for SpawnDirector checks (alive count)
-            // We need to sync this.gameMock.enemies with this.activeEnemies
-            // SD uses: .filter(e => e.active).length
+            // Optimize: Update array only when needed or every few steps
             this.gameMock.enemies = this.activeEnemies.map(e => ({ active: true, type: e.type, isMinion: false }));
 
             // 2. Update FrameCache Counts
             this.updateMockFrameCache();
 
             // 3. Update SpawnDirector
-            this.spawnDirector.update(dt * 1000); // SD expects ms? update(dt) in SD uses dt... wait.
-            // Main.js calls spawnDirector.update(deltaTime). deltaTime is usually ms.
-            // Let's check SD.update. "this.burstTimer += dt". "this.spawnIntervalTimer -= dt".
-            // If dt is in ms, 1000 = 1sec.
-            // My default Simulator passed `dt * 1000`. Correct.
+            this.spawnDirector.update(dt * 1000); // Step is now 100ms
 
             // 4. Process Spawns (Mock Execution via SpawnDirector)
             if (this.spawnDirector.spawnQueue.length > 0) {
@@ -252,12 +254,12 @@ export class Simulator {
             this.stats.rejections = this.spawnDirector.debugRejections;
         }
 
-        console.log("[SIM] Results:", this.stats);
+        // console.log("[SIM] Results:", this.stats);
     }
 
     // Multi-run for statistical analysis
-    simulateMany(runs, stage, durationSeconds, baseSeed) {
-        console.log(`[SIM] Running ${runs} simulations for Stage ${stage}...`);
+    simulateMany(runs, stage, durationSeconds, baseSeed, silent = false) {
+        if (!silent) console.log(`[SIM] Running ${runs} simulations for Stage ${stage}...`);
 
         const aggregate = {
             totalSpawns: 0,
@@ -290,12 +292,35 @@ export class Simulator {
 
         for (const t in aggregate.byType) {
             const avgCount = aggregate.byType[t] / runs;
-            const pct = (aggregate.byType[t] / aggregate.totalSpawns * 100).toFixed(1);
-            avg.ratios[t] = `${avgCount.toFixed(1)} (${pct}%)`;
+            const pct = (aggregate.byType[t] / aggregate.totalSpawns * 100);
+            avg.ratios[t] = { count: avgCount.toFixed(1), pct: pct.toFixed(2) };
         }
 
-        console.table(avg.ratios);
-        console.log(`[SIM] Avg Total: ${avg.total}, Avg Force Acts: ${avg.forceActs}`);
+        if (!silent) {
+            console.table(avg.ratios);
+            console.log(`[SIM] Avg Total: ${avg.total}, Avg Force Acts: ${avg.forceActs}`);
+        }
         return avg;
+    }
+
+    /**
+     * 全ステージをシミュレーションし、比較用データを返す [NEW]
+     */
+    simulateAllStages(runs = 100) {
+        const totalStages = CONSTANTS.STAGE_DATA.length;
+        const allResults = [];
+        const baseSeed = 12345;
+
+        for (let s = 1; s <= totalStages; s++) {
+            const res = this.simulateMany(runs, s, 9999, baseSeed, true);
+            allResults.push({
+                stage: s,
+                total: res.total,
+                forceActs: res.forceActs,
+                duration: res.avgDuration.toFixed(1),
+                ratios: res.ratios // [NEW] include individual counts/ratios
+            });
+        }
+        return allResults;
     }
 }

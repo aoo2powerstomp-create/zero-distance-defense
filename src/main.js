@@ -23,6 +23,7 @@ class Game {
         // console.log("[INITIALIZING GAME]");
         this.canvas = document.getElementById('game-canvas');
         this.ctx = this.canvas.getContext('2d');
+        this.isPaused = false; // Phase 1: State Addition
         this.overlayCanvas = document.getElementById('overlay-canvas');
         this.overlayCtx = this.overlayCanvas ? this.overlayCanvas.getContext('2d') : null;
 
@@ -200,6 +201,9 @@ class Game {
         // 武器選択ボタン
         document.querySelectorAll('.weapon-up-btn').forEach(btn => {
             btn.addEventListener('click', () => {
+                // カウントダウン中は無効 [FIX]
+                if (this.isCountdownActive()) return;
+
                 const type = btn.getAttribute('data-up-weapon');
                 const data = this.player.weapons[type];
                 const config = CONSTANTS.WEAPON_CONFIG[type];
@@ -232,6 +236,9 @@ class Game {
 
         // SPEED強化ボタン
         document.getElementById('btn-up-speed').addEventListener('click', () => {
+            // カウントダウン中は無効 [FIX]
+            if (this.isCountdownActive()) return;
+
             const type = this.player.currentWeapon;
             const data = this.player.weapons[type];
             const cost = this.getUpgradeCost(CONSTANTS.UPGRADE_ATK_SPEED_BASE, data.atkSpeedLv, CONSTANTS.UPGRADE_COST_GROWTH_SPEED);
@@ -270,10 +277,25 @@ class Game {
             this.handlePointer(clientX, clientY, isAction);
         };
 
-        window.addEventListener('mousemove', handlePointerWrap);
-        window.addEventListener('mousedown', handlePointerWrap);
-        window.addEventListener('touchstart', handlePointerWrap, { passive: false });
-        window.addEventListener('touchmove', handlePointerWrap, { passive: false });
+        this.canvas.addEventListener('mousedown', handlePointerWrap);
+        this.canvas.addEventListener('mousemove', handlePointerWrap);
+        this.canvas.addEventListener('mouseup', handlePointerWrap);
+
+        this.canvas.addEventListener('touchstart', handlePointerWrap, { passive: false });
+        this.canvas.addEventListener('touchmove', handlePointerWrap, { passive: false });
+        this.canvas.addEventListener('touchend', handlePointerWrap, { passive: false });
+
+        window.addEventListener('resize', () => this.resize());
+        this.resize();
+
+        // Phase 3: Input Handling (Keyboard)
+        window.addEventListener('keydown', (e) => {
+            if (this.gameState === CONSTANTS.STATE.PLAYING) {
+                if (e.code === 'KeyP' || e.code === 'Escape') {
+                    this.togglePause();
+                }
+            }
+        });
 
         // リザルト等ボタン
         const btnNext = document.getElementById('btn-next');
@@ -347,6 +369,15 @@ class Game {
                     btnDebugSpeed.textContent = `SPEED: x${this.timeScale}`;
                 });
             }
+
+            // デバッグクリアボタン [NEW]
+            const btnDebugClear = document.getElementById('btn-debug-clear');
+            if (btnDebugClear) {
+                btnDebugClear.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.stageClear();
+                });
+            }
         }
 
         // PC向け：マウスホイールでの武器切り替え
@@ -385,6 +416,18 @@ class Game {
 
     handlePointer(clientX, clientY, isAction = false) {
         const rect = this.canvas.getBoundingClientRect();
+
+        // Phase 3: Input Handling (Pause Button)
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
+
+        if (isAction && this.checkPauseButton(mouseX, mouseY)) {
+            this.togglePause();
+            return;
+        }
+
+        if (this.isPaused) return; // Block game inputs while paused
+
         const scale = this.canvas.height / CONSTANTS.TARGET_HEIGHT;
         const offsetX = (this.canvas.width - CONSTANTS.TARGET_WIDTH * scale) / 2;
 
@@ -431,8 +474,10 @@ class Game {
             if (picked) return; // アイテムを取った場合は移動/射撃を行わない
         }
 
-        const mouseX = clientX - rect.left;
-        const mouseY = clientY - rect.top;
+        // mouseX/Y are already calculated above, but standard logic uses them again
+        // We can reuse or recalculate. Original logic re-calculated them.
+        // const mouseX = clientX - rect.left;
+        // const mouseY = clientY - rect.top;
 
         // 仮想空間上の座標へ逆写像
         this.player.targetX = (mouseX - offsetX) / scale;
@@ -958,6 +1003,15 @@ class Game {
         }
     }
 
+    /**
+     * 合計ゲーム経過時間 (ms) を取得。シミュレーションと実プレイの両方で共通して使用する。
+     */
+    getTime() {
+        // ステージ経過時間 + ステージ開始前の累積時間を返す
+        return this.runTotalGameTime + (this.stageGameTime || 0);
+    }
+
+
 
     spawnBoss() {
         const x = CONSTANTS.TARGET_WIDTH / 2;
@@ -1015,7 +1069,7 @@ class Game {
             // ボスの上部から発射されるイメージ
             const sx = boss.x;
             const sy = boss.y - 40;
-            drone.initPlasmaDrone(sx, sy, this.player.x, this.player.y, boss.id);
+            drone.initPlasmaDrone(sx, sy, this.player.x, this.player.y, this.currentStage + 1);
             drone.game = this; // 参照用
             this.enemies.push(drone);
 
@@ -1035,7 +1089,7 @@ class Game {
         const rim = this.enemyPool.get();
         if (rim) {
             // ボスの位置から生成
-            rim.initRimLaser(boss.x, boss.y, boss.id);
+            rim.initRimLaser(boss.x, boss.y, this.currentStage + 1);
             rim.game = this;
             rim.movementMode = 'RIM_LASER'; // 明示的にセット
             this.enemies.push(rim);
@@ -1334,10 +1388,12 @@ class Game {
         // エフェクト更新
         Effects.update(dt);
 
+        // ゴールド更新・回収：常に実行（CLEAR状態でも回収を継続）
+        this.updateGolds(dt);
+
         if (this.gameState === CONSTANTS.STATE.WAVE_CLEAR_CUTIN) {
             this.player.update(dt);
             this.bullets.forEach(b => b.update(this.enemies, this.grid, this.player.targetX, this.player.targetY));
-            this.golds.forEach(g => g.update(this.player.x, this.player.y));
             this.damageTexts.forEach(d => d.update());
             this.cleanupEntities();
             return;
@@ -1349,6 +1405,7 @@ class Game {
 
         // [NEW] ゲーム内時間の加算 (Time Scaleの影響を受けたdtを加算することで、実質x1換算の時間になる)
         this.stageGameTime += dt;
+        this.runTotalGameTime += dt;
 
         Profiler.start('player_update');
         this.player.update(dt);
@@ -1517,7 +1574,8 @@ class Game {
         if (isBossStage) {
             // ボスステージではボスが死んでいれば handleCollisions 内で stageClear が呼ばれる
         } else {
-            if (this.enemiesRemaining === 0 && this.enemies.length === 0) {
+            // ステージ終了判定：未出現数が0 かつ 画面上の敵が0 かつ ゴールド回収完了 [FIX]
+            if (this.enemiesRemaining === 0 && this.enemies.length === 0 && this.golds.length === 0) {
                 this.stageClear();
             }
         }
@@ -1526,8 +1584,8 @@ class Game {
             this.showOverlay('GAME OVER', '基地が破壊されました', 'result');
         }
 
-        // ステージクリア判定: 未出現数が0 かつ 画面上の敵が0
-        if (this.enemiesRemaining === 0 && this.enemies.length === 0) {
+        // ステージクリア判定: 未出現数が0 かつ 画面上の敵が0 かつ ゴールド回収完了 [FIX]
+        if (this.enemiesRemaining === 0 && this.enemies.length === 0 && this.golds.length === 0) {
             if (this.gameState === CONSTANTS.STATE.PLAYING && !isBossStage) {
                 this.stageClear();
             }
@@ -1618,7 +1676,7 @@ class Game {
                         }
                     }
 
-                    e.takeDamage(damage, {
+                    const actualDamage = e.takeDamage(damage, {
                         globalBuffActive: globalBuffActive,
                         isAuraProtected: e.isShielded
                     });
@@ -1626,10 +1684,19 @@ class Game {
                     this.audio.play('hit', { variation: 0.2, priority: 'low' });
                     b.hitEnemies.add(e);
 
-                    let textColor = '#fff';
-                    if (affinityMul > 1.0) textColor = '#ffcc00';
-                    else if (affinityMul < 1.0) textColor = '#888888';
-                    this.spawnDamageText(e.renderX, e.renderY, Math.round(damage), textColor);
+                    // RIM_LASER: ダメージ表示なし（静かに消える）
+                    if (e.type !== CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5) {
+                        let textColor = '#fff';
+                        // バリア/バフで軽減されている場合は水色（最優先）
+                        if (e.isShielded || globalBuffActive) {
+                            textColor = '#87ceeb'; // 水色（Sky Blue）
+                        } else if (affinityMul > 1.0) {
+                            textColor = '#ffcc00';
+                        } else if (affinityMul < 1.0) {
+                            textColor = '#888888';
+                        }
+                        this.spawnDamageText(e.renderX, e.renderY, Math.round(actualDamage), textColor);
+                    }
 
                     const weaponConfig = CONSTANTS.WEAPON_CONFIG[b.weaponType];
                     const knockMulBase = CONSTANTS.AFFINITY_KNOCK_MATRIX[b.weaponType][e.affinity] || 1.0;
@@ -1675,7 +1742,10 @@ class Game {
                         knockPower = 1.0;
                     }
 
-                    e.applyKnockback(b.vx, b.vy, knockPower);
+                    // RIM_LASER: ノックバックなし
+                    if (e.type !== CONSTANTS.ENEMY_TYPES.RIM_LASER_STAGE5) {
+                        e.applyKnockback(b.vx, b.vy, knockPower);
+                    }
                     this.player.hp = Math.min(CONSTANTS.PLAYER_MAX_HP, this.player.hp + CONSTANTS.PLAYER_MAX_HP * CONSTANTS.STANDARD_RECOVERY_ON_HIT);
 
                     if (e.hp <= 0) e.destroy('BULLET', this);
@@ -1797,7 +1867,7 @@ class Game {
             // Failsafe: If a boss exists, ensure the flag is true
             if (hasActiveBoss) this.bossSpawned = true;
 
-            if (this.bossSpawned && !hasActiveBoss) {
+            if (this.bossSpawned && !hasActiveBoss && this.golds.length === 0) {
                 if (this.isDebugStage) {
                     // デバッグ時はリザルトに行かず、フラグをリセットして次を待つ
                     this.bossSpawned = false;
@@ -1813,31 +1883,47 @@ class Game {
                 }
             }
         }
+        // ゴールド回収判定は updateGolds(dt) に集約
+    }
 
+    /**
+     * ゴールドの物理更新とUIへの吸引・回収処理
+     */
+    updateGolds(dt) {
         const { scale: curScale, offsetX: curOffX, offsetY: curOffY } = this.getRenderTransform();
+        // UIアイコン(左下)の基準位置
         const goldTargetX = (23 - curOffX) / curScale;
         const goldTargetY = (this.canvas.height - 106 - curOffY) / curScale;
 
-        // 数値表示(GOLD)の位置 (左から約60px)
+        // 獲得テキストの表示位置
         const textTargetX = (60 - curOffX) / curScale;
 
         for (let k = this.golds.length - 1; k >= 0; k--) {
             const g = this.golds[k];
+
+            // 吸引先をUIターゲットに設定して更新
+            g.update(goldTargetX, goldTargetY);
+
+            // 距離判定による回収
             const dx = goldTargetX - g.x;
             const dy = goldTargetY - g.y;
             const distSq = dx * dx + dy * dy;
-            const minDist = 30;
+            const minDist = 30; // 判定半径
+
             if (distSq < minDist * minDist) {
                 const val = (typeof g.value === 'number' && !isNaN(g.value)) ? g.value : 10;
+
+                // 加算処理（SSOT）
                 this.goldCount = (this.goldCount || 0) + val;
                 this.totalGoldEarned = (this.totalGoldEarned || 0) + val;
                 this.stageGoldEarned = (this.stageGoldEarned || 0) + val;
 
                 // 獲得ポップアップ演出 (+いくら)
-                // 数値表示の真上に浮かび上がるように調整 (吸引位置が上がったため相対的に調整)
                 this.spawnDamageText(textTargetX, goldTargetY - 40, `+${val}`, "#ffcc00");
 
                 this.audio.play('gold_collect', { volume: 0.5 });
+
+                // プールへ返却
                 this.goldPool.release(this.golds.splice(k, 1)[0]);
             }
         }
@@ -1934,7 +2020,8 @@ class Game {
 
 
     triggerPulse() {
-        if (this.pulseCooldownTimer > 0) return;
+        // カウントダウン中またはクールダウン中は無効 [FIX]
+        if (this.isCountdownActive() || this.pulseCooldownTimer > 0) return;
 
         // 200ms 連続再生制限 (AudioManager 側の 60ms を上書き)
         const now = Date.now();
@@ -2030,6 +2117,8 @@ class Game {
                 btn.classList.toggle('disabled', !isMax && this.goldCount < cost);
                 btn.classList.toggle('max', isMax);
             }
+            // カウントダウン中のロック表示 [NEW]
+            btn.classList.toggle('countdown-locked', this.isCountdownActive());
         });
 
         this.updateUpgradeUI();
@@ -2049,6 +2138,8 @@ class Game {
 
         btnSpd.classList.toggle('disabled', !isSpdMax && (this.goldCount < spdCost));
         btnSpd.classList.toggle('max', isSpdMax);
+        // カウントダウン中のロック表示 [NEW]
+        btnSpd.classList.toggle('countdown-locked', this.isCountdownActive());
 
         // パルスUI更新
         const btnPulse = document.getElementById('btn-pulse');
@@ -2062,6 +2153,9 @@ class Game {
             const ratio = this.pulseCooldownTimer / CONSTANTS.PULSE_COOLDOWN_MS;
             const percent = (1 - Math.max(0, Math.min(1, ratio))) * 100;
             fill.style.width = percent + '%';
+
+            // カウントダウン中のロック表示 [NEW]
+            btnPulse.classList.toggle('countdown-locked', this.isCountdownActive());
         }
 
         this.updateDebugHUD();
@@ -2737,6 +2831,9 @@ class Game {
             this.drawResultScreen(this.ctx);
         }
 
+        // Phase 2 & 6: Draw Pause UI & Overlay
+        this.drawPauseUI(this.ctx);
+
         this.ctx.restore();
     }
 
@@ -2749,11 +2846,15 @@ class Game {
         Profiler.resetCounts();
         Profiler.updateFrame();
 
-        this.update(dt * this.timeScale);
+        Profiler.updateFrame();
 
-        // EconomyLogger update (with timeScale)
-        if (this.economyLogger) {
-            this.economyLogger.update(performance.now());
+        // Phase 4: Pause Logic
+        if (!this.isPaused) {
+            this.update(dt * this.timeScale);
+            // EconomyLogger update (with timeScale) - Sync with pause
+            if (this.economyLogger) {
+                this.economyLogger.update(performance.now());
+            }
         }
 
         this.draw();
@@ -2823,10 +2924,117 @@ class Game {
         }
     }
     // --- Helper for Debug ---
+    /**
+     * カウントダウン中かどうかを判定 (SSOT)
+     */
+    isCountdownActive() {
+        return this.gameState === CONSTANTS.STATE.COUNTDOWN;
+    }
+
     goToTitle() {
         this.triggerFade('out', 500).then(() => {
             location.reload();
         });
+    }
+
+    // --- Phase 2, 3, 5: New Methods for Pause Feature ---
+
+    togglePause() {
+        if (this.gameState !== CONSTANTS.STATE.PLAYING) return;
+
+        this.isPaused = !this.isPaused;
+        if (this.isPaused) {
+            // Audio check? Maybe pause BGM later. For now requirement says BGM keeps playing.
+        } else {
+            // Phase 5: dt correction
+            // Resume時にlastTimeを現在時刻にリセットして、停止期間中のdt加算を防ぐ
+            this.lastTime = performance.now();
+        }
+    }
+
+    getPauseButtonRect() {
+        // Phase 2: Calculate Postion
+        // 右上 STAGE表示の下
+        // STAGE表示は padding: 20px 15px
+        // ボタンサイズ: 120x28
+        const btnW = 120;
+        const btnH = 28;
+        const marginX = 15;
+        const marginY = 55; // Top(20) + Text(~25) + Gap(10)
+
+        return {
+            x: this.canvas.width - btnW - marginX,
+            y: marginY,
+            w: btnW,
+            h: btnH
+        };
+    }
+
+    checkPauseButton(mouseX, mouseY) {
+        if (this.gameState !== CONSTANTS.STATE.PLAYING) return false;
+        const r = this.getPauseButtonRect();
+        return (mouseX >= r.x && mouseX <= r.x + r.w &&
+            mouseY >= r.y && mouseY <= r.y + r.h);
+    }
+
+    drawPauseUI(ctx) {
+        if (this.gameState !== CONSTANTS.STATE.PLAYING) return;
+
+        ctx.save();
+        // Screen Space (Identity Transform)
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+        const r = this.getPauseButtonRect();
+        const isHover = false; // Hover effect relies on mousemove which we haven't strictly implemented for this btn, keeping simple.
+
+        // Draw Button
+        ctx.fillStyle = this.isPaused ? '#00ffff' : 'rgba(0, 0, 0, 0.4)';
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 1;
+
+        // Button BG
+        if (!this.isPaused) ctx.fillRect(r.x, r.y, r.w, r.h);
+        else ctx.fillStyle = 'rgba(0, 255, 255, 0.2)'; // Active style
+
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+        // Button Text
+        ctx.fillStyle = this.isPaused ? '#ffffff' : '#00ffff';
+        ctx.font = 'bold 14px "Orbitron", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = this.isPaused ? 10 : 0;
+        ctx.fillText(this.isPaused ? "RESUME" : "PAUSE", r.x + r.w / 2, r.y + r.h / 2);
+        ctx.shadowBlur = 0;
+
+        // Overlay
+        if (this.isPaused) {
+            // Full screen dim
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            // Center Text
+            ctx.save();
+            ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
+
+            ctx.font = 'bold 40px "Orbitron", sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = '#00ffff';
+            ctx.shadowBlur = 20;
+            ctx.fillText("PAUSED", 0, 0);
+
+            ctx.font = '16px "Inter", sans-serif';
+            ctx.fillStyle = '#cccccc';
+            ctx.shadowBlur = 0;
+            ctx.fillText("Press P / Esc to Resume", 0, 40);
+
+            ctx.restore();
+        }
+
+        ctx.restore();
     }
 
     /**

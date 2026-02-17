@@ -532,7 +532,15 @@ body {
     filter: grayscale(0.8) brightness(0.3);
 }
 
-/* 蜈ｱ騾壹が繝ｼ繝舌・繝ｬ繧､蝓ｺ逶､ */
+/* カウントダウン中のロック表示 [NEW] */
+.countdown-locked {
+    opacity: 0.4 !important;
+    pointer-events: none !important;
+    filter: grayscale(1) brightness(0.5) !important;
+    cursor: default !important;
+}
+
+/* 繧ｱ騾壹が繝ｼ繝舌・繝ｬ繧､蝓ｺ逶､ */
 .overlay-base {
     position: absolute;
     top: 0;

@@ -149,7 +149,9 @@ export class EconomyLogger {
         div.style.overflowY = 'auto'; // Vertical scroll
         div.style.zIndex = '9999';
         div.style.padding = '10px';
-        div.style.pointerEvents = 'none'; // Click through (initially)
+        div.style.pointerEvents = 'auto'; // Enable interaction for scrolling and selection
+        div.style.userSelect = 'text'; // Allow text selection for copying TSV
+        div.style.webkitUserSelect = 'text';
 
         // Ensure container allows children pointer events
         // But we want to click through empty space...
@@ -186,9 +188,60 @@ export class EconomyLogger {
         };
         this.controlsDiv.appendChild(btn);
 
+        // Add Sim All Button [NEW]
+        const btnAll = document.createElement('button');
+        btnAll.textContent = "RUN SIM (ALL STAGES)";
+        btnAll.style.background = '#444400';
+        btnAll.style.color = '#ffff00';
+        btnAll.style.border = '1px solid #ffff00';
+        btnAll.style.cursor = 'pointer';
+        btnAll.style.fontSize = '10px';
+        btnAll.style.marginRight = '5px';
+
+        btnAll.onclick = async () => {
+            if (window.Simulator) {
+                await this.runAllStagesSimulation();
+            }
+        };
+        this.controlsDiv.appendChild(btnAll);
+
+        // Clear Sim Result Button [NEW]
+        const btnClear = document.createElement('button');
+        btnClear.textContent = "CLEAR LOG";
+        btnClear.style.background = '#440000';
+        btnClear.style.color = '#ff8888';
+        btnClear.style.border = '1px solid #ff8888';
+        btnClear.style.cursor = 'pointer';
+        btnClear.style.fontSize = '10px';
+
+        btnClear.onclick = () => {
+            this.simResultText = "";
+            this.render();
+        };
+        this.controlsDiv.appendChild(btnClear);
+
+        // Add Detail Button [NEW]
+        const btnDetail = document.createElement('button');
+        btnDetail.textContent = "DETAIL (CUR STG)";
+        btnDetail.style.background = '#000044';
+        btnDetail.style.color = '#8888ff';
+        btnDetail.style.border = '1px solid #8888ff';
+        btnDetail.style.cursor = 'pointer';
+        btnDetail.style.fontSize = '10px';
+        btnDetail.style.marginLeft = '5px';
+
+        btnDetail.onclick = () => {
+            if (window.Simulator) {
+                this.runStageDetailSimulation(this.game.currentStage + 1);
+            }
+        };
+        this.controlsDiv.appendChild(btnDetail);
+
         // 2. Log Area
         this.logDiv = document.createElement('div');
         this.logDiv.style.whiteSpace = 'pre-wrap';
+        this.logDiv.style.pointerEvents = 'auto';
+        this.logDiv.style.userSelect = 'text';
         this.container.appendChild(this.logDiv);
 
         this.simResultText = "";
@@ -214,16 +267,170 @@ export class EconomyLogger {
                 out += `Avg Force Acts: ${res.forceActs}\n`;
                 out += `Ratios:\n`;
                 Object.keys(res.ratios).sort().forEach(k => {
-                    out += ` ${k}: ${res.ratios[k]}\n`;
+                    const data = res.ratios[k];
+                    out += ` ${k}: ${data.count} (${parseFloat(data.pct).toFixed(1)}%)\n`;
                 });
-                out += `============================\n`;
+                out += `----------------------------\n`;
 
-                this.simResultText = out;
+                // 追記モードに変更 [FIX]
+                this.simResultText = out + this.simResultText;
+                this.render();
             } catch (e) {
                 this.simResultText = `\n[SIM ERROR]: ${e.message}\n`;
                 console.error(e);
             }
         }, 50);
+    }
+
+    /**
+     * 全ステージのシミュレーションを一気に実行し、TSV形式のサマリ、詳細、アラートを出力する [OPTIMIZED]
+     */
+    /**
+     * 全ステージのシミュレーションを一気に実行し、TSV形式のサマリ、詳細、アラートを出力する [OPTIMIZED]
+     */
+    async runAllStagesSimulation() {
+        const runs = 100;
+        const totalStages = CONSTANTS.STAGE_DATA.length;
+
+        this.simResultText = `[Starting Analytical Sim: ALL STAGES x${runs}...]\\n` + this.simResultText;
+        this.render();
+
+        const reports = [];
+
+        try {
+            for (let s = 1; s <= totalStages; s++) {
+                this.simResultText = `[Running Stg ${s}/${totalStages}...]\\n` + this.simResultText;
+                this.render();
+
+                await new Promise(r => setTimeout(r, 0));
+
+                const stats = this.collectStageStats(s, runs);
+                reports.push(stats);
+            }
+
+            let summary = "\n=== (1) SUMMARY (TSV) ===\n";
+            summary += "STG\tTOTAL\tDUR(s)\tA%\tB%\tA+B%\tSpecial%\tTypes\tHHI\tTOP5(%)\n";
+
+            let alerts = "\n=== (2) ALERTS [WARN] ===\n";
+            let hasAlerts = false;
+
+            reports.forEach(r => {
+                const top5Str = r.top5.map(o => `${o.type}(${o.pct.toFixed(0)}%)`).join(" ");
+                summary += `${r.stage}\t${r.total}\t${r.duration}\t${r.a_pct.toFixed(1)}%\t${r.b_pct.toFixed(1)}%\t${r.ab_pct.toFixed(1)}%\t${r.special_pct.toFixed(1)}%\t${r.typeCount}\t${r.hhi.toFixed(3)}\t${top5Str}\n`;
+
+                let stgAlerts = [];
+                if (r.a_pct < 30) stgAlerts.push(`A%<30(${r.a_pct.toFixed(1)})`);
+                if (r.ab_pct < 50) stgAlerts.push(`A+B<50(${r.ab_pct.toFixed(1)})`);
+                if (r.special_pct > 25) stgAlerts.push(`Special>25(${r.special_pct.toFixed(1)})`);
+                if (r.typeCount > 16) stgAlerts.push(`Types>16(${r.typeCount})`);
+                if (r.hhi > 0.28) stgAlerts.push(`HHI>0.28(${r.hhi.toFixed(3)})`);
+
+                if (stgAlerts.length > 0) {
+                    alerts += `[STG ${r.stage}] ${stgAlerts.join(", ")}\n`;
+                    hasAlerts = true;
+                }
+            });
+
+            if (!hasAlerts) alerts += "No critical balance issues detected.\n";
+
+            let out = summary + alerts;
+            out += "\n※詳細はコンソールまたは 'runStageDetail(stg)' で確認してください。\n";
+            out += "===========================================================\n";
+
+            this.simResultText = out + this.simResultText;
+            this.render();
+        } catch (e) {
+            this.simResultText = `\n[SIM ALL ERROR]: ${e.message}\n` + this.simResultText;
+            console.error(e);
+            this.render();
+        }
+    }
+
+    /**
+     * 特定ステージの詳細をレポートする [REFACTORED]
+     */
+    runStageDetailSimulation(stage) {
+        const runs = 100;
+        this.simResultText = `[Running Detail Sim: STG ${stage} x${runs}...]\n` + this.simResultText;
+        this.render();
+
+        setTimeout(() => {
+            try {
+                const r = this.collectStageStats(stage, runs);
+
+                let out = `\n=== (3) STAGE ${stage} DETAILS (x${runs}) ===\n`;
+                out += `TOTAL: ${r.total}, DUR: ${r.duration}s, HHI: ${r.hhi.toFixed(3)}\n`;
+                out += `A: ${r.a_pct.toFixed(1)}%, B: ${r.b_pct.toFixed(1)}%, A+B: ${r.ab_pct.toFixed(1)}%\n`;
+                out += `TYPE\tCOUNT\tRATIO%\n`;
+                out += `----\t-----\t------\n`;
+
+                const sorted = Object.entries(r.ratios)
+                    .map(([type, data]) => ({ type, count: parseFloat(data.count), pct: parseFloat(data.pct) }))
+                    .filter(o => o.count > 0)
+                    .sort((a, b) => b.pct - a.pct);
+
+                sorted.forEach(o => {
+                    out += `${o.type}\t${o.count.toFixed(1)}\t${o.pct.toFixed(1)}%\n`;
+                });
+                out += `--------------------------------------------\n`;
+
+                this.simResultText = out + this.simResultText;
+                this.render();
+            } catch (e) {
+                this.simResultText = `\n[DETAIL ERROR]: ${e.message}\n` + this.simResultText;
+                this.render();
+            }
+        }, 50);
+    }
+
+    /**
+     * ステージ統計を収集する共通関数 [NEW]
+     */
+    collectStageStats(stage, runs = 100) {
+        const sim = new window.Simulator();
+        const res = sim.simulateMany(runs, stage, 9999, 12345, true);
+
+        const SPECIAL_TYPES = ['H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'S1'];
+        const ratios = res.ratios;
+        const total = parseFloat(res.total);
+
+        const a_pct = parseFloat(ratios['A']?.pct || 0);
+        const b_pct = parseFloat(ratios['B']?.pct || 0);
+        const ab_pct = a_pct + b_pct;
+
+        let special_count = 0;
+        SPECIAL_TYPES.forEach(t => {
+            special_count += parseFloat(ratios[t]?.count || 0);
+        });
+        const special_pct = (special_count / total * 100);
+
+        const typeKeys = Object.keys(ratios).filter(k => parseFloat(ratios[k].count) > 0);
+        const typeCount = typeKeys.length;
+
+        let hhi = 0;
+        typeKeys.forEach(k => {
+            const p = parseFloat(ratios[k].pct) / 100;
+            hhi += p * p;
+        });
+
+        const top5 = typeKeys
+            .map(k => ({ type: k, pct: parseFloat(ratios[k].pct) }))
+            .sort((a, b) => b.pct - a.pct)
+            .slice(0, 5);
+
+        return {
+            stage,
+            total,
+            duration: res.avgDuration.toFixed(1),
+            a_pct,
+            b_pct,
+            ab_pct,
+            special_pct,
+            typeCount,
+            hhi,
+            top5,
+            ratios: res.ratios
+        };
     }
 
     render() {

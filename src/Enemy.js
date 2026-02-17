@@ -92,10 +92,10 @@ export class Enemy {
         this.partner = null; // Stale partner reset
         this.isMinion = false;
         this.lifespan = 0;
-        this.spawnTime = Date.now();
+        this.spawnTime = this.game.getTime();
         this.isEvading = false;
         this.evasiveStartTime = 0;
-        this.lastRetrackTime = Date.now();
+        this.lastRetrackTime = this.game.getTime();
         this.stageSpeedMul = speedMul;
         this.angle = Math.atan2(targetY - y, targetX - x);
         this.killed = false;
@@ -295,7 +295,7 @@ export class Enemy {
         this.isBoss = true;
         this.radius = CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL;
         this.onSummon = onSummon;
-        this.lastSummonTime = Date.now();
+        this.lastSummonTime = this.game.getTime();
         this.droneCd = CONSTANTS.PLASMA_DRONE_STAGE5.intervalMs; // 初期クールダウン
     }
 
@@ -533,7 +533,7 @@ export class Enemy {
             if (DEBUG_ENABLED) console.warn(`[FIX] Enemy ${this.id} pos/vel recovered from NaN/Inf`);
         }
 
-        const now = Date.now();
+        const now = this.game.getTime();
         const dtMod = dt / 16.6;
         this.age += dt / 1000; // 秒単位で加算
 
@@ -865,10 +865,14 @@ export class Enemy {
                     this.vx = Math.cos(this.angle) * this.currentSpeed;
                     this.vy = Math.sin(this.angle) * this.currentSpeed;
 
-                    if (this.eliteTimer <= 0) {
+                    // Only start charge sequence if close enough to player
+                    if (this.eliteTimer <= 0 && dist <= CONSTANTS.ELITE_CHARGE.minChargeDistance) {
                         this.eliteState = 1; // To Telegraph
                         this.eliteTimer = CONSTANTS.ELITE_CHARGE.telegraphDuration;
                         this.chargeAngle = targetAngle; // Lock on logic start
+                    } else if (this.eliteTimer <= 0) {
+                        // Reset timer if too far away
+                        this.eliteTimer = CONSTANTS.ELITE_CHARGE.orbitDuration;
                     }
 
                 } else if (this.eliteState === 1) {
@@ -1873,7 +1877,7 @@ export class Enemy {
                 */
             } else {
                 // アセットがない場合：従来の図形描画
-                if (Math.random() < 0.01) console.warn(`[RENDER] Falling back to procedural drawing for type: ${this.type}`);
+                // (PD5/RL5などは意図的に独自描画を行っているため警告を抑制)
                 switch (this.type) {
                     case CONSTANTS.ENEMY_TYPES.NORMAL:
                         this.drawShape(ctx, 3, '#ff0000'); // Triangle
@@ -1881,16 +1885,20 @@ export class Enemy {
                     case CONSTANTS.ENEMY_TYPES.PLASMA_DRONE_STAGE5:
                         // プラズマ・ドローンの独自図形描画: コア + リング
                         const sizePD = 20;
+                        // Stage 10 (ownerId >= 10) は赤系、Stage 5 は青系
+                        const isStage10 = this.ownerId && this.ownerId >= 10;
+                        const droneColor = isStage10 ? '#ff5555' : '#0ff';
+                        const droneColorRGB = isStage10 ? '255, 85, 85' : '0, 255, 255';
 
                         // 1. 放電エフェクト (dischargeTimer 進行時)
                         if (this.dischargeTimer > 0) {
                             const progress = 1.0 - (this.dischargeTimer / 0.5);
                             const r = progress * CONSTANTS.PLASMA_DRONE_STAGE5.dischargeRadius;
                             ctx.save();
-                            ctx.strokeStyle = `rgba(0, 255, 255, ${1.0 - progress})`;
+                            ctx.strokeStyle = `rgba(${droneColorRGB}, ${1.0 - progress})`;
                             ctx.lineWidth = 4;
                             ctx.shadowBlur = 30;
-                            ctx.shadowColor = "#0ff";
+                            ctx.shadowColor = droneColor;
                             ctx.globalCompositeOperation = 'lighter';
                             ctx.beginPath();
                             ctx.arc(0, 0, r, 0, Math.PI * 2);
@@ -1913,11 +1921,11 @@ export class Enemy {
                         ctx.save();
                         const coreGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, 10);
                         coreGlow.addColorStop(0, "#fff");
-                        coreGlow.addColorStop(0.4, "#0ff");
-                        coreGlow.addColorStop(1, "rgba(0, 150, 255, 0)");
+                        coreGlow.addColorStop(0.4, droneColor);
+                        coreGlow.addColorStop(1, `rgba(${droneColorRGB}, 0)`);
                         ctx.globalCompositeOperation = 'lighter';
                         ctx.shadowBlur = 20;
-                        ctx.shadowColor = "#0ff";
+                        ctx.shadowColor = droneColor;
                         ctx.fillStyle = coreGlow;
                         ctx.beginPath();
                         ctx.arc(0, 0, 8, 0, Math.PI * 2);
@@ -1928,7 +1936,7 @@ export class Enemy {
 
                         // 4. トレイル（微弱な粒子）
                         if (Math.random() < 0.2) {
-                            Effects.createSpark(this.x, this.y, '#00ffff');
+                            Effects.createSpark(this.x, this.y, droneColor);
                         }
                         break;
 
@@ -1951,9 +1959,13 @@ export class Enemy {
                         // 2. 本体
                         // [FIX] 進行方向に平行な（aligned）鋭いライン形状
                         // ctx.rotate(rot + PI/2) により、ローカルY軸が進行方向
+                        // Stage 10 (ownerId >= 10) は赤系、Stage 5 は青系
+                        const isStage10Rim = this.ownerId && this.ownerId >= 10;
+                        const rimColor = isStage10Rim ? '#ff5555' : '#0ff';
+
                         ctx.shadowBlur = 25;
-                        ctx.shadowColor = "#0ff";
-                        ctx.strokeStyle = "#0ff";
+                        ctx.shadowColor = rimColor;
+                        ctx.strokeStyle = rimColor;
                         ctx.lineWidth = 2;
 
                         ctx.beginPath();
@@ -1971,7 +1983,7 @@ export class Enemy {
                         ctx.strokeStyle = "#fff";
                         ctx.lineWidth = 1;
                         ctx.shadowBlur = 10;
-                        ctx.shadowColor = "#0ff";
+                        ctx.shadowColor = rimColor;
 
                         for (let i = 0; i < 2; i++) {
                             ctx.beginPath();
@@ -1985,7 +1997,7 @@ export class Enemy {
 
                         // トレイル（微かな粒子のみ、頻度を大幅に下げるか廃止）
                         if (Math.random() < 0.05) {
-                            Effects.createSpark(this.x, this.y, '#00ffff');
+                            Effects.createSpark(this.x, this.y, rimColor);
                         }
 
                         ctx.restore();
@@ -2302,6 +2314,49 @@ export class Enemy {
                 ctx.fillRect(-barW / 2, yOff, barW * (this.hp / this.maxHp), barH);
             }
 
+            // シールダーバリアバフエフェクト（六角形）
+            if (this.isShielded) {
+                const size = this.isBoss ? CONSTANTS.ENEMY_SIZE * CONSTANTS.BOSS_SIZE_MUL : CONSTANTS.ENEMY_SIZE;
+                const hexRadius = size * 1.3;
+                const nowTime = Date.now();
+
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = `rgba(0, 255, 255, ${0.4 + Math.sin(nowTime * 0.005) * 0.2})`;
+                ctx.lineWidth = 2;
+
+                // 六角形を描画
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i / 6) * Math.PI * 2 - Math.PI / 2; // -90度から開始
+                    const x = Math.cos(angle) * hexRadius;
+                    const y = Math.sin(angle) * hexRadius;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.stroke();
+
+                // 回転する内側の六角形
+                ctx.save();
+                ctx.rotate(nowTime * 0.001);
+                ctx.strokeStyle = `rgba(0, 255, 255, ${0.3})`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i / 6) * Math.PI * 2 - Math.PI / 2;
+                    const x = Math.cos(angle) * hexRadius * 0.7;
+                    const y = Math.sin(angle) * hexRadius * 0.7;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.stroke();
+                ctx.restore();
+
+                ctx.restore();
+            }
+
             // アトラクターバフインジケーター（▲マーク）
             // アトラクター自身は表示しない
             if (this.type !== CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
@@ -2493,7 +2548,7 @@ export class Enemy {
     }
 
     takeDamage(amount, options = {}) {
-        if (this.type === CONSTANTS.ENEMY_TYPES.OBSERVER && this.obsState === 'snap') return; // SNAP中は無敵
+        if (this.type === CONSTANTS.ENEMY_TYPES.OBSERVER && this.obsState === 'snap') return 0; // SNAP中は無敵
         let actualAmount = amount;
 
         // 1) SHIELDER 軽減 (設置型シールド内)
@@ -2532,7 +2587,7 @@ export class Enemy {
             );
 
             const remaining = limit - this.damageInCurrentSecond;
-            if (remaining <= 0) return;
+            if (remaining <= 0) return 0;
 
             actualAmount = Math.min(actualAmount, remaining);
             Effects.spawnHitEffect(this.renderX, this.renderY, actualAmount);
@@ -2543,6 +2598,8 @@ export class Enemy {
             Effects.spawnHitEffect(this.renderX, this.renderY, actualAmount);
             this.hp -= actualAmount;
         }
+
+        return actualAmount; // 実際に受けたダメージを返す
     }
 
     returnToPool() {
@@ -2600,9 +2657,13 @@ export class Enemy {
             // 演出
             if (this.isDrone) {
                 // ドローン専用：スパーク円
-                Effects.createExplosion(this.x, this.y, splashRadius * 0.8, '#00ffff');
+                // Stage 10 (ownerId >= 10) は赤系、Stage 5 は青系
+                const isStage10Drone = this.ownerId && this.ownerId >= 10;
+                const droneDestroyColor = isStage10Drone ? '#ff5555' : '#00ffff';
+
+                Effects.createExplosion(this.x, this.y, splashRadius * 0.8, droneDestroyColor);
                 for (let i = 0; i < 15; i++) {
-                    Effects.createSpark(this.x, this.y, '#00ffff');
+                    Effects.createSpark(this.x, this.y, droneDestroyColor);
                 }
             } else {
                 Effects.createExplosion(this.x, this.y, splashRadius, this.isBoss ? '#ffaa00' : '#ff5500');

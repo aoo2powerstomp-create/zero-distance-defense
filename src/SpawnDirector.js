@@ -11,21 +11,37 @@ export class SpawnDirector {
         this.rng = null; // If set, use this instead of this.random()
 
         // Wave/Phase System
-        this.state = 'GENERATING'; // GENERATING, SPAWNING, WAITING, COOLDOWN
-        this.currentPhase = null;
-        this.phaseTimer = 0;       // Timeout計測 / Wait計測用
-        this.cooldownTimer = 0;
+        this.state = 'WAITING'; // GENERATING, SPAWNING, WAITING, COOLDOWN
+        this.phase = 'A'; // A, B, C rotation
+        this.phaseTimer = 0;
+        this.spawnQueue = []; // Array of {type, pattern, x, y, nextDelay}
+        this.currentPlan = {};
+
+        // Elite & Density Control
+        this.eliteSpawnedThisTick = 0;
+        this.recentSpawnPoints = []; // Array<{x, y, time}>
+        this.pendingSpawnQueue = []; // Array<{type, pattern, x, y, options ...}>
+        this.lastEliteSpawnTime = 0; // Timestamp of last Elite spawn
+        this.eliteCountInPhase = 0; // Track generation count per phase
+        this.elitePhaseCooldown = 0; // Phase-based cooldown for Elites
+
+        // Attractor Spawn Limit
+        this.attractorWaveCount = 0;  // Current wave spawn count
+
+        this.spawnIntervalTimer = 0;
+        this.intensity = 'NORMAL'; // NORMAL, BURST, LULL
+        this.intensityTimer = 0;
 
         // 生成済みリスト (1フェーズ分の敵)
-        this.spawnQueue = [];
-        this.spawnIntervalTimer = 0; // Queue消化用
+        // this.spawnQueue = []; // Moved above
+        // this.spawnIntervalTimer = 0; // Moved above
 
-        this.currentPlan = {
-            mainRole: 'CORE',
-            subRole: 'HARASSER',
-            pattern: 'RANDOM',
-            mainType: CONSTANTS.ENEMY_TYPES.NORMAL
-        };
+        // this.currentPlan = { // Moved above
+        //     mainRole: 'CORE',
+        //     subRole: 'HARASSER',
+        //     pattern: 'RANDOM',
+        //     mainType: CONSTANTS.ENEMY_TYPES.NORMAL
+        // };
 
         // 初期化
         this.resetForStage();
@@ -48,7 +64,7 @@ export class SpawnDirector {
         // Roster保証 (Unlock済みの敵をリストアップ)
         // 重複抑制履歴 (直近8件)
         this.recentTypes = [];
-        this.stageStartTime = Date.now();
+        this.stageStartTime = this.game.getTime();
 
         // Reset History / Streak
         this.recentTypes = [];
@@ -71,6 +87,19 @@ export class SpawnDirector {
             // Quota System Init
             this.initStage9Quota();
         }
+
+        this.recentSpawnPoints = [];
+        this.pendingSpawnQueue = [];
+        this.lastEliteSpawnTime = 0;
+        this.eliteCountInPhase = 0;
+        this.elitePhaseCooldown = 0;
+
+        // Reset Spawn Tracking
+        this.stageSpawnByType = {};
+        this.stageSpawnTotalCount = 0;
+
+        // Reset Attractor Wave Counter
+        this.attractorWaveCount = 0;
 
         // Reset Spawn Queue
         this.spawnQueue = [];
@@ -265,9 +294,120 @@ export class SpawnDirector {
         return selected;
     }
 
+    processPendingSpawns(dt) {
+        // 1. Clean up old spawn points history (keep last 500ms)
+        const now = Date.now();
+        this.recentSpawnPoints = this.recentSpawnPoints.filter(p => now - p.time < 500);
+
+        if (this.pendingSpawnQueue.length === 0) return;
+
+        // 2. Safety Valve: If queue is huge, force flush oldest to prevent stagnation
+        if (this.pendingSpawnQueue.length > 20) {
+            // console.warn('[SPAWN] Queue Overflow! Safety Valve Activated.');
+            const overflowCount = this.pendingSpawnQueue.length - 20;
+            for (let i = 0; i < overflowCount; i++) {
+                const pending = this.pendingSpawnQueue.shift();
+                if (!pending) break;
+
+                // Downgrade Elite to Normal to ensure progress without overwhelming
+                if (pending.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                    pending.type = CONSTANTS.ENEMY_TYPES.NORMAL;
+                }
+
+                // Force spawn (ignore limits)
+                this.executeSpawn(pending.type, pending.pattern, pending.x, pending.y, {
+                    ...pending.options,
+                    ignoreLimits: true
+                });
+            }
+        }
+
+        // 3. Normal Queue Processing
+        // Limit processing per tick to avoid lag spike (e.g., max 5 redos per frame)
+        const processCount = Math.min(this.pendingSpawnQueue.length, 5);
+
+        for (let i = 0; i < processCount; i++) {
+            const pending = this.pendingSpawnQueue[0]; // Peek
+
+            // Check delay (wait for next frame or specific delay)
+            if (pending.nextDelay > 0) {
+                pending.nextDelay -= dt;
+                // If still waiting, stop processing queue to maintain order (FIFO)
+                if (pending.nextDelay > 0) break;
+            }
+
+            // Ready to try spawn
+            this.pendingSpawnQueue.shift(); // Remove from queue
+
+            // Try spawn again (respect limits)
+            this.executeSpawn(pending.type, pending.pattern, pending.x, pending.y, {
+                ...pending.options,
+                fromQueue: true
+            });
+        }
+    }
+
+    processPendingSpawns(dt) {
+        // 1. Clean up old spawn points history (keep last 500ms)
+        const now = Date.now();
+        this.recentSpawnPoints = this.recentSpawnPoints.filter(p => now - p.time < 500);
+
+        if (this.pendingSpawnQueue.length === 0) return;
+
+        // 2. Safety Valve: If queue is huge, force flush oldest to prevent stagnation
+        if (this.pendingSpawnQueue.length > 20) {
+            // console.warn('[SPAWN] Queue Overflow! Safety Valve Activated.');
+            const overflowCount = this.pendingSpawnQueue.length - 20;
+            for (let i = 0; i < overflowCount; i++) {
+                const pending = this.pendingSpawnQueue.shift();
+                if (!pending) break;
+
+                // Downgrade Elite to Normal to ensure progress without overwhelming
+                if (pending.type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                    pending.type = CONSTANTS.ENEMY_TYPES.NORMAL;
+                }
+
+                // Force spawn (ignore limits)
+                this.executeSpawn(pending.type, pending.pattern, pending.x, pending.y, {
+                    ...pending.options,
+                    ignoreLimits: true
+                });
+            }
+        }
+
+        // 3. Normal Queue Processing
+        // Limit processing per tick to avoid lag spike (e.g., max 5 redos per frame)
+        const processCount = Math.min(this.pendingSpawnQueue.length, 5);
+
+        for (let i = 0; i < processCount; i++) {
+            const pending = this.pendingSpawnQueue[0]; // Peek
+
+            // Check delay (wait for next frame or specific delay)
+            if (pending.nextDelay > 0) {
+                pending.nextDelay -= dt;
+                // If still waiting, stop processing queue to maintain order (FIFO)
+                if (pending.nextDelay > 0) break;
+            }
+
+            // Ready to try spawn
+            this.pendingSpawnQueue.shift(); // Remove from queue
+
+            // Try spawn again (respect limits)
+            this.executeSpawn(pending.type, pending.pattern, pending.x, pending.y, {
+                ...pending.options,
+                fromQueue: true
+            });
+        }
+    }
+
     update(dt) {
-        // --- DEBUG STAGE LOGIC ---
-        if (this.game.isDebugStage) {
+        // Reset per-tick counters
+        this.eliteSpawnedThisTick = 0;
+
+        // Process Pending Queue (Density Control)
+        this.processPendingSpawns(dt);
+
+        if (this.game.currentStage === 999) {
             this.handleDebugSpawn(dt);
             return;
         }
@@ -299,9 +439,10 @@ export class SpawnDirector {
         if (this.game.isBossActive) return;
 
         // --- STAGE 9 UPDATE (Spice & Quota Stats) ---
-        if (this.game.currentStage === 8) {
-            this.updateStage9Spice(dt);
-        }
+        // This block was moved to generateNextPhase
+        // if (this.game.currentStage === 8) {
+        //     this.updateStage9Spice(dt);
+        // }
 
         // --- ステートマシン ---
         switch (this.state) {
@@ -385,6 +526,8 @@ export class SpawnDirector {
 
     generateNextPhase(dt) {
 
+        // Reset attractor wave counter for new phase
+        this.attractorWaveCount = 0;
 
         const stage = this.game.currentStage + 1;
 
@@ -512,6 +655,11 @@ export class SpawnDirector {
                 type = this.pickFromComposition(composition);
             }
 
+            // Track Elite generation
+            if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                this.eliteCountInPhase++;
+            }
+
             // Decide between individual spawn or formation squad
             if (this.canFormFormation(type) && remainingCount >= 4 && this.random() < 0.4) {
                 // Spawn as a squad formation (3 to 6 units)
@@ -539,9 +687,39 @@ export class SpawnDirector {
     }
 
     pickFromComposition(comp) {
-        const total = comp.reduce((acc, c) => acc + c.weight, 0);
+        // Filter out Elite if limits are exceeded
+        let filteredComp = comp;
+
+        // Check Elite limits
+        const hasElite = comp.some(c => c.type === CONSTANTS.ENEMY_TYPES.ELITE);
+        if (hasElite) {
+            let blockElite = false;
+
+            // A. Phase Cooldown
+            if (this.elitePhaseCooldown > 0) {
+                blockElite = true;
+            } else {
+                // B. Phase Count Limit
+                const stage = this.game.currentStage; // 0-indexed
+                const limit = (stage === 0) ? 1 : 2; // St1: 1, St2+: 2
+                if (this.eliteCountInPhase >= limit) {
+                    blockElite = true;
+                }
+            }
+
+            if (blockElite) {
+                // Remove Elite from composition
+                filteredComp = comp.filter(c => c.type !== CONSTANTS.ENEMY_TYPES.ELITE);
+                if (filteredComp.length === 0) {
+                    // Fallback to NORMAL if all options were Elite
+                    filteredComp = [{ type: CONSTANTS.ENEMY_TYPES.NORMAL, weight: 1 }];
+                }
+            }
+        }
+
+        const total = filteredComp.reduce((acc, c) => acc + c.weight, 0);
         let r = this.random() * total;
-        for (const c of comp) {
+        for (const c of filteredComp) {
             r -= c.weight;
             if (r <= 0) return c.type;
         }
@@ -1271,7 +1449,7 @@ export class SpawnDirector {
         }
 
         // 1. Roster保証 (最優先)
-        const elapsed = (Date.now() - this.stageStartTime) / 1000;
+        const elapsed = (this.game.getTime() - this.stageStartTime) / 1000;
         if (elapsed < 60 && this.rosterWanted.length > 0) {
             const rosterMatch = candidates.find(c => this.rosterWanted.includes(c));
             if (rosterMatch) {
@@ -1346,8 +1524,20 @@ export class SpawnDirector {
             if (streakCount === 1) w *= 0.25;
             else if (streakCount >= 2) w *= 0.10;
 
-            // 3連続禁止 (実際にはcandidatesに残っていても選ばれないように極小にするか、0にする)
-            // ただしここでは 0.10 で残す（完全に詰むのを防ぐため）
+            // --- 3. GENERATION LIMIT (Phase Cap & Cooldown) ---
+            if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                // A. Phase Cooldown
+                if (this.elitePhaseCooldown > 0) {
+                    w = 0;
+                } else {
+                    // B. Phase Count Limit
+                    const stage = this.game.currentStage; // 0-indexed
+                    const limit = (stage === 0) ? 1 : 2; // St1: 1, St2+: 2
+                    if (this.eliteCountInPhase >= limit) {
+                        w = 0;
+                    }
+                }
+            }
 
             totalWeight += w;
             return { type, weight: w };
@@ -1359,6 +1549,11 @@ export class SpawnDirector {
             s += item.weight;
             if (r < s) {
                 let selected = item.type;
+
+                // Update Phase Count
+                if (selected === CONSTANTS.ENEMY_TYPES.ELITE) {
+                    this.eliteCountInPhase++;
+                }
 
                 // 3) Filler Variation (Aが選ばれた時、30%で他へ)
                 if (selected === CONSTANTS.ENEMY_TYPES.NORMAL && this.random() < 0.3) {
@@ -1485,7 +1680,45 @@ export class SpawnDirector {
     }
 
     executeSpawn(type, pattern = 'NONE', overrideX = null, overrideY = null, options = {}) {
-        console.log(`[DIRECTOR] executeSpawn: ${type}, Pattern: ${pattern}, Stage: ${this.game.currentStage + 1}`);
+        // --- 1. DENSITY CONTROL (Elite & Overlap Guard) ---
+        if (!options.ignoreLimits) {
+            // A. Elite Time Interval (Global Cooldown for Elites)
+            if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                const now = this.game.getTime();
+                const MIN_ELITE_INTERVAL = 500; // 0.5s gap minimum between *batches*
+
+                // Determine Max Elites per "Burst" (Tick)
+                // Stage 1 (Index 0): 1 body
+                // Stage 2+ (Index 1+): 2 bodies
+                const maxElites = (this.game.currentStage === 0) ? 1 : 2;
+
+                // Check 1: Tick Limit
+                if (this.eliteSpawnedThisTick >= maxElites) {
+                    this.pendingSpawnQueue.push({
+                        type, pattern, x: overrideX, y: overrideY,
+                        options, nextDelay: 100 // Delay to next frames
+                    });
+                    return;
+                }
+
+                // Check 2: Time Interval
+                // Only enforce interval for the FIRST elite of the batch.
+                // Subsequent elites in the same tick (up to maxElites) are allowed to burst.
+                if (this.eliteSpawnedThisTick === 0) {
+                    if (now - this.lastEliteSpawnTime < MIN_ELITE_INTERVAL) {
+                        const delay = MIN_ELITE_INTERVAL - (now - this.lastEliteSpawnTime);
+                        this.pendingSpawnQueue.push({
+                            type, pattern, x: overrideX, y: overrideY,
+                            options, nextDelay: delay
+                        });
+                        return;
+                    }
+                }
+            }
+        }
+        if (!this.game.isSimulation) {
+            console.log(`[DIRECTOR] executeSpawn: ${type}, Pattern: ${pattern}, Stage: ${this.game.currentStage + 1}`);
+        }
         // ... (NAN check or similar)
         // Cooldown設定 (ID -> Key変換がここでも必要だが、Switchで)
         this.setCooldown(type);
@@ -1512,6 +1745,55 @@ export class SpawnDirector {
             const pos = this.calculateSpawnPos(side);
             x = pos.x;
             y = pos.y;
+
+            // --- B. Minimum Distance Check (Retry Logic) ---
+            if (!options.ignoreLimits) {
+                const minDist = (type === CONSTANTS.ENEMY_TYPES.ELITE) ? 70 : 40; // MIN_SPAWN_DIST_ELITE / ANY
+                let valid = true;
+                const now = this.game.getTime();
+
+                // Check against recent spawns
+                for (const p of this.recentSpawnPoints) {
+                    const d = Math.sqrt((x - p.x) ** 2 + (y - p.y) ** 2);
+                    if (d < minDist) {
+                        valid = false;
+                        break;
+                    }
+                }
+
+                // Retry if invalid
+                if (!valid) {
+                    let retries = 8;
+                    while (retries > 0) {
+                        const newPos = this.calculateSpawnPos(side); // Try same side again
+                        let retryValid = true;
+                        for (const p of this.recentSpawnPoints) {
+                            const d = Math.sqrt((newPos.x - p.x) ** 2 + (newPos.y - p.y) ** 2);
+                            if (d < minDist) {
+                                retryValid = false;
+                                break;
+                            }
+                        }
+                        if (retryValid) {
+                            x = newPos.x;
+                            y = newPos.y;
+                            valid = true;
+                            break;
+                        }
+                        retries--;
+                    }
+
+                    // If still invalid, queue for later frame (scatter in time)
+                    if (!valid) {
+                        // console.warn('[SPAWN] Too Crowded/Stacked. Queueing.');
+                        this.pendingSpawnQueue.push({
+                            type, pattern, x: null, y: null, // Recalculate next time
+                            options, nextDelay: 100 // Delay 100ms
+                        });
+                        return;
+                    }
+                }
+            }
         }
 
         // Record for HUD stats
@@ -1524,9 +1806,55 @@ export class SpawnDirector {
 
         enemy.init(x, y, this.game.player.x, this.game.player.y, type, stageData.hpMul, stageData.speedMul);
 
-        // アトラクター属性決定（スポーン時に50%でRED/BLUE）
+        // アトラクター属性決定（制限チェック付き）
         if (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
-            enemy.attractorKind = this.random() < 0.5 ? CONSTANTS.ATTRACTOR_KIND.RED : CONSTANTS.ATTRACTOR_KIND.BLUE;
+            // ウェーブ内上限チェック
+            if (this.attractorWaveCount >= CONSTANTS.ATTRACTOR.MAX_PER_WAVE) {
+                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[ATTRACTOR] Wave limit reached (${this.attractorWaveCount}/${CONSTANTS.ATTRACTOR.MAX_PER_WAVE}), replacing spawn`);
+                const replacementType = this.replaceAttractorSpawn(type);
+                enemy.returnToPool(); // 現在のenemyを返却
+                return this.executeSpawn(replacementType, pattern, overrideX, overrideY, options);
+            }
+
+            const counts = this.countAliveAttractors();
+
+            // 両方上限チェック
+            const canSpawnRed = counts.red < CONSTANTS.ATTRACTOR.MAX_ALIVE_RED;
+            const canSpawnBlue = counts.blue < CONSTANTS.ATTRACTOR.MAX_ALIVE_BLUE;
+
+            if (!canSpawnRed && !canSpawnBlue) {
+                // 両方上限 → 置換
+                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[ATTRACTOR] Both colors at cap (R:${counts.red}/${CONSTANTS.ATTRACTOR.MAX_ALIVE_RED}, B:${counts.blue}/${CONSTANTS.ATTRACTOR.MAX_ALIVE_BLUE}), replacing spawn`);
+                const replacementType = this.replaceAttractorSpawn(type);
+                enemy.returnToPool();
+                return this.executeSpawn(replacementType, pattern, overrideX, overrideY, options);
+            } else if (!canSpawnRed) {
+                // REDのみ上限 → BLUE確定
+                enemy.attractorKind = CONSTANTS.ATTRACTOR_KIND.BLUE;
+            } else if (!canSpawnBlue) {
+                // BLUEのみ上限 → RED確定
+                enemy.attractorKind = CONSTANTS.ATTRACTOR_KIND.RED;
+            } else {
+                // 両方OK → ランダム
+                enemy.attractorKind = this.random() < 0.5 ? CONSTANTS.ATTRACTOR_KIND.RED : CONSTANTS.ATTRACTOR_KIND.BLUE;
+            }
+
+            // ウェーブカウント増加
+            this.attractorWaveCount++;
+        }
+
+        // リフレクター上限チェック
+        if (type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
+            const reflectorCount = this.game.enemies.filter(e =>
+                e.active && e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR
+            ).length;
+
+            if (reflectorCount >= CONSTANTS.REFLECTOR.MAX_ALIVE) {
+                if (this.game.debugEnabled && !this.game.isSimulation) console.warn(`[REFLECTOR] Alive limit reached (${reflectorCount}/${CONSTANTS.REFLECTOR.MAX_ALIVE}), replacing spawn`);
+                const replacementType = this.replaceReflectorSpawn(type);
+                enemy.returnToPool();
+                return this.executeSpawn(replacementType, pattern, overrideX, overrideY, options);
+            }
         }
 
         // --- PRODUCTION: Apply Entry & Formation Meta ---
@@ -1538,6 +1866,13 @@ export class SpawnDirector {
         enemy.oobFrames = 0;
 
         this.game.enemies.push(enemy);
+
+        // --- Update State for Density Control ---
+        if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
+            this.eliteSpawnedThisTick++;
+            this.lastEliteSpawnTime = this.game.getTime();
+        }
+        this.recentSpawnPoints.push({ x: x, y: y, time: this.game.getTime() });
 
         // --- STATISTICS TRACKING (Unified for Game & Sim) ---
         this.stageSpawnTotalCount++;
@@ -2203,6 +2538,84 @@ export class SpawnDirector {
 
     setRNG(rng) {
         this.rng = rng;
+    }
+
+    /**
+     * アトラクター生存数をカウント
+     * @returns {{red: number, blue: number, total: number}}
+     */
+    countAliveAttractors() {
+        let red = 0, blue = 0;
+
+        for (const enemy of this.game.enemies) {
+            if (enemy.active && enemy.type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
+                if (enemy.attractorKind === CONSTANTS.ATTRACTOR_KIND.RED) {
+                    red++;
+                } else if (enemy.attractorKind === CONSTANTS.ATTRACTOR_KIND.BLUE) {
+                    blue++;
+                }
+            }
+        }
+
+        return { red, blue, total: red + blue };
+    }
+
+    /**
+     * アトラクター置換ロジック
+     * @param {string} originalType - 元のタイプ（ATTRACTOR）
+     * @returns {string} 置換後のタイプ
+     */
+    replaceAttractorSpawn(originalType) {
+        const stage = this.game.currentStage; // 0-indexed
+
+        // 優先順位1: 後半用強敵（ELITE, REFLECTOR）
+        if (stage >= 7) { // Stage 8+
+            const strongTypes = [CONSTANTS.ENEMY_TYPES.ELITE, CONSTANTS.ENEMY_TYPES.REFLECTOR];
+            return strongTypes[Math.floor(this.random() * strongTypes.length)];
+        }
+
+        // 優先順位2: 中盤用強化敵（ELITE, DASHER）
+        if (stage >= 4) { // Stage 5+
+            const midTypes = [CONSTANTS.ENEMY_TYPES.ELITE, CONSTANTS.ENEMY_TYPES.DASHER];
+            return midTypes[Math.floor(this.random() * midTypes.length)];
+        }
+
+        // 優先順位3: 通常敵（NORMAL, ZIGZAG, ASSAULT）
+        const normalTypes = [
+            CONSTANTS.ENEMY_TYPES.NORMAL,
+            CONSTANTS.ENEMY_TYPES.ZIGZAG,
+            CONSTANTS.ENEMY_TYPES.ASSAULT
+        ];
+        return normalTypes[Math.floor(this.random() * normalTypes.length)];
+    }
+
+    /**
+     * リフレクター置換ロジック
+     * @param {string} originalType - 元のタイプ（REFLECTOR）
+     * @returns {string} 置換後のタイプ
+     */
+    replaceReflectorSpawn(originalType) {
+        const stage = this.game.currentStage; // 0-indexed
+
+        // 優先順位1: 後半用強敵（ELITE, ATTRACTOR）
+        if (stage >= 7) { // Stage 8+
+            const strongTypes = [CONSTANTS.ENEMY_TYPES.ELITE, CONSTANTS.ENEMY_TYPES.ATTRACTOR];
+            return strongTypes[Math.floor(this.random() * strongTypes.length)];
+        }
+
+        // 優先順位2: 中盤用強化敵（ELITE, DASHER）
+        if (stage >= 4) { // Stage 5+
+            const midTypes = [CONSTANTS.ENEMY_TYPES.ELITE, CONSTANTS.ENEMY_TYPES.DASHER];
+            return midTypes[Math.floor(this.random() * midTypes.length)];
+        }
+
+        // 優先順位3: 通常敵（NORMAL, ZIGZAG, ASSAULT）
+        const normalTypes = [
+            CONSTANTS.ENEMY_TYPES.NORMAL,
+            CONSTANTS.ENEMY_TYPES.ZIGZAG,
+            CONSTANTS.ENEMY_TYPES.ASSAULT
+        ];
+        return normalTypes[Math.floor(this.random() * normalTypes.length)];
     }
 
     random() {
