@@ -13,11 +13,20 @@ export class Simulator {
                 typeCounts: {}
             },
             economyLogger: {
-                // Mock logging to avoid errors
+                // Mock logging to catch ALL spawns, including those by SpawnDirector.js
                 update: () => { },
                 resetForStage: () => { },
                 recordKill: () => { },
-                recordSpawn: () => { } // Mock for SpawnDirector
+                recordSpawn: (type) => {
+                    if (this.stats) {
+                        this.stats.total++;
+                        this.stats.byType[type] = (this.stats.byType[type] || 0) + 1;
+                    }
+                    this.activeEnemies.push({
+                        type: type,
+                        ttl: this.getTTL(type)
+                    });
+                }
             },
             // Add minimum required game methods
             addGold: () => { },
@@ -182,29 +191,12 @@ export class Simulator {
             this.spawnDirector.update(dt * 1000); // Step is now 100ms
 
             // 4. Process Spawns (Mock Execution via SpawnDirector)
+            // Note: SD.update already processes the queue if in SPAWNING state.
+            // We just let it do its job. economyLogger.recordSpawn will catch the results.
+            // If there's a race, it doesn't matter because the budget and logger are shared.
             if (this.spawnDirector.spawnQueue.length > 0) {
-                // Respect SpawnDirector's internal interval logic
-                this.spawnDirector.spawnIntervalTimer -= dt * 1000;
-
-                if (this.spawnDirector.spawnIntervalTimer <= 0) {
-                    const task = this.spawnDirector.spawnQueue[0];
-                    // Check if game has space (Hard Cap)
-                    let cap = this.spawnDirector.getCurrentSpawnCap();
-                    if (this.activeEnemies.length < cap) {
-                        // CRITICAL: Call executeSpawn to sync stats!
-                        this.spawnDirector.executeSpawn(task.type, task.pattern, task.x, task.y);
-                        this.spawnDirector.spawnQueue.shift();
-
-                        // Set next interval
-                        this.spawnDirector.spawnIntervalTimer = (task.nextDelay !== undefined) ? task.nextDelay : 100;
-
-                        // Record for Sim stats (since executeSpawn won't do it directly)
-                        // Actually, simulator needs to know WHAT was spawned.
-                        // We can hook executeSpawn or listen to gameMock.enemies.push
-                        // Simplest: record here.
-                        this.recordSimSpawn(task.type);
-                    }
-                }
+                // If the simulator wants to accelerate or force spawn, it could do it here,
+                // but let's just let SD manage the interval to match real gameplay timing.
             }
 
             // Check Clear Condition

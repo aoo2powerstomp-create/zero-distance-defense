@@ -237,6 +237,33 @@ export class EconomyLogger {
         };
         this.controlsDiv.appendChild(btnDetail);
 
+        // Add Copy Button [NEW]
+        const btnCopy = document.createElement('button');
+        btnCopy.textContent = "COPY LOG";
+        btnCopy.style.background = '#004444';
+        btnCopy.style.color = '#00ffff';
+        btnCopy.style.border = '1px solid #00ffff';
+        btnCopy.style.cursor = 'pointer';
+        btnCopy.style.fontSize = '10px';
+        btnCopy.style.marginLeft = '5px';
+
+        btnCopy.onclick = () => {
+            const text = this.logDiv.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btnCopy.textContent;
+                btnCopy.textContent = "COPIED!";
+                btnCopy.style.background = '#006666';
+                setTimeout(() => {
+                    btnCopy.textContent = originalText;
+                    btnCopy.style.background = '#004444';
+                }, 1000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                alert("Copy failed. See console.");
+            });
+        };
+        this.controlsDiv.appendChild(btnCopy);
+
         // 2. Log Area
         this.logDiv = document.createElement('div');
         this.logDiv.style.whiteSpace = 'pre-wrap';

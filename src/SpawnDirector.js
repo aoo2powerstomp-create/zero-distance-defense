@@ -144,6 +144,7 @@ export class SpawnDirector {
 
             // Quota System Init
             this.initStage9Quota();
+            this.stageTotalEnemies = this.game.enemiesRemaining;
         }
 
         this.recentSpawnPoints = [];
@@ -611,6 +612,10 @@ export class SpawnDirector {
         const T = CONSTANTS.ENEMY_TYPES;
         let composition = [];
 
+        // Progress-based diversity adjustment (Step 1)
+        const progress = 1.0 - (this.game.enemiesRemaining / (this.stageTotalEnemies || 1));
+        const isLateHalf = (progress >= 0.60);
+
         // Define Wave Composition (Target A ratio <= 70%)
         switch (pattern) {
             case 'A': // Standard Swarm (A:70%, B:30%)
@@ -644,6 +649,27 @@ export class SpawnDirector {
                     { type: T.ELITE, weight: 10 }      // D (Kept as chaos element)
                 ];
                 break;
+        }
+
+        // Stage 9 Variety Injection & Weight Modifiers (Step 1)
+        if (isLateHalf) {
+            // 1. Ensure mid-tier presence even in A/B/C patterns to break A/B loops
+            [T.EVASIVE, T.TRICKSTER, T.FLANKER, T.SPLITTER].forEach(t => {
+                if (!composition.find(c => c.type === t)) {
+                    composition.push({ type: t, weight: 10 });
+                }
+            });
+
+            // 2. Adjust weights
+            composition.forEach(c => {
+                if (c.type === T.NORMAL) c.weight *= 0.60;
+                if (c.type === T.ZIGZAG) c.weight *= 0.70;
+
+                const isMid = [T.EVASIVE, T.TRICKSTER, T.FLANKER, T.ELITE, T.OBSERVER, T.SPLITTER].includes(c.type);
+                if (isMid) {
+                    c.weight *= 1.40; // Increased to 1.4x for better impact
+                }
+            });
         }
 
         // Generate Queue based on composition
@@ -716,6 +742,47 @@ export class SpawnDirector {
                 if (filteredComp.length === 0) {
                     // Fallback to NORMAL if all options were Elite
                     filteredComp = [{ type: CONSTANTS.ENEMY_TYPES.NORMAL, weight: 1 }];
+                }
+            }
+        }
+
+        // --- Stage 9 Special Logic: ForceNonA & Soft Guard ---
+        if (this.game.currentStage === 8) { // Stage 9 (0-indexed)
+            this.spawnDecisionCount++; // Ensure counter increments for Stage 9
+
+            // 1. ForceNonA (Step 3: Stabilization)
+            // Frequency: 1/5 (Every 5th spawn)
+            const forcePeriod = 5;
+            this.debugForceStatus = { active: false, decision: this.spawnDecisionCount, period: forcePeriod, picked: null };
+
+            if (this.spawnDecisionCount % forcePeriod === 0) {
+                this.debugForceStatus.active = true;
+                const forced = this.tryGetForcedNonAType(9);
+                if (forced) {
+                    this.debugForceStatus.picked = forced;
+                    this.debugForceStats.activations++;
+                    this.debugForceStats.picksByType[forced] = (this.debugForceStats.picksByType[forced] || 0) + 1;
+                    return forced;
+                }
+            }
+
+            // 2. Step 2: Soft Guard (Late Half)
+            const progress = 1.0 - (this.game.enemiesRemaining / (this.stageTotalEnemies || 1));
+            if (progress >= 0.60) {
+                const history = this.historyTypes.slice(-50);
+                if (history.length > 0) {
+                    const aCount = history.filter(t => t === CONSTANTS.ENEMY_TYPES.NORMAL).length;
+                    const bCount = history.filter(t => t === CONSTANTS.ENEMY_TYPES.ZIGZAG).length;
+                    const aRatio = aCount / history.length;
+                    const bRatio = bCount / history.length;
+
+                    // Apply further reduction if ratio exceeds limits (Step 2 logic)
+                    filteredComp = filteredComp.map(c => {
+                        let w = c.weight;
+                        if (c.type === CONSTANTS.ENEMY_TYPES.NORMAL && aRatio > 0.45) w *= 0.5;
+                        if (c.type === CONSTANTS.ENEMY_TYPES.ZIGZAG && bRatio > 0.25) w *= 0.5;
+                        return { ...c, weight: w };
+                    });
                 }
             }
         }
@@ -823,9 +890,15 @@ export class SpawnDirector {
 
         // Find unmet quotas
         const needs = [];
+        const queuedCounts = {};
+        this.spawnQueue.forEach(task => {
+            queuedCounts[task.type] = (queuedCounts[task.type] || 0) + 1;
+        });
+
         for (const [type, limit] of Object.entries(this.quotaByType)) {
-            const current = this.stageSpawnByType[type] || 0;
-            if (current < limit) {
+            const spawned = this.stageSpawnByType[type] || 0;
+            const queued = queuedCounts[type] || 0;
+            if (spawned + queued < limit) {
                 needs.push(type);
             }
         }

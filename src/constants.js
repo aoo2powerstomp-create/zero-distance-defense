@@ -765,8 +765,8 @@ export const CONSTANTS = {
         { hpMul: 2.0, speedMul: 1.15, spawnMul: 1.8, enemyCount: 350, spawnInterval: 300 }, // Stage 5
         { hpMul: 2.4, speedMul: 1.26, spawnMul: 2.1, enemyCount: 400, spawnInterval: 200 }, // Stage 6 (240 -> 200)
         { hpMul: 3.0, speedMul: 1.30, spawnMul: 2.4, enemyCount: 550, spawnInterval: 150 }, // Stage 7 (200 -> 150)
-        { hpMul: 3.8, speedMul: 1.35, spawnMul: 2.7, enemyCount: 750, spawnInterval: 100 }, // Stage 8 (160 -> 100)
-        { hpMul: 4.8, speedMul: 1.39, spawnMul: 3.0, enemyCount: 1000, spawnInterval: 80 },  // Stage 9 (130 -> 80)
+        { hpMul: 3.8, speedMul: 1.35, spawnMul: 2.7, enemyCount: 550, spawnInterval: 100 }, // Stage 8 (750 -> 550)
+        { hpMul: 4.8, speedMul: 1.39, spawnMul: 3.0, enemyCount: 570, spawnInterval: 80 },  // Stage 9 (1000 -> 570)
         { hpMul: 6.0, speedMul: 1.43, spawnMul: 3.5, enemyCount: 1500, spawnInterval: 60 }   // Stage 10 (100 -> 60)
     ],
 
