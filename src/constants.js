@@ -115,8 +115,8 @@ export const CONSTANTS = {
     // --- Sound System (SSOT) ---
     SOUND_ASSETS: {
         // BGM
-        BGM_STAGE_01: { type: "bgm", file: "assets/sound/bgm/bgm_stage_01.mp3", baseVolume: 1.0 },
-        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3", baseVolume: 0.7 },
+        BGM_STAGE_01: { type: "bgm", file: "assets/sound/bgm/bgm_stage_01.mp3", baseVolume: 0.8 },
+        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3", baseVolume: 0.4},
         BGM_BOSS_01: { type: "bgm", file: "assets/sound/bgm/bgm_boss_01.mp3", baseVolume: 0.7 },
 
         // SE
@@ -167,7 +167,7 @@ export const CONSTANTS = {
         SE_SHOT_RIFLE: 1.0, // 3倍に強化 (0.12 -> 0.36)
         SE_SHOT_SHOTGUN: 1.0, // 少し引き下げ
         SE_COIN: 0.3, // コイン獲得音を引き下げ
-        SE_PULSE: 1.5, // パルス衝撃音 (+50%)
+        SE_PULSE: 1.8, // パルス衝撃音 (+50%)
     },
 
     SE_POLYPHONY_LIMIT: {
