@@ -115,8 +115,8 @@ export const CONSTANTS = {
     // --- Sound System (SSOT) ---
     SOUND_ASSETS: {
         // BGM
-        BGM_STAGE_01: { type: "bgm", file: "assets/sound/bgm/bgm_stage_01.mp3", baseVolume: 0.1 },
-        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3", baseVolume: 0.2},
+        BGM_STAGE_01: { type: "bgm", file: "assets/sound/bgm/bgm_stage_01.mp3", baseVolume: 0.3 },
+        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3", baseVolume: 0.3},
         BGM_BOSS_01: { type: "bgm", file: "assets/sound/bgm/bgm_boss_01.mp3", baseVolume: 0.3 },
 
         // SE
