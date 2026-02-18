@@ -1124,7 +1124,7 @@ body {
 }
 
 .howto-subtitle {
-    font-family: 'Syncopate', sans-serif;
+    font-family: 'Orbitron', sans-serif;
     color: #00ffff;
     font-size: 1.2rem;
     margin: 20px 0 15px 0;
@@ -1162,7 +1162,7 @@ body {
     border: none;
     color: rgba(0, 255, 255, 0.4);
     padding: 12px;
-    font-family: 'Syncopate', sans-serif;
+    font-family: 'Orbitron', sans-serif;
     font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.3s;
@@ -1260,7 +1260,7 @@ body {
 }
 
 .enemy-card-name {
-    font-family: 'Syncopate', sans-serif;
+    font-family: 'Orbitron', sans-serif;
     color: #00ffff;
     font-size: 0.85rem;
     letter-spacing: 1px;
@@ -1437,7 +1437,7 @@ body {
 }
 
 .howto-title {
-    font-family: 'Syncopate', sans-serif;
+    font-family: 'Orbitron', sans-serif;
     color: #00ffff;
     font-size: 1.8rem;
     margin-bottom: 25px;

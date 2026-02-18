@@ -1880,7 +1880,7 @@ export class SpawnDirector {
         // --- 2. LOGIC WRAPPING (Attractor/Reflector replacement) ---
         // TODO: Move these to Phase 3 Registry logic
         if (type === CONSTANTS.ENEMY_TYPES.ATTRACTOR) {
-            if (this.attractorWaveCount >= CONSTANTS.ATTRACTOR.MAX_PER_WAVE) {
+            if (this.attractorWaveCount >= CONSTANTS.ATTRACTOR.MAX_PER_WAVE && this.game.currentStage !== 999) {
                 if (this.game.debugEnabled && this.game.debugSpawnLog && !this.game.isSimulation) {
                     console.warn(`[ATTRACTOR] Wave limit reached, replacing spawn`);
                 }
@@ -1890,7 +1890,7 @@ export class SpawnDirector {
                 const canSpawnRed = counts.red < CONSTANTS.ATTRACTOR.MAX_ALIVE_RED;
                 const canSpawnBlue = counts.blue < CONSTANTS.ATTRACTOR.MAX_ALIVE_BLUE;
 
-                if (!canSpawnRed && !canSpawnBlue) {
+                if (!canSpawnRed && !canSpawnBlue && this.game.currentStage !== 999) {
                     if (this.game.debugEnabled && this.game.debugSpawnLog && !this.game.isSimulation) {
                         console.warn(`[ATTRACTOR] Both colors at cap, replacing spawn`);
                     }
@@ -1907,7 +1907,7 @@ export class SpawnDirector {
 
         if (decision.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) {
             const reflectorCount = this.game.enemies.filter(e => e.active && e.type === CONSTANTS.ENEMY_TYPES.REFLECTOR).length;
-            if (reflectorCount >= CONSTANTS.REFLECTOR.MAX_ALIVE) {
+            if (reflectorCount >= CONSTANTS.REFLECTOR.MAX_ALIVE && this.game.currentStage !== 999) {
                 if (this.game.debugEnabled && this.game.debugSpawnLog && !this.game.isSimulation) {
                     console.warn(`[REFLECTOR] Alive limit reached, replacing spawn`);
                 }
@@ -1962,7 +1962,7 @@ export class SpawnDirector {
         };
 
         // Validation
-        const violations = this.rules.validate(decision, ctx);
+        const violations = (this.game.currentStage === 999) ? [] : this.rules.validate(decision, ctx);
 
         if (violations.length > 0) {
             let hasBlock = false;

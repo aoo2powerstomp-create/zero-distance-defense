@@ -1800,30 +1800,26 @@ export class Enemy {
                 case CONSTANTS.ENEMY_TYPES.GUARDIAN: assetKey = 'ENEMY_G'; break;
                 case CONSTANTS.ENEMY_TYPES.DASHER: assetKey = 'ENEMY_H'; break;
                 case CONSTANTS.ENEMY_TYPES.ORBITER: assetKey = 'ENEMY_I'; break;
-                case CONSTANTS.ENEMY_TYPES.SPLITTER: assetKey = 'ENEMY_J'; break;
-                case CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD: assetKey = 'ENEMY_K'; break;
-                case CONSTANTS.ENEMY_TYPES.OBSERVER: assetKey = 'ENEMY_L'; break;
+                case CONSTANTS.ENEMY_TYPES.SPLITTER: assetKey = 'ENEMY_S1'; break;
+                case CONSTANTS.ENEMY_TYPES.SPLITTER_CHILD: assetKey = 'ENEMY_S2'; break;
+                case CONSTANTS.ENEMY_TYPES.OBSERVER: assetKey = 'ENEMY_O'; break; // Fixed O as well
 
                 // 新敵タイプ (既存アセットの流用 + フィルタ)
                 case CONSTANTS.ENEMY_TYPES.FLANKER:
-                    assetKey = 'ENEMY_A';
-                    filter = "hue-rotate(240deg) brightness(0.8)";
+                    assetKey = 'ENEMY_J';
                     break;
                 case CONSTANTS.ENEMY_TYPES.BARRIER_PAIR:
-                    assetKey = 'ENEMY_F';
-                    filter = "hue-rotate(180deg) brightness(1.2)";
+                    assetKey = 'ENEMY_K';
                     break;
                 case CONSTANTS.ENEMY_TYPES.TRICKSTER:
-                    assetKey = 'ENEMY_A';
-                    filter = "hue-rotate(60deg) brightness(1.2)"; // drop-shadow 削除
+                    assetKey = 'ENEMY_L';
                     break;
                 case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
-                    assetKey = 'ENEMY_G';
+                    assetKey = 'ENEMY_M';
                     filter = "hue-rotate(120deg) brightness(1.1)";
                     break;
                 case CONSTANTS.ENEMY_TYPES.REFLECTOR:
-                    assetKey = 'ENEMY_F';
-                    filter = "hue-rotate(0deg) brightness(1.1)"; // 後で金縁風の描画を追加検討
+                    assetKey = 'ENEMY_N';
                     break;
             }
             if (this.isBoss) {
@@ -2655,7 +2651,7 @@ export class Enemy {
     }
 
     isReflecting(bx, by) {
-        if (this.type !== CONSTANTS.ENEMY_TYPES.REFLECTOR) return false;
+        if (this.type !== CONSTANTS.ENEMY_TYPES.REFLECTOR || !this.isReflectActive) return false;
 
         // 弾丸から見た敵への角度 (衝突点からの角度)
         const hitAngle = Math.atan2(by - this.y, bx - this.x);

@@ -88,11 +88,11 @@ export const CONSTANTS = {
         ENEMY_G: './assets/enemy/icon_enemy_guardian.png',// GUARDIAN
         ENEMY_H: './assets/enemy/icon_enemy_dasher.png',  // DASHER
         ENEMY_I: './assets/enemy/icon_enemy_orbiter.png', // ORBITER
-        ENEMY_J: './assets/enemy/icon_enemy_splitter.png',// FLANKER (Use splitter as base)
-        ENEMY_K: './assets/enemy/icon_enemy_splitter_child.png', // BARRIER_PAIR
-        ENEMY_L: './assets/enemy/icon_enemy_observer.png',// TRICKSTER (Use observer as base)
+        ENEMY_J: './assets/enemy/icon_enemy_flanker.png', // FLANKER
+        ENEMY_K: './assets/enemy/icon_enemy_barrier_pair.png', // BARRIER_PAIR
+        ENEMY_L: './assets/enemy/icon_enemy_trickster.png',// TRICKSTER
         ENEMY_M: './assets/enemy/icon_enemy_guardian.png',// ATTRACTOR (Use guardian as base)
-        ENEMY_N: './assets/enemy/icon_enemy_elite.png',   // REFLECTOR (Use elite as base)
+        ENEMY_N: './assets/enemy/icon_enemy_reflector.png',   // REFLECTOR
         ENEMY_O: './assets/enemy/icon_enemy_observer.png',// OBSERVER
         ENEMY_S1: './assets/enemy/icon_enemy_splitter.png',// SPLITTER
         ENEMY_S2: './assets/enemy/icon_enemy_splitter_child.png', // CHILD
@@ -122,7 +122,7 @@ export const CONSTANTS = {
     SOUND_ASSETS: {
         // BGM
         BGM_STAGE_01: { type: "bgm", file: "assets/sound/bgm/bgm_stage_01.mp3", baseVolume: 0.25 },
-        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3", baseVolume: 0.10},
+        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3", baseVolume: 0.10 },
         BGM_BOSS_01: { type: "bgm", file: "assets/sound/bgm/bgm_boss_01.mp3", baseVolume: 0.3 },
 
         // SE
