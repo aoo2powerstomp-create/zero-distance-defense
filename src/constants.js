@@ -158,7 +158,7 @@ export const CONSTANTS = {
     },
 
     SOUND_DEFAULTS: {
-        BGM_VOLUME: 0.2,
+        BGM_VOLUME: 0.5,
         SE_VOLUME: 0.50,
     },
 

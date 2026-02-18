@@ -95,10 +95,10 @@ export class Bullet {
         this.visualScale = 1.0;
         this.flashFrames = 0;
         this.hitEnemies = new Set(); // 衝突済みの敵を記録 (多段ヒット防止)
-        this.ricochetCount = 0;      // 残り跳弾回数
+        this.remainingRicochets = 0; // 残り跳弾回数
         this.ricochetExcludes = new Set(); // 跳弾ターゲットから除外する敵
-        this.isRicochet = false;     // 跳弾門の弾かどうか
-        this.isRicochetInitiated = false; // 跳弾情報の初期化済みフラグ
+        this.isRicochet = false;     // 跳弾による弾かどうか
+        this.ricochetCount = 0;      // 累積跳弾回数 (SSOT)
         this.burstFrames = 0;        // Lv30バースト残りフレーム
         this.burstDamageMul = 1.0;   // バースト時のダメージ倍率
         this.level = 1;
@@ -136,10 +136,10 @@ export class Bullet {
         this.visualScale = extra.visualScale || 1.0;
         this.flashFrames = extra.flashFrames || 0;
 
-        this.ricochetCount = extra.ricochetCount || 0;
+        this.remainingRicochets = extra.remainingRicochets || 0;
         this.ricochetExcludes = extra.ricochetExcludes || new Set();
         this.isRicochet = extra.isRicochet || false;
-        this.isRicochetInitiated = extra.isRicochetInitiated || false;
+        this.ricochetCount = extra.ricochetCount || 0;
 
         this.burstFrames = extra.burstFrames || 0;
         this.burstDamageMul = extra.burstDamageMul || 1.0;

@@ -12,6 +12,14 @@ export class EconomyLogger {
         this.recentLogs = []; // Ring buffer max 100
         this.maxLogs = 100;
 
+        // Bonus Stats
+        this.bonusCount = 0;
+        this.totalBonusG = 0;
+        this.totalBonusExtraG = 0; // [NEW] 純増データのみ
+        this.ricochetKillCount = 0; // [NEW] 跳弾撃破数
+        this.totalRicochetCount = 0; // [NEW] 累積跳弾回数
+        this.otherBonusCount = 0; // ライフル以外での誤発動検知用
+
         // Spawn Stats
         this.recentSpawns = []; // Ring buffer max 200
         this.maxSpawns = 200;
@@ -82,13 +90,19 @@ export class EconomyLogger {
         this.gByType = {};
         this.recentLogs = [];
         this.recentSpawns = [];
+        this.bonusCount = 0;
+        this.totalBonusG = 0;
+        this.totalBonusExtraG = 0;
+        this.ricochetKillCount = 0;
+        this.totalRicochetCount = 0;
+        this.otherBonusCount = 0;
 
         // Clear UI logs immediately to avoid confusion
         // Force update to clear screen
         this.render();
     }
 
-    recordKill({ stage, enemyType, baseG, mult, gainedG }) {
+    recordKill({ stage, enemyType, baseG, mult, bonusMult = 1.0, gainedG, weaponType = null, ricochetCount = 0 }) {
         if (!this.isActive) return;
 
         // Sync active stage just in case
@@ -102,6 +116,25 @@ export class EconomyLogger {
         // Aggregation
         this.stageTotalG += g;
 
+        if (bonusMult > 1.0) {
+            const isRifle = weaponType === CONSTANTS.WEAPON_TYPES.STANDARD;
+            if (isRifle) {
+                this.bonusCount++;
+                // ボーナスによる純増分を加算
+                const bonusG = gainedG - Math.round(baseG * mult);
+                this.totalBonusG += gainedG; // 総額 (一応保持)
+                this.totalBonusExtraG += Math.max(0, bonusG); // [NEW] 純増
+
+                if (ricochetCount >= 1) {
+                    this.ricochetKillCount++;
+                    this.totalRicochetCount += ricochetCount;
+                }
+            } else {
+                // ライフル以外でボーナスが発生した場合（異常検知用）
+                this.otherBonusCount++;
+            }
+        }
+
         if (!this.killsByType[type]) this.killsByType[type] = 0;
         this.killsByType[type]++;
 
@@ -109,7 +142,7 @@ export class EconomyLogger {
         this.gByType[type] += g;
 
         // Log
-        this.recentLogs.push({ stage, enemyType, baseG, mult, gainedG });
+        this.recentLogs.push({ stage, enemyType, baseG, mult, bonusMult, gainedG, weaponType });
         if (this.recentLogs.length > this.maxLogs) {
             this.recentLogs.shift();
         }
@@ -263,6 +296,23 @@ export class EconomyLogger {
             });
         };
         this.controlsDiv.appendChild(btnCopy);
+
+        // Add Weapon Validation Button [NEW]
+        const btnVal = document.createElement('button');
+        btnVal.textContent = "WEAPON VAL (Stg8/9)";
+        btnVal.style.background = '#440044';
+        btnVal.style.color = '#ff88ff';
+        btnVal.style.border = '1px solid #ff88ff';
+        btnVal.style.cursor = 'pointer';
+        btnVal.style.fontSize = '10px';
+        btnVal.style.marginLeft = '5px';
+
+        btnVal.onclick = async () => {
+            if (window.Simulator) {
+                await this.runWeaponValidation();
+            }
+        };
+        this.controlsDiv.appendChild(btnVal);
 
         // 2. Log Area
         this.logDiv = document.createElement('div');
@@ -489,6 +539,11 @@ export class EconomyLogger {
         html += `Stg  : ${stage} (Index ${stageIndex})\n`;
         html += `倍率 : x${mult.toFixed(2)}\n`;
         html += `獲得 : ${this.stageTotalG} G\n`;
+
+        // ボーナス行を常時表示
+        const bonusPct = (this.stageTotalG > 0) ? (this.totalBonusExtraG / this.stageTotalG * 100).toFixed(1) : "0.0";
+        html += `Bonus : +${this.totalBonusExtraG} G (${this.bonusCount}回, ${bonusPct}%)\n`;
+        html += ` (Target: RIFLE only / Illegal: ${this.otherBonusCount})\n`;
 
         // Current Gold (if available)
         if (this.game.gold !== undefined) {
@@ -746,5 +801,54 @@ export class EconomyLogger {
         }
 
         this.logDiv.textContent = html;
+    }
+
+    async runWeaponValidation() {
+        const runs = 100;
+        const stages = [7, 8]; // Stage 8 (index 7) and Stage 9 (index 8)
+        const weapons = [
+            { name: 'RIFLE', type: CONSTANTS.WEAPON_TYPES.STANDARD },
+            { name: 'LASER', type: CONSTANTS.WEAPON_TYPES.PIERCE },
+            { name: 'SHOTGUN', type: CONSTANTS.WEAPON_TYPES.SPREAD }
+        ];
+
+        this.simResultText = `[Starting Weapon Validation: ALL x${runs}...]\n` + this.simResultText;
+        this.render();
+
+        let report = `\n=== WEAPON BALANCE VALIDATION (runs:${runs}) ===\n`;
+        report += "WPN\tSTG\tAvgGold\tAvgExtra\tExtra%\tBonusKills\tAvgRicochet\n";
+        report += "--------------------------------------------------------------------\n";
+
+        try {
+            for (const w of weapons) {
+                for (const s of stages) {
+                    this.simResultText = `[Simulating ${w.name} Stg${s + 1}...]\n` + this.simResultText;
+                    this.render();
+
+                    await new Promise(r => setTimeout(r, 0));
+
+                    const sim = new window.Simulator();
+                    sim.weaponType = w.type;
+                    const res = sim.simulateMany(runs, s, 9999, 12345, true);
+
+                    const avgG = parseFloat(res.totalGold || 0) / runs;
+                    const avgExtra = parseFloat(res.totalBonusExtraG || 0) / runs;
+                    const extraPct = (avgG > 0) ? (avgExtra / avgG * 100).toFixed(1) : "0.0";
+                    const bonusKills = res.bonusCount || 0;
+                    const avgRic = (res.ricochetKillCount > 0) ? (res.totalRicochetCount / res.ricochetKillCount).toFixed(1) : "0.0";
+                    const illegal = (res.bonusCount || 0) - (w.type === CONSTANTS.WEAPON_TYPES.STANDARD ? (res.bonusCount || 0) : 0);
+
+                    report += `${w.name.padEnd(7)}\t${s + 1}\t${avgG.toFixed(0)}\t+${avgExtra.toFixed(0)}\t${extraPct}%\t${bonusKills}\t${avgRic}\n`;
+                    if (illegal > 0) report += ` !! ILLEGAL BONUS DETECTED: ${illegal} !!\n`;
+                }
+            }
+            report += "------------------------------------------------\n";
+            this.simResultText = report + this.simResultText;
+            this.render();
+        } catch (e) {
+            this.simResultText = `\n[VAL ERROR]: ${e.message}\n` + this.simResultText;
+            console.error(e);
+            this.render();
+        }
     }
 }

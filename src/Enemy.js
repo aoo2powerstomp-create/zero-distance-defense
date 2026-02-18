@@ -2669,8 +2669,8 @@ export class Enemy {
         return Math.abs(diff) < (Math.PI / 3);
     }
 
-    destroy(reason = 'damage', game) {
-        if (!this.active) return;
+    destroy(reason = 'damage', game, killCtx = null) {
+        if (!this.active || this.killed) return; // 二重発火防止 (SSOT)
 
         // ドローンの放電(DISCHARGE)時は即座に active = false にせず、タイマーを回す
         if (reason === 'DISCHARGE') {
@@ -2696,13 +2696,12 @@ export class Enemy {
         this.deactivateReason = reason;
         this.destroyReason = reason;
 
-        // 破壊エフェクト
+        // 破壊エフェクト (以下略、変更なし箇所は維持) ...
         if (reason === 'damage' || reason === 'bullet' || reason === 'bomb' || reason === 'nuke' || reason === 'BULLET' || reason === 'BARRIER_DAMAGE' || reason === 'LIFETIME' || reason === 'DETONATE' || reason === 'DISCHARGE') {
             const isDischarge = (reason === 'DISCHARGE');
             const splashRadius = (this.isDrone) ? CONSTANTS.PLASMA_DRONE_STAGE5.dischargeRadius : (this.type === CONSTANTS.ENEMY_TYPES.BOSS ? 200 : 50);
 
             if (reason === 'DETONATE' || reason === 'DISCHARGE') {
-                // 爆発/放電ヒット判定 (プレイヤーのみ)
                 if (game && game.player) {
                     const dx = game.player.x - this.x;
                     const dy = game.player.y - this.y;
@@ -2714,13 +2713,9 @@ export class Enemy {
                 }
             }
 
-            // 演出
             if (this.isDrone) {
-                // ドローン専用：スパーク円
-                // Stage 10 (ownerId === 9) は赤系、Stage 5 は青系 [FIX]
                 const isStage10Drone = this.ownerId === 9;
                 const droneDestroyColor = isStage10Drone ? '#ff5555' : '#00ffff';
-
                 Effects.createExplosion(this.x, this.y, splashRadius * 0.8, droneDestroyColor);
                 for (let i = 0; i < 15; i++) {
                     Effects.createSpark(this.x, this.y, droneDestroyColor);
@@ -2741,10 +2736,6 @@ export class Enemy {
             this.game.audio.playSe(deathSound);
         }
 
-        this.active = false;
-        this.deactivateReason = reason;
-        this.destroyReason = reason;
-
         // スコア・統計加算 (正当な撃破時のみ)
         if (this.hp <= 0) {
             game.totalKills++;
@@ -2753,23 +2744,27 @@ export class Enemy {
             this.destroyReason = 'DEAD';
         }
 
-        // バリアペアの片割れが死んだ場合、もう片方の挙動を変える
+        // バリアペアリンク解除
         if (this.type === CONSTANTS.ENEMY_TYPES.BARRIER_PAIR && this.partner) {
-            this.partner.partner = null; // リンク解除
-            this.partner.barrierState = 'vulnerable'; // または専用のステート
+            this.partner.partner = null;
+            this.partner.barrierState = 'vulnerable';
         }
 
         // ドロップ処理
         if (reason !== 'glitch' && reason !== 'GLITCH' && reason !== 'return' && reason !== 'LIFETIME' && reason !== 'OOB' && !this.isDrone && !this.isRimLaser) {
-            // GOLD (100% drop)
-            // Stage1 = 0, Stage2 = 1 ...
-            // Debug Stage (999) -> Level 0 (x1.0)
             const stage = (game.currentStage === CONSTANTS.STAGE_DEBUG) ? 1 : (game.currentStage ?? 1);
             const stageIndex = Math.max(0, stage - 1);
             const mult = Math.pow(CONSTANTS.ECON_GROWTH_BASE || 1.18, stageIndex);
 
             const baseG = CONSTANTS.ENEMY_GOLD[this.type] || 10;
-            const finalG = Math.max(1, Math.round(baseG * mult));
+
+            // --- [NEW] ライフル跳弾ボーナス計算 ---
+            const rc = killCtx?.ricochetCount ?? 0;
+            const isRifle = killCtx?.weaponType === CONSTANTS.WEAPON_TYPES.STANDARD;
+            const isBonus = isRifle && rc >= 1;
+
+            const bonusMult = isBonus ? Math.min(1.0 + rc * 0.10, 1.5) : 1.0;
+            const finalG = Math.round(baseG * mult * bonusMult);
 
             // Log if logger exists
             if (game.economyLogger) {
@@ -2778,13 +2773,17 @@ export class Enemy {
                     enemyType: this.type,
                     baseG: baseG,
                     mult: mult,
-                    gainedG: finalG
+                    bonusMult: bonusMult,
+                    gainedG: finalG,
+                    weaponType: killCtx?.weaponType,
+                    ricochetCount: rc // 追加
                 });
             }
 
             const g = game.goldPool.get();
             if (g) {
-                g.init(this.renderX, this.renderY, finalG);
+                // Gold.init を拡張 (第4引数にオプションオブジェクト)
+                g.init(this.renderX, this.renderY, finalG, { isBonus: isBonus });
                 game.golds.push(g);
             }
 

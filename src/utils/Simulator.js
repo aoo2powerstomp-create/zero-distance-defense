@@ -16,7 +16,21 @@ export class Simulator {
                 // Mock logging to catch ALL spawns, including those by SpawnDirector.js
                 update: () => { },
                 resetForStage: () => { },
-                recordKill: () => { },
+                recordKill: ({ stage, enemyType, baseG, mult, bonusMult = 1.0, gainedG, ricochetCount = 0 }) => {
+                    if (this.stats) {
+                        this.stats.totalGold = (this.stats.totalGold || 0) + gainedG;
+                        if (bonusMult > 1.0) {
+                            this.stats.bonusCount = (this.stats.bonusCount || 0) + 1;
+                            const extra = gainedG - Math.round(baseG * mult);
+                            this.stats.totalBonusExtraG = (this.stats.totalBonusExtraG || 0) + extra;
+
+                            if (ricochetCount >= 1) {
+                                this.stats.ricochetKillCount = (this.stats.ricochetKillCount || 0) + 1;
+                                this.stats.totalRicochetCount = (this.stats.totalRicochetCount || 0) + ricochetCount;
+                            }
+                        }
+                    }
+                },
                 recordSpawn: (type) => {
                     if (this.stats) {
                         this.stats.total++;
@@ -56,8 +70,8 @@ export class Simulator {
             },
             currentSpawnBudget: 0,
             debugEnabled: false,
-            isSimulation: true, // Flag to suppress logs in other classes [NEW]
-            getTime: () => this.simTime * 1000
+            isSimulation: true,
+            getTime: () => (this.simTime || 0) * 1000
         };
 
         this.spawnDirector = null;
@@ -157,23 +171,34 @@ export class Simulator {
                 this.activeEnemies[i].ttl -= dt;
 
                 if (this.activeEnemies[i].ttl <= 0) {
-                    // Enemy "Died" or "Extinguished"
                     const e = this.activeEnemies[i];
 
-                    // In real game, enemiesRemaining decreases when killed.
-                    // Here we assume they are killed/removed at end of TTL.
-                    // (SpawnDirector.forceCullEnemies also decrements remaining if it runs, but we simulate standard flow)
-                    if (this.gameMock.enemiesRemaining > 0) {
-                        // Note: In real game, remaining is spawn budget?
-                        // check main.js: enemiesRemaining = stageData.enemyCount.
-                        // When enemy dies: killCount++, enemiesRemaining doesn't change?
-                        // Wait, check Main.js update loop for clear condition.
-                        // "enemiesRemaining <= 0 && activeNonMinions === 0"
-                        // SpawnDirector: "enemiesRemaining--" in forceCull.
-                        // Actually SpawnDirector logic:
-                        // "if (this.game.enemiesRemaining <= 0) ... wait for clear"
-                        // "if (count > this.game.enemiesRemaining) count = this.game.enemiesRemaining"
-                        // So enemiesRemaining is the *Spawn Reserve*. It decreases when we *Queue/Spawn*.
+                    // recordKill を呼び出して経済統計に反映させる
+                    if (this.gameMock.economyLogger && this.gameMock.economyLogger.recordKill) {
+                        let rc = 0;
+                        // RIFLE (STANDARD) の場合は、擬似的に跳弾回数を生成 (検証用モデル)
+                        if (this.weaponType === CONSTANTS.WEAPON_TYPES.STANDARD) {
+                            const roll = this.rng.next();
+                            if (roll < 0.4) rc = 1;      // 40% で 1跳弾
+                            else if (roll < 0.6) rc = 2; // 20% で 2跳弾
+                        }
+
+                        const stage = this.gameMock.currentStage + 1;
+                        const mult = Math.pow(CONSTANTS.ECON_GROWTH_BASE || 1.18, stage - 1);
+                        const baseG = CONSTANTS.ENEMY_GOLD[e.type] || 10;
+                        const bonusMult = (rc >= 1) ? Math.min(1.0 + rc * 0.1, 1.5) : 1.0;
+                        const finalG = Math.round(baseG * mult * bonusMult);
+
+                        this.gameMock.economyLogger.recordKill({
+                            stage: stage,
+                            enemyType: e.type,
+                            baseG: baseG,
+                            mult: mult,
+                            bonusMult: bonusMult,
+                            gainedG: finalG,
+                            weaponType: this.weaponType,
+                            ricochetCount: rc // 追加
+                        });
                     }
 
                     this.activeEnemies.splice(i, 1);
@@ -258,6 +283,12 @@ export class Simulator {
             byType: {},
             forceActivations: 0,
             totalDuration: 0,
+            totalGold: 0,
+            totalBonusG: 0,
+            totalBonusExtraG: 0, // [NEW] 純増分
+            bonusCount: 0,
+            ricochetKillCount: 0, // [NEW] 跳弾キル回数
+            totalRicochetCount: 0, // [NEW] 累積跳弾数
             runs: runs
         };
 
@@ -268,6 +299,12 @@ export class Simulator {
             aggregate.totalSpawns += res.total;
             aggregate.totalDuration += res.duration;
             aggregate.forceActivations += (res.forceStats ? res.forceStats.activations : 0);
+            aggregate.totalGold += (res.totalGold || 0);
+            aggregate.totalBonusG += (res.totalBonusG || 0);
+            aggregate.totalBonusExtraG += (res.totalBonusExtraG || 0);
+            aggregate.bonusCount += (res.bonusCount || 0);
+            aggregate.ricochetKillCount += (res.ricochetKillCount || 0);
+            aggregate.totalRicochetCount += (res.totalRicochetCount || 0);
 
             for (const t in res.byType) {
                 aggregate.byType[t] = (aggregate.byType[t] || 0) + res.byType[t];
@@ -279,6 +316,12 @@ export class Simulator {
             total: (aggregate.totalSpawns / runs).toFixed(1),
             forceActs: (aggregate.forceActivations / runs).toFixed(1),
             avgDuration: (aggregate.totalDuration / runs),
+            totalGold: aggregate.totalGold,
+            totalBonusG: aggregate.totalBonusG,
+            totalBonusExtraG: aggregate.totalBonusExtraG,
+            bonusCount: aggregate.bonusCount,
+            ricochetKillCount: aggregate.ricochetKillCount,
+            totalRicochetCount: aggregate.totalRicochetCount,
             ratios: {}
         };
 

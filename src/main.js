@@ -1367,7 +1367,7 @@ class Game {
     /**
      * 跳弾弾の生成
      */
-    spawnRicochetBullet(fromX, fromY, targetEnemy, damage, speed, ricochetCount, ricochetExcludes, weaponType, baseExtra) {
+    spawnRicochetBullet(fromX, fromY, targetEnemy, damage, speed, remainingRicochets, ricochetExcludes, weaponType, baseExtra, parentRicochetCount = 0) {
         const dx = targetEnemy.x - fromX;
         const dy = targetEnemy.y - fromY;
         const angle = Math.atan2(dy, dx);
@@ -1377,10 +1377,10 @@ class Game {
         // 跳弾用の見た目調整（わずかに発光を強める）
         const extra = {
             ...baseExtra,
-            ricochetCount: ricochetCount - 1,
+            remainingRicochets: remainingRicochets - 1,
             ricochetExcludes: new Set(ricochetExcludes),
             isRicochet: true,
-            isRicochetInitiated: true
+            ricochetCount: parentRicochetCount + 1
         };
         extra.flashFrames = 2;
 
@@ -1831,25 +1831,27 @@ class Game {
                     if (b.weaponType === CONSTANTS.WEAPON_TYPES.STANDARD) {
                         const rifleLevel = this.player.weapons.standard.level;
                         if (rifleLevel >= 10) {
-                            if (!b.isRicochetInitiated) {
+                            // 既存の「残り跳弾回数」初期化ロジック (isRicochet で判定可能)
+                            if (!b.isRicochet) {
                                 let limit = (rifleLevel >= 20) ? 2 : 1;
-                                b.ricochetCount = limit;
-                                b.isRicochetInitiated = true;
+                                b.remainingRicochets = limit;
                             }
+
                             b.ricochetExcludes.add(e);
-                            if (b.ricochetCount > 0) {
+                            if (b.remainingRicochets > 0) {
                                 const nextTarget = this.findNearestEnemy(b.ricochetExcludes, b.x, b.y, 220);
                                 if (nextTarget) {
                                     this.spawnRicochetBullet(
                                         b.x, b.y, nextTarget,
                                         b.damage * (rifleLevel < 30 ? 0.8 : 1.0),
                                         this.player.getWeaponStats().speed,
-                                        b.ricochetCount, b.ricochetExcludes,
+                                        b.remainingRicochets, b.ricochetExcludes,
                                         b.weaponType,
-                                        { ...this.player.getWeaponStats(), tintColor: getTintForWeapon(b.weaponType, rifleLevel), visualScale: b.visualScale }
+                                        { ...this.player.getWeaponStats(), tintColor: getTintForWeapon(b.weaponType, rifleLevel), visualScale: b.visualScale },
+                                        b.ricochetCount
                                     );
                                 }
-                                b.ricochetCount = 0;
+                                b.remainingRicochets = 0;
                                 b.active = false;
                                 bulletConsumed = true;
                             }
@@ -1873,7 +1875,10 @@ class Game {
                     }
                     this.player.hp = Math.min(CONSTANTS.PLAYER_MAX_HP, this.player.hp + CONSTANTS.PLAYER_MAX_HP * CONSTANTS.STANDARD_RECOVERY_ON_HIT);
 
-                    if (e.hp <= 0) e.destroy('BULLET', this);
+                    if (e.hp <= 0) {
+                        const killCtx = { weaponType: b.weaponType, ricochetCount: b.ricochetCount };
+                        e.destroy('BULLET', this, killCtx);
+                    }
 
                     b.pierceCount--;
                     if (b.pierceCount < 0) {
