@@ -128,6 +128,7 @@ class Game {
         // アセットローダー初期化とロード開始
         this.assetLoader = new AssetLoader();
         this.assetLoader.loadAll(CONSTANTS.ASSET_MAP);
+        this.isTransitioning = false; // [NEW] 遷移中ガードフラグ
 
         this.generateStageButtons();
 
@@ -259,26 +260,7 @@ class Game {
         const btnStart = document.getElementById('btn-start');
         if (btnStart) {
             btnStart.addEventListener('click', async () => {
-                // 連打防止: 既に処理中なら無視
-                if (this.isStarting) return;
-                this.isStarting = true;
-
-                await this.audio.init();
-                this.audio.playSe('SE_BARRIER_01', { priority: 'high' });
-
-                // フェードアウトしてから開始
-                await this.triggerFade('out', 500);
-
-                const titleScreen = document.getElementById('title-screen');
-                if (titleScreen) titleScreen.classList.add('hidden');
-
-                this.startCountdown();
-
-                // カウントダウン開始に合わせてフェードイン
-                this.triggerFade('in', 500);
-
-                // 処理完了後にフラグ解除 (通常はgameState遷移で戻ってこないが念のため)
-                this.isStarting = false;
+                this.startNewRun();
             });
         }
 
@@ -442,7 +424,8 @@ class Game {
         if (btnConfirmYes) {
             btnConfirmYes.addEventListener('click', () => {
                 this.audio.playSe('SE_BARRIER_01');
-                this.triggerFade('out', 500).then(() => location.reload());
+                document.getElementById('confirm-screen').classList.add('hidden');
+                this.goToTitle();
             });
         }
 
@@ -595,9 +578,25 @@ class Game {
         const btnNext = document.getElementById('btn-next');
         if (btnNext) {
             btnNext.addEventListener('click', () => {
-                if (this.gameState === CONSTANTS.STATE.RESULT || this.gameState === CONSTANTS.STATE.GAME_OVER) {
-                    this.triggerFade('out', 500).then(() => location.reload());
+                if (this.lastResult && this.lastResult.stageIndex !== undefined) {
+                    this.startStage(this.lastResult.stageIndex + 1, { next: true });
                 }
+            });
+        }
+
+        const btnRetry = document.getElementById('btn-retry');
+        if (btnRetry) {
+            btnRetry.addEventListener('click', () => {
+                if (this.lastResult && this.lastResult.stageIndex !== undefined) {
+                    this.startStage(this.lastResult.stageIndex, { retry: true });
+                }
+            });
+        }
+
+        const btnTitle = document.getElementById('btn-title');
+        if (btnTitle) {
+            btnTitle.addEventListener('click', () => {
+                this.goToTitle();
             });
         }
 
@@ -860,17 +859,8 @@ class Game {
 
             btn.addEventListener('click', async () => {
                 await this.audio.init();
-                this.audio.playSe('SE_BARRIER_01', { priority: 'high' }); // Placeholder for menu_select
-                const titleScreen = document.getElementById('title-screen');
-                if (titleScreen) titleScreen.classList.add('hidden');
-
-                this.currentStage = index;
-
-                // BGM switching based on stage mapping
-                const bgmKey = CONSTANTS.BGM_MAPPING[index + 1] || 'BGM_STAGE_01';
-                this.audio.playBgm(bgmKey);
-
-                this.startCountdown();
+                this.audio.playSe('SE_BARRIER_01', { priority: 'high' });
+                this.startStage(index);
             });
 
             list.appendChild(btn);
@@ -888,11 +878,7 @@ class Game {
             btn.addEventListener('click', async () => {
                 await this.audio.init();
                 this.audio.playSe('SE_BARRIER_01', { priority: 'high' });
-                const titleScreen = document.getElementById('title-screen');
-                if (titleScreen) titleScreen.classList.add('hidden');
-
-                this.currentStage = CONSTANTS.STAGE_DEBUG;
-                this.startCountdown();
+                this.startStage(CONSTANTS.STAGE_DEBUG);
             });
 
             list.appendChild(btn);
@@ -901,6 +887,147 @@ class Game {
 
     getUpgradeCost(base, level, growth) {
         return Math.round(base * Math.pow(growth, level - 1));
+    }
+
+    /**
+     * ラン(Run)全体の状態を初期化する (SSOT)
+     * 新規開始(START)時にのみ呼び出す
+     */
+    resetRunState() {
+        this.goldCount = 0;
+        this.displayGoldCount = 0;
+        this.totalGoldEarned = 0;
+        this.totalKills = 0;
+        this.runTotalDamageTaken = 0;
+        this.runTotalItemsUsed = 0;
+        this.runTotalTimeMs = 0;
+        this.runTotalGameTime = 0;
+
+        // 武器レベルの初期化
+        Object.keys(this.player.weapons).forEach(type => {
+            this.player.weapons[type].unlocked = true; // [MOD] 最初から全開放
+            this.player.weapons[type].level = 1;
+            this.player.weapons[type].atkSpeedLv = 1;
+        });
+        this.player.currentWeapon = CONSTANTS.WEAPON_TYPES.STANDARD;
+        this.currentStage = 0;
+    }
+
+    /**
+     * ステージ挑戦(Attempt)の状態をリセットする (SSOT)
+     * リトライや次ステージ開始時に毎回呼び出す
+     */
+    resetAttemptState() {
+        // オブジェクトの全クリア
+        this.enemies.forEach(e => this.enemyPool.release(e));
+        this.enemies = [];
+        this.bullets.forEach(b => this.bulletPool.release(b));
+        this.bullets = [];
+        this.golds.forEach(g => this.goldPool.release(g));
+        this.golds = [];
+        this.damageTexts.forEach(d => this.damageTextPool.release(d));
+        this.damageTexts = [];
+        this.shieldZones = []; // 設置型シールドも消去
+
+        // プレイヤー状態のリセット
+        this.player.hp = CONSTANTS.PLAYER_MAX_HP;
+        this.player.barrierCharges = CONSTANTS.BARRIER_MAX_CHARGES;
+        this.player.overdriveUntilMs = 0;
+        this.player.invincibleUntilMs = 0;
+        this.player.damageFlashTimer = 0;
+
+        // ステージ統計・タイマーのリセット
+        this.enemiesRemaining = 0;
+        this.spawnTimer = 0;
+        this.stageTime = 0;
+        this.stageGameTime = 0;
+        this.killCount = 0;
+        this.stageGoldEarned = 0;
+
+        // スポーン・物理・視覚効果のリセット
+        this.spawnQueue = 0;
+        this.bossSpawned = false;
+        this.isClearing = false;
+        this.pulseCooldownTimer = 0;
+        this.pulseEffects = [];
+        this.globalMarkTimer = 0;
+        this.freezeTimer = 0;
+        this.screenShakeTimer = 0;
+        this.isPaused = false;
+
+        // プロセス・管理クラスのリセット
+        if (this.spawnDirector) this.spawnDirector.resetForStage();
+        if (this.economyLogger) this.economyLogger.resetForStage(this.currentStage);
+
+        // UIの状態復帰
+        const overlay = document.getElementById('overlay');
+        if (overlay) overlay.classList.add('hidden');
+        const pauseScreen = document.getElementById('pause-screen');
+        if (pauseScreen) pauseScreen.classList.add('hidden');
+    }
+
+    /**
+     * 完全な新規ランを開始する (ENTRY POINT)
+     */
+    async startNewRun() {
+        if (this.isTransitioning) return;
+        this.isTransitioning = true;
+
+        await this.audio.init();
+        this.audio.playSe('SE_BARRIER_01', { priority: 'high' });
+
+        await this.triggerFade('out', 500);
+
+        this.resetRunState();
+        await this.startStage(0, { newRun: true });
+
+        this.triggerFade('in', 500);
+        this.isTransitioning = false;
+    }
+
+    /**
+     * 特定のステージを開始/リトライする (ENTRY POINT)
+     * @param {number} stageIndex ステージ番号(0-indexed)
+     * @param {Object} opts オプションフラグ
+     */
+    async startStage(stageIndex, opts = {}) {
+        // startNewRun から呼ばれる場合は、既にフェードアウト等の処理が外側で行われている
+        const internal = opts.newRun || opts.retry || opts.next;
+
+        if (!internal) {
+            if (this.isTransitioning) return;
+            this.isTransitioning = true;
+            await this.triggerFade('out', 500);
+        }
+
+        this.currentStage = stageIndex;
+        this.resetAttemptState();
+
+        const titleScreen = document.getElementById('title-screen');
+        if (titleScreen) titleScreen.classList.add('hidden');
+
+        this.startCountdown();
+
+        if (!internal) {
+            this.triggerFade('in', 500);
+            this.isTransitioning = false;
+        }
+    }
+
+    /**
+     * タイトル画面へ戻る (ENTRY POINT)
+     */
+    async goToTitle() {
+        if (this.isTransitioning) return;
+        this.isTransitioning = true;
+
+        await this.triggerFade('out', 500);
+
+        this.resetAttemptState();
+        this.switchState(CONSTANTS.STATE.TITLE);
+
+        await this.triggerFade('in', 500);
+        this.isTransitioning = false;
     }
 
     startWave() {
@@ -938,19 +1065,9 @@ class Game {
             stageData = CONSTANTS.STAGE_DATA[this.currentStage];
         }
 
-        this.enemies.forEach(e => this.enemyPool.release(e));
-        this.enemies = [];
-        this.bullets.forEach(b => this.bulletPool.release(b));
-        this.bullets = [];
-        this.golds.forEach(g => this.goldPool.release(g));
-        this.golds = [];
-
+        // resetAttemptState で既に行われているリセットは省略し、
+        // 実際の波のパラメータセットのみ行う
         this.enemiesRemaining = Math.round(stageData.enemyCount * stageData.spawnMul);
-        this.spawnTimer = 0;
-        this.stageTime = 0;
-        this.stageGameTime = 0; // [NEW] ステージ内ゲーム時間 (x1換算)
-        this.killCount = 0;
-        this.stageGoldEarned = 0;
 
         if (!this.isDebugStage && (this.currentStage + 1) % 5 === 0) {
             this.enemiesRemaining = 0; // ボスステージは追加スポーンなし、ボス撃破＝クリアとする
@@ -965,12 +1082,7 @@ class Game {
         this.spawnPhase = 'BURST';
         this.phaseTimer = CONSTANTS.SPAWN_BURST_TIME_MS;
         this.spawnQueue = 0;
-        this.bossSpawned = false; // ボス出現フラグ初期化
         this.currentSpawnBudget = CONSTANTS.SPAWN_BUDGET_PER_SEC;
-        this.pulseCooldownTimer = 0;
-        this.pulseEffects = [];
-        this.globalMarkTimer = 0; // マーキングもリセット
-        this.isClearing = false; // フラグ保護のリセット
 
         this.gameState = CONSTANTS.STATE.PLAYING;
 
@@ -982,17 +1094,7 @@ class Game {
             itemUsed: 0
         };
 
-        // SpawnDirector リセット
-        if (this.spawnDirector) {
-            this.spawnDirector.resetForStage();
-        }
-
-        // EconomyLogger リセット
-        if (this.economyLogger) {
-            this.economyLogger.resetForStage(this.currentStage);
-        }
-
-        // リザルト等で隠れたUIを確実に再表示する
+        // UI表示の更新
         const hud = document.getElementById('hud');
         if (hud) hud.classList.remove('hidden');
         const controls = document.getElementById('controls');
@@ -1132,12 +1234,7 @@ class Game {
     }
 
     startNextWave() {
-        this.currentStage++;
-        if (this.currentStage < CONSTANTS.STAGE_DATA.length) {
-            this.startCountdown();
-        } else {
-            this.showOverlay('ALL STAGE CLEAR!', '地球の平和は守られました', 'result');
-        }
+        this.startStage(this.currentStage + 1, { next: true });
     }
 
     startCountdown() {
@@ -1320,12 +1417,21 @@ class Game {
             document.getElementById('hud').classList.add('hidden');
             document.getElementById('controls').classList.add('hidden');
 
-            // ボタンテキスト調整
+            // ボタンステートの更新
             const btnNext = document.getElementById('btn-next');
-            if (btnNext) {
-                // GAME OVER や 全クリア時はタイトルに戻るのが基本挙動
-                btnNext.textContent = "TITLE";
+            const btnRetry = document.getElementById('btn-retry');
+            const btnTitle = document.getElementById('btn-title');
+
+            const isNextAvailable = this.gameState !== CONSTANTS.STATE.GAME_OVER && (this.currentStage + 1 < CONSTANTS.STAGE_DATA.length);
+
+            if (btnNext) btnNext.classList.toggle('hidden', !isNextAvailable);
+            if (btnRetry) {
+                btnRetry.textContent = `RETRY`;
+                btnRetry.classList.remove('hidden');
             }
+            if (btnTitle) btnTitle.classList.remove('hidden');
+
+            this.lastResult.stageIndex = this.currentStage;
         }
     }
 

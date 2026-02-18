@@ -72,12 +72,12 @@
                     </button>
                     <button class="weapon-up-btn" data-up-weapon="shot">
                         <img src="assets/ui/ui_icon_shotgun.png" class="up-slot-icon" alt="SHOTGUN">
-                        <span class="up-slot-lv">LOCK</span>
+                        <span class="up-slot-lv">1</span>
                         <span class="up-slot-cost">500</span>
                     </button>
                     <button class="weapon-up-btn" data-up-weapon="pierce">
                         <img src="assets/ui/ui_icon_laser.png" class="up-slot-icon" alt="LASER">
-                        <span class="up-slot-lv">LOCK</span>
+                        <span class="up-slot-lv">1</span>
                         <span class="up-slot-cost">1000</span>
                     </button>
                     <button id="btn-up-speed" class="upgrade-btn">
@@ -284,8 +284,10 @@
                 <div class="stat-row"><span>ITEM:</span> <span id="stat-item">0</span></div>
             </div>
 
-            <button id="btn-next" class="btn-primary">NEXT</button>
-            <button id="btn-title" class="btn-secondary hidden">TITLE</button>
+            <div class="result-buttons">
+                <button id="btn-retry" class="btn-secondary">RETRY</button>
+                <button id="btn-title" class="btn-secondary">TITLE</button>
+            </div>
         </div>
     </div>
     <script type="module" src="src/main.js"></script>
