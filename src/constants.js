@@ -23,6 +23,11 @@ export const CONSTANTS = {
     BULLET_SIZE: 2.5,
     BULLET_LIMIT: 60,
 
+    // レーザー反射設定
+    LASER_BOUNCE_LIMIT: 3,
+    LASER_MAX_DISTANCE: 5000, // 画面端までの反射を考慮して大幅に強化
+    LASER_HIT_INTERVAL_MS: 100, // 同一敵へのヒット間隔
+
     // 敵設定
     ENEMY_SIZE: 15,
     ENEMY_BASE_SPEED: 0.96,
@@ -153,7 +158,7 @@ export const CONSTANTS = {
     },
 
     SOUND_DEFAULTS: {
-        BGM_VOLUME: 0.07,
+        BGM_VOLUME: 0.2,
         SE_VOLUME: 0.50,
     },
 
@@ -168,7 +173,7 @@ export const CONSTANTS = {
     SE_POLYPHONY_LIMIT: {
         SE_SHOT_LASER: 8,
         SE_SHOT_RIFLE: 8,
-        SE_SHOT_SHOTGUN: 4,
+        SE_SHOT_SHOTGUN: 6,
         DEFAULT: 3
     },
 
@@ -301,10 +306,10 @@ export const CONSTANTS = {
             baseDamage: 1.56,  // 強化 (1.3 -> 1.56)
             damageScale: 1.05, // 1.1 -> 1.05
             pierceBase: 2,
-            speedScale: 1.2,
+            speedScale: 1.8,   // 弾速を1.5倍に強化 (1.2 -> 1.8)
             baseCooldown: 600,
             minInterval: 75,   // 連射上限を緩和 (150 -> 75)
-            lifeScale: 1.0,
+            lifeScale: 5.0,    // 反射が最後まで続くよう寿命を5倍に延長
             knockMul: 1.2,
             desc: '超高速の貫通弾。高HPの敵に特化。命中時に微量回復。'
         }

@@ -107,6 +107,10 @@ export class Bullet {
         this.homingTarget = null;
         this.homingLocked = false;
         this.isReflected = false; // Add isReflected flag
+        this.bounceCount = 0;
+        this.maxBounces = 0;
+        this.traveledDistance = 0;
+        this.lastHitMap = new Map(); // enemyId -> timestamp
     }
 
     init(x, y, angle, speed, damage, pierce, lifetime, weaponType, extra = {}) {
@@ -151,11 +155,15 @@ export class Bullet {
         this.homingTarget = null;
         this.homingLocked = false;
         this.isReflected = false;
+        this.bounceCount = 0;
+        this.maxBounces = extra.maxBounces || 0;
+        this.traveledDistance = 0;
+        this.lastHitMap.clear();
 
         this.hitEnemies.clear(); // 初期化時にクリア
     }
 
-    update(enemies, grid, targetX, targetY) {
+    update(enemies, grid, targetX, targetY, bounds = null) {
         if (this.homingFrames > 0 && enemies) {
             const turnRate = getLaserTurnRate(this.level);
 
@@ -244,8 +252,15 @@ export class Bullet {
             this.homingFrames--;
         }
 
+        const prevX = this.x;
+        const prevY = this.y;
         this.x += this.vx;
         this.y += this.vy;
+
+        // 累積距離の加算
+        const dx = this.x - prevX;
+        const dy = this.y - prevY;
+        this.traveledDistance += Math.sqrt(dx * dx + dy * dy);
 
         // 寿命チェック
         if (Date.now() - this.spawnTime > this.lifetime) {
@@ -255,9 +270,60 @@ export class Bullet {
         if (this.burstFrames > 0) {
             this.burstFrames--;
         }
-        // 画面外チェック
-        if (this.x < 0 || this.x > CONSTANTS.TARGET_WIDTH || this.y < 0 || this.y > CONSTANTS.TARGET_HEIGHT) {
-            this.active = false;
+
+        // 境界反射ロジック (PIERCEタイプのみ)
+        if (this.active && this.weaponType === CONSTANTS.WEAPON_TYPES.PIERCE) {
+            let reflected = false;
+
+            const bXMin = bounds ? bounds.xMin : 0;
+            const bXMax = bounds ? bounds.xMax : CONSTANTS.TARGET_WIDTH;
+            const bYMin = bounds ? bounds.yMin : 0;
+            const bYMax = bounds ? bounds.yMax : CONSTANTS.TARGET_HEIGHT;
+
+            // 左右境界
+            if (this.x < bXMin) {
+                this.x = bXMin;
+                this.vx *= -1;
+                reflected = true;
+            } else if (this.x > bXMax) {
+                this.x = bXMax;
+                this.vx *= -1;
+                reflected = true;
+            }
+
+            // 上下境界
+            if (this.y < bYMin) {
+                this.y = bYMin;
+                this.vy *= -1;
+                reflected = true;
+            } else if (this.y > bYMax) {
+                this.y = bYMax;
+                this.vy *= -1;
+                reflected = true;
+            }
+
+            if (reflected) {
+                this.bounceCount++;
+                this.angle = Math.atan2(this.vy, this.vx);
+                // 反射時は誘導を打ち切る
+                this.homingFrames = 0;
+                this.homingLocked = true;
+                this.homingTarget = null;
+
+                if (this.bounceCount > this.maxBounces) {
+                    this.active = false;
+                }
+            }
+
+            // 最大距離チェック
+            if (this.traveledDistance > CONSTANTS.LASER_MAX_DISTANCE) {
+                this.active = false;
+            }
+        } else {
+            // 画面外チェック (通常の弾)
+            if (this.x < 0 || this.x > CONSTANTS.TARGET_WIDTH || this.y < 0 || this.y > CONSTANTS.TARGET_HEIGHT) {
+                this.active = false;
+            }
         }
     }
 

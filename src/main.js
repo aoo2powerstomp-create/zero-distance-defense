@@ -1239,12 +1239,20 @@ class Game {
         } else if (weaponType === CONSTANTS.WEAPON_TYPES.PIERCE) {
             // レーザーの進化チューニング
             const tune = this.getLaserTuning(level);
+
+            // レベルに応じた反射回数の計算 (Lv10:1, Lv20:2, Lv30:3)
+            let maxBounces = 0;
+            if (level >= 30) maxBounces = 3;
+            else if (level >= 20) maxBounces = 2;
+            else if (level >= 10) maxBounces = 1;
+
             const laserExtra = {
                 ...extraStats,
                 bulletWidth: (extraStats.bulletWidth || 1.0) * tune.widthMul,
                 hitWidth: (extraStats.hitWidth || 1.0) * tune.widthMul,
                 burstFrames: tune.burstFrames,
-                burstDamageMul: tune.burstDamageMul
+                burstDamageMul: tune.burstDamageMul,
+                maxBounces: maxBounces
             };
 
             const b = this.bulletPool.get();
@@ -1480,7 +1488,14 @@ class Game {
 
         if (this.gameState === CONSTANTS.STATE.WAVE_CLEAR_CUTIN) {
             this.player.update(dt);
-            this.bullets.forEach(b => b.update(this.enemies, this.grid, this.player.targetX, this.player.targetY));
+            const { scale, offsetX, offsetY } = this.getRenderTransform();
+            const bounds = {
+                xMin: -offsetX / scale,
+                xMax: (this.canvas.width - offsetX) / scale,
+                yMin: -offsetY / scale,
+                yMax: (this.canvas.height - offsetY) / scale
+            };
+            this.bullets.forEach(b => b.update(this.enemies, this.grid, this.player.targetX, this.player.targetY, bounds));
             this.damageTexts.forEach(d => d.update());
             this.cleanupEntities();
             return;
@@ -1521,7 +1536,14 @@ class Game {
         const { hasGuardian, hasMark } = this.frameCache.buffFlags;
 
         Profiler.start('bullet_update');
-        this.bullets.forEach(b => b.update(activeEnemies, this.grid, this.player.targetX, this.player.targetY));
+        const { scale, offsetX, offsetY } = this.getRenderTransform();
+        const bounds = {
+            xMin: -offsetX / scale,
+            xMax: (this.canvas.width - offsetX) / scale,
+            yMin: -offsetY / scale,
+            yMax: (this.canvas.height - offsetY) / scale
+        };
+        this.bullets.forEach(b => b.update(activeEnemies, this.grid, this.player.targetX, this.player.targetY, bounds));
         Profiler.end('bullet_update');
 
         const totalRemaining = activeCount + this.enemiesRemaining;
@@ -1711,7 +1733,18 @@ class Game {
             for (let j = 0; j < activeEnemiesInvolved.length; j++) {
                 if (!b.active) break;
                 const e = activeEnemiesInvolved[j];
-                if (!e.active || b.hitEnemies.has(e)) continue;
+                if (!e.active) continue;
+
+                // [REQ] 同一敵への多重ヒット制限 (PIERCEのみ)
+                if (b.weaponType === CONSTANTS.WEAPON_TYPES.PIERCE) {
+                    const lastHit = b.lastHitMap.get(e.id);
+                    const now = Date.now();
+                    if (lastHit && (now - lastHit < CONSTANTS.LASER_HIT_INTERVAL_MS)) {
+                        continue;
+                    }
+                } else {
+                    if (b.hitEnemies.has(e)) continue;
+                }
 
                 Profiler.counts.bulletEnemyChecks++;
 
@@ -1759,6 +1792,11 @@ class Game {
                         globalBuffActive: globalBuffActive,
                         isAuraProtected: e.isShielded
                     });
+
+                    // [REQ] ヒット間隔管理の更新
+                    if (b.weaponType === CONSTANTS.WEAPON_TYPES.PIERCE) {
+                        b.lastHitMap.set(e.id, Date.now());
+                    }
 
                     // [REQ] ヒットサウンド (ガード vs 通常ダメージ)
                     if (this.audio) {
