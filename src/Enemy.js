@@ -73,6 +73,13 @@ export class Enemy {
         this.rimT = 0; // 周回進捗 (0.0 - 1.0)
         this.rimTargetT = 0; // 突入予定位置
         this.rimWarnTimer = 0;
+
+        // [NEW] ノーマル敵のビジュアル演出用
+        this.visualAngle = 0;
+        this.rotSpeed = 0;
+        this.bobPhase = 0;
+        this.bobAmp = 0;
+        this.bobOffsetY = 0;
     }
 
     init(x, y, targetX, targetY, type = CONSTANTS.ENEMY_TYPES.NORMAL, hpMul = 1.0, speedMul = 1.0, affinity = CONSTANTS.ENEMY_AFFINITIES.SWARM) {
@@ -142,6 +149,13 @@ export class Enemy {
         this.droneCd = 0;
         this.rimLaserCd = 0;
 
+        // ビジュアル演出リセット
+        this.visualAngle = Math.random() * Math.PI * 2;
+        this.rotSpeed = 0;
+        this.bobPhase = 0;
+        this.bobAmp = 0;
+        this.bobOffsetY = 0;
+
         if (this.isRimLaser || this.isDrone) {
             console.warn(`[POOL BUG] Enemy re-init with stale flags! Type: ${type}, ID: ${this.id}, isRimLaser: ${this.isRimLaser}, isDrone: ${this.isDrone}`);
         }
@@ -180,6 +194,17 @@ export class Enemy {
 
         // 移動設定の初期化
         this.configureMovement(type);
+
+        // ノーマル敵特有のビジュアル設定
+        if (type === CONSTANTS.ENEMY_TYPES.NORMAL) {
+            // 角速度: 0.4〜0.9 deg/frame -> rad/frame
+            this.rotSpeed = (0.4 + Math.random() * 0.5) * (Math.PI / 180);
+            if (Math.random() < 0.5) this.rotSpeed *= -1; // 左右ランダム
+
+            // ボビング: sin(bobPhase) * bobAmp
+            this.bobPhase = Math.random() * Math.PI * 2;
+            this.bobAmp = 0.6 + Math.random() * 0.4; // 0.6〜1.0px
+        }
 
         // 初期角度の設定
         this.angle = Math.atan2(targetY - y, targetX - x); // 実際の移動方向
@@ -599,6 +624,13 @@ export class Enemy {
         // Apply Barrier Logic for SHIELDER/GUARDIAN
         if (this.type === CONSTANTS.ENEMY_TYPES.SHIELDER || this.type === CONSTANTS.ENEMY_TYPES.GUARDIAN) {
             this.updateBarrier(dt);
+        }
+
+        // [NEW] ノーマル敵のビジュアル更新
+        if (this.type === CONSTANTS.ENEMY_TYPES.NORMAL) {
+            this.visualAngle += this.rotSpeed * dtMod;
+            this.bobPhase += 0.1 * dtMod; // 定速で位相を進める
+            this.bobOffsetY = Math.sin(this.bobPhase) * this.bobAmp;
         }
 
         // 保護オーラのフェード処理
@@ -1776,15 +1808,19 @@ export class Enemy {
                 return;
             }
 
-            ctx.translate(this.renderX, this.renderY);
+            ctx.translate(this.renderX, this.renderY + (this.bobOffsetY || 0));
 
             // 進行方向への回転適用 (本体のみに適用するため save)
             ctx.save();
             if (this.hasDirection) {
-                // リフレクターは移動方向(angle)ではなく、盾の向き(renderAngle)で回転させる
-                const rot = (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) ? this.renderAngle : this.angle;
-                // スプライトは元々-Y方向(上)を向いていると仮定し、進行方向に向けるために+90度補正
-                ctx.rotate(rot + Math.PI / 2);
+                if (this.type === CONSTANTS.ENEMY_TYPES.NORMAL) {
+                    // ノーマル敵：定速回転
+                    ctx.rotate(this.visualAngle);
+                } else {
+                    // その他：進行方向または盾の向き
+                    const rot = (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) ? this.renderAngle : this.angle;
+                    ctx.rotate(rot + Math.PI / 2);
+                }
             }
 
             let assetKey = null;
