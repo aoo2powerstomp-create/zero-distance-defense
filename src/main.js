@@ -60,6 +60,7 @@ class Game {
 
         // 進行管理
         this.gameState = CONSTANTS.STATE.TITLE;
+        this.returnState = null; // Options画面からの戻り先保持用 [NEW]
         this.spawnTimer = 0;
         this.stageTime = 0; // ステージ内経過時間
         this.enemiesRemaining = 0; // そのウェーブでスポーンすべき残り数
@@ -98,6 +99,17 @@ class Game {
         this.accumulator = 0;
         this.maxUpdatesPerFrame = 5;
 
+        this.settings = {
+            seVolume: 1.0,
+            bgmVolume: 1.0,
+            gameSpeed: 1.0
+        };
+        this.speedOptions = [1.0, 1.25, 1.5, 2.0];
+
+        // 音声システム
+        this.audio = new AudioManager();
+        this.loadSettings();
+
         this.frameCache = new FrameCache();
         this.spawnDirector = new SpawnDirector(this);
 
@@ -112,7 +124,6 @@ class Game {
 
         this.initUI();
         this.setupDebugMenu();
-        this.audio = new AudioManager();
 
         // アセットローダー初期化とロード開始
         this.assetLoader = new AssetLoader();
@@ -127,7 +138,60 @@ class Game {
         this.triggerFade('in', 1000);
 
         this.lastTime = performance.now();
+        this.switchState(CONSTANTS.STATE.TITLE); // 初期状態を明示的にセット [NEW]
         requestAnimationFrame((t) => this.loop(t));
+    }
+
+    /**
+     * ゲーム状態を一元管理し、UI表示を切り替える [NEW]
+     */
+    switchState(newState) {
+        // 前の状態を保持する必要がある場合 (例: Options)
+        if (newState === CONSTANTS.STATE.OPTIONS && this.gameState !== CONSTANTS.STATE.OPTIONS) {
+            this.returnState = this.gameState;
+        }
+
+        this.gameState = newState;
+
+        // UI表示の切り替え
+        const screens = {
+            [CONSTANTS.STATE.TITLE]: 'title-screen',
+            [CONSTANTS.STATE.HOWTO]: 'howto-screen',
+            [CONSTANTS.STATE.OPTIONS]: 'options-screen'
+        };
+
+        // 全てのオーバーレイを一旦隠す
+        Object.values(screens).forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('hidden');
+        });
+        document.getElementById('pause-screen').classList.add('hidden');
+        document.getElementById('confirm-screen').classList.add('hidden');
+        document.getElementById('overlay').classList.add('hidden'); // Wave clear等
+        document.getElementById('hud').classList.add('hidden');
+        document.getElementById('controls').classList.add('hidden');
+
+        // 新しい状態に応じた表示
+        if (screens[newState]) {
+            document.getElementById(screens[newState]).classList.remove('hidden');
+        }
+
+        // ポーズ中
+        if (this.isPaused && newState === CONSTANTS.STATE.PLAYING) {
+            document.getElementById('pause-screen').classList.remove('hidden');
+        }
+
+        // プレイ中/カウントダウン中/Waveクリア中
+        const isIngame = [
+            CONSTANTS.STATE.PLAYING,
+            CONSTANTS.STATE.COUNTDOWN,
+            CONSTANTS.STATE.WAVE_CLEAR_CUTIN
+        ].includes(newState);
+
+        if (isIngame) {
+            document.getElementById('hud').classList.remove('hidden');
+            document.getElementById('controls').classList.remove('hidden');
+        }
     }
 
     loop(currentTime) {
@@ -137,7 +201,9 @@ class Game {
         // クランプ（最大100ms）
         if (frameTime > 0.1) frameTime = 0.1;
 
-        this.accumulator += frameTime;
+        // 倍速設定を適用 [NEW]
+        const scaledFrameTime = frameTime * this.settings.gameSpeed;
+        this.accumulator += scaledFrameTime;
 
         let updateCount = 0;
         while (this.accumulator >= this.fixedDt) {
@@ -225,18 +291,165 @@ class Game {
                 const titleScreen = document.getElementById('title-screen');
                 if (howtoScreen) howtoScreen.classList.remove('hidden');
                 if (titleScreen) titleScreen.classList.add('hidden');
+                this.switchHowtoTab('controls');
                 this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        // HOW TO PLAY タブ切り替え
+        const btnHowtoTabControls = document.getElementById('btn-howto-tab-controls');
+        if (btnHowtoTabControls) {
+            btnHowtoTabControls.addEventListener('click', () => {
+                this.switchHowtoTab('controls');
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        const btnHowtoTabEnemies = document.getElementById('btn-howto-tab-enemies');
+        if (btnHowtoTabEnemies) {
+            btnHowtoTabEnemies.addEventListener('click', () => {
+                this.switchHowtoTab('enemies');
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        // [NEW] OPTIONS ボタン
+        const btnOptions = document.getElementById('btn-options');
+        if (btnOptions) {
+            btnOptions.addEventListener('click', () => {
+                this.gameState = CONSTANTS.STATE.OPTIONS;
+                const optionsScreen = document.getElementById('options-screen');
+                const titleScreen = document.getElementById('title-screen');
+                if (optionsScreen) optionsScreen.classList.remove('hidden');
+                if (titleScreen) titleScreen.classList.add('hidden');
+                this.updateOptionsUI();
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        // OPTIONS 画面のイベントリスナー
+        const btnOptionsBack = document.getElementById('btn-options-back');
+        if (btnOptionsBack) {
+            btnOptionsBack.addEventListener('click', () => {
+                // 戻り先を判別
+                const target = this.returnState || CONSTANTS.STATE.TITLE;
+                this.switchState(target);
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        const btnOptionsReset = document.getElementById('btn-options-reset');
+        if (btnOptionsReset) {
+            btnOptionsReset.addEventListener('click', () => {
+                if (confirm('設定をすべてリセットしますか？')) {
+                    this.resetSettings();
+                    this.audio.playSe('SE_BARRIER_01');
+                }
+            });
+        }
+
+        const sliderSe = document.getElementById('slider-se-volume');
+        if (sliderSe) {
+            sliderSe.addEventListener('input', (e) => {
+                const val = parseInt(e.target.value) / 100;
+                this.settings.seVolume = val;
+                this.audio.setSeVolume(val);
+                this.updateOptionsUI();
+                this.saveSettings();
+            });
+        }
+
+        const sliderBgm = document.getElementById('slider-bgm-volume');
+        if (sliderBgm) {
+            sliderBgm.addEventListener('input', (e) => {
+                const val = parseInt(e.target.value) / 100;
+                this.settings.bgmVolume = val;
+                this.audio.setBgmVolume(val);
+                this.updateOptionsUI();
+                this.saveSettings();
+            });
+        }
+
+        const btnSpeedPrev = document.getElementById('btn-speed-prev');
+        if (btnSpeedPrev) {
+            btnSpeedPrev.addEventListener('click', () => {
+                const idx = this.speedOptions.indexOf(this.settings.gameSpeed);
+                if (idx > 0) {
+                    this.settings.gameSpeed = this.speedOptions[idx - 1];
+                    this.updateOptionsUI();
+                    this.saveSettings();
+                    this.audio.playSe('SE_SELECT');
+                }
+            });
+        }
+
+        const btnSpeedNext = document.getElementById('btn-speed-next');
+        if (btnSpeedNext) {
+            btnSpeedNext.addEventListener('click', () => {
+                const idx = this.speedOptions.indexOf(this.settings.gameSpeed);
+                if (idx < this.speedOptions.length - 1) {
+                    this.settings.gameSpeed = this.speedOptions[idx + 1];
+                    this.updateOptionsUI();
+                    this.saveSettings();
+                    this.audio.playSe('SE_SELECT');
+                }
             });
         }
 
         const btnHowtoBack = document.getElementById('btn-howto-back');
         if (btnHowtoBack) {
             btnHowtoBack.addEventListener('click', () => {
-                this.gameState = CONSTANTS.STATE.TITLE;
-                const howtoScreen = document.getElementById('howto-screen');
-                const titleScreen = document.getElementById('title-screen');
-                if (howtoScreen) howtoScreen.classList.add('hidden');
-                if (titleScreen) titleScreen.classList.remove('hidden');
+                this.switchState(CONSTANTS.STATE.TITLE);
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        // [NEW] EXIT ボタン
+        const btnExit = document.getElementById('btn-exit');
+        if (btnExit) {
+            btnExit.addEventListener('click', () => {
+                this.audio.playSe('SE_SELECT');
+                this.exitGame();
+            });
+        }
+
+        // [NEW] PAUSE 画面ボタン
+        const btnPauseResume = document.getElementById('btn-pause-resume');
+        if (btnPauseResume) {
+            btnPauseResume.addEventListener('click', () => {
+                this.togglePause();
+            });
+        }
+
+        const btnPauseOptions = document.getElementById('btn-pause-options');
+        if (btnPauseOptions) {
+            btnPauseOptions.addEventListener('click', () => {
+                this.switchState(CONSTANTS.STATE.OPTIONS);
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        const btnPauseTitle = document.getElementById('btn-pause-title');
+        if (btnPauseTitle) {
+            btnPauseTitle.addEventListener('click', () => {
+                document.getElementById('confirm-screen').classList.remove('hidden');
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        // [NEW] 確認ダイアログ
+        const btnConfirmYes = document.getElementById('btn-confirm-yes');
+        if (btnConfirmYes) {
+            btnConfirmYes.addEventListener('click', () => {
+                this.audio.playSe('SE_BARRIER_01');
+                this.triggerFade('out', 500).then(() => location.reload());
+            });
+        }
+
+        const btnConfirmNo = document.getElementById('btn-confirm-no');
+        if (btnConfirmNo) {
+            btnConfirmNo.addEventListener('click', () => {
+                document.getElementById('confirm-screen').classList.add('hidden');
                 this.audio.playSe('SE_SELECT');
             });
         }
@@ -262,8 +475,8 @@ class Game {
         // 武器選択ボタン
         document.querySelectorAll('.weapon-up-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                // カウントダウン中は無効 [FIX]
-                if (this.isCountdownActive()) return;
+                // カウントダウン中やポーズ中は無効
+                if (this.isCountdownActive() || this.isPaused) return;
 
                 const type = btn.getAttribute('data-up-weapon');
                 const data = this.player.weapons[type];
@@ -297,8 +510,8 @@ class Game {
 
         // SPEED強化ボタン
         document.getElementById('btn-up-speed').addEventListener('click', () => {
-            // カウントダウン中は無効 [FIX]
-            if (this.isCountdownActive()) return;
+            // カウントダウン中やポーズ中は無効
+            if (this.isCountdownActive() || this.isPaused) return;
 
             const type = this.player.currentWeapon;
             const data = this.player.weapons[type];
@@ -370,6 +583,11 @@ class Game {
                     // Back to title from HOWTO
                     document.getElementById('btn-howto-back').click();
                 }
+            } else if (this.gameState === CONSTANTS.STATE.OPTIONS) {
+                if (e.code === 'Escape') {
+                    // Back to title from OPTIONS
+                    document.getElementById('btn-options-back').click();
+                }
             }
         });
 
@@ -387,6 +605,7 @@ class Game {
         const btnPulse = document.getElementById('btn-pulse');
         if (btnPulse) {
             btnPulse.addEventListener('click', () => {
+                if (this.isPaused) return;
                 this.triggerPulse();
             });
         }
@@ -397,6 +616,7 @@ class Game {
             if (btnDebugGold) {
                 btnDebugGold.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    if (this.isPaused) return;
                     this.goldCount += 100000;
                     this.totalGoldEarned += 100000;
                     this.audio.playSe('SE_HP');
@@ -410,6 +630,7 @@ class Game {
             if (btnDebugMax) {
                 btnDebugMax.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    if (this.isPaused) return;
                     const maxLv = CONSTANTS.UPGRADE_LV_MAX;
                     Object.keys(this.player.weapons).forEach(key => {
                         this.player.weapons[key].unlocked = true;
@@ -426,6 +647,7 @@ class Game {
             if (btnDebugInvincible) {
                 btnDebugInvincible.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    if (this.isPaused) return;
                     this.debugInvincible = !this.debugInvincible;
                     btnDebugInvincible.textContent = `INVINCIBLE: ${this.debugInvincible ? 'ON' : 'OFF'}`;
                     btnDebugInvincible.style.color = this.debugInvincible ? '#ffd700' : '#fff';
@@ -440,6 +662,7 @@ class Game {
             if (btnDebugSpeed) {
                 btnDebugSpeed.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    if (this.isPaused) return;
                     if (this.timeScale >= 3.0) this.timeScale = 1.0;
                     else this.timeScale += 1.0;
                     btnDebugSpeed.textContent = `SPEED: x${this.timeScale}`;
@@ -1456,6 +1679,7 @@ class Game {
     }
 
     update(dt) {
+        if (this.isPaused) return;
         this.optimizationFrameCount++;
 
         // ゴールドカウンターのアニメーション
@@ -2189,8 +2413,8 @@ class Game {
 
 
     triggerPulse() {
-        // カウントダウン中またはクールダウン中は無効 [FIX]
-        if (this.isCountdownActive() || this.pulseCooldownTimer > 0) return;
+        // カウントダウン中、ポーズ中、またはクールダウン中は無効
+        if (this.isCountdownActive() || this.isPaused || this.pulseCooldownTimer > 0) return;
 
         // 200ms 連続再生制限 (AudioManager 側の 60ms を上書き)
         const now = Date.now();
@@ -2290,11 +2514,6 @@ class Game {
             btn.classList.toggle('countdown-locked', this.isCountdownActive());
         });
 
-        // [NEW] プレイ中のみ操作ヒントを表示
-        const tipHud = document.getElementById('tip-hud');
-        if (tipHud) {
-            tipHud.classList.toggle('hidden', this.gameState !== CONSTANTS.STATE.PLAYING);
-        }
 
         this.updateUpgradeUI();
     }
@@ -2861,7 +3080,15 @@ class Game {
             const py = (this.player) ? this.player.y : targetH / 2;
 
             const dx = px - dw / 2;
-            const dy = py - dh / 2 + CONSTANTS.BG_Y_OFFSET;
+            let dy = py - dh / 2 + CONSTANTS.BG_Y_OFFSET;
+            if (this.currentStage === 2) dy += 5;  // Stage 3
+            if (this.currentStage === 3) dy += 10; // Stage 4
+            if (this.currentStage === 4) dy += 15; // Stage 5
+            if (this.currentStage === 5) dy -= 50; // Stage 6 (追加 10px)
+            if (this.currentStage === 6) dy -= 30; // Stage 7 (追加 10px)
+            if (this.currentStage === 7) dy -= 20; // Stage 8
+            if (this.currentStage === 8) dy -= 70; // Stage 9 (追加 30px)
+            if (this.currentStage === 9) dy -= 90; // Stage 10 (追加 50px)
 
             this.ctx.drawImage(bgAsset, dx, dy, dw, dh);
         }
@@ -3128,11 +3355,12 @@ class Game {
         this.isPaused = !this.isPaused;
         if (this.isPaused) {
             this.audio.pauseBgm();
+            this.switchState(CONSTANTS.STATE.PLAYING); // UI更新
         } else {
             this.audio.resumeBgm();
-            // Phase 5: dt correction
-            // Resume時にlastTimeを現在時刻にリセットして、停止期間中のdt加算を防ぐ
+            this.switchState(CONSTANTS.STATE.PLAYING); // UI更新
             this.lastTime = performance.now();
+            this.accumulator = 0;
         }
     }
 
@@ -3168,18 +3396,25 @@ class Game {
         // Screen Space (Identity Transform)
         ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-        const r = this.getPauseButtonRect();
-        const isHover = false; // Hover effect relies on mousemove which we haven't strictly implemented for this btn, keeping simple.
+        // Overlay
+        if (this.isPaused) {
+            // Full screen dim (Before button/text for visibility)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Draw Button
-        ctx.fillStyle = this.isPaused ? '#00ffff' : 'rgba(0, 0, 0, 0.4)';
+            // Canvasでのテキスト描画を削除（HTMLオーバーレイへ移行）
+            // PAUSED と RESUME の文字描画を削除
+        }
+
+        const r = this.getPauseButtonRect();
+
+        // Draw Button (Toggle button visually)
+        ctx.fillStyle = this.isPaused ? 'rgba(0, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.4)';
         ctx.strokeStyle = '#00ffff';
         ctx.lineWidth = 1;
 
         // Button BG
-        if (!this.isPaused) ctx.fillRect(r.x, r.y, r.w, r.h);
-        else ctx.fillStyle = 'rgba(0, 255, 255, 0.2)'; // Active style
-
+        ctx.fillRect(r.x, r.y, r.w, r.h);
         ctx.strokeRect(r.x, r.y, r.w, r.h);
 
         // Button Text
@@ -3191,32 +3426,6 @@ class Game {
         ctx.shadowBlur = this.isPaused ? 10 : 0;
         ctx.fillText(this.isPaused ? "RESUME" : "PAUSE", r.x + r.w / 2, r.y + r.h / 2);
         ctx.shadowBlur = 0;
-
-        // Overlay
-        if (this.isPaused) {
-            // Full screen dim
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-            ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-            // Center Text
-            ctx.save();
-            ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
-
-            ctx.font = 'bold 40px "Orbitron", sans-serif';
-            ctx.fillStyle = '#ffffff';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.shadowColor = '#00ffff';
-            ctx.shadowBlur = 20;
-            ctx.fillText("PAUSED", 0, 0);
-
-            ctx.font = '16px "Inter", sans-serif';
-            ctx.fillStyle = '#cccccc';
-            ctx.shadowBlur = 0;
-            ctx.fillText("Press P / Esc to Resume", 0, 40);
-
-            ctx.restore();
-        }
 
         ctx.restore();
     }
@@ -3291,6 +3500,145 @@ class Game {
         const m = Math.floor(totalSec / 60);
         const s = totalSec % 60;
         return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    // --- OPTIONS 関連メソッド [NEW] ---
+    loadSettings() {
+        const keys = CONSTANTS.STORAGE_KEYS;
+
+        const seVal = localStorage.getItem(keys.SE_VOLUME);
+        if (seVal !== null) this.settings.seVolume = parseFloat(seVal);
+
+        const bgmVal = localStorage.getItem(keys.BGM_VOLUME);
+        if (bgmVal !== null) this.settings.bgmVolume = parseFloat(bgmVal);
+
+        const speedVal = localStorage.getItem(keys.GAME_SPEED);
+        if (speedVal !== null) {
+            const val = parseFloat(speedVal);
+            if (this.speedOptions.includes(val)) this.settings.gameSpeed = val;
+        }
+
+        this.applySettings();
+    }
+
+    saveSettings() {
+        const keys = CONSTANTS.STORAGE_KEYS;
+        localStorage.setItem(keys.SE_VOLUME, this.settings.seVolume);
+        localStorage.setItem(keys.BGM_VOLUME, this.settings.bgmVolume);
+        localStorage.setItem(keys.GAME_SPEED, this.settings.gameSpeed);
+    }
+
+    applySettings() {
+        this.audio.setSeVolume(this.settings.seVolume);
+        this.audio.setBgmVolume(this.settings.bgmVolume);
+        this.updateOptionsUI();
+    }
+
+    updateOptionsUI() {
+        const sliderSe = document.getElementById('slider-se-volume');
+        const labelSe = document.getElementById('label-se-volume');
+        if (sliderSe) sliderSe.value = this.settings.seVolume * 100;
+
+        const sliderBgm = document.getElementById('slider-bgm-volume');
+        if (sliderBgm) sliderBgm.value = this.settings.bgmVolume * 100;
+    }
+
+    /**
+     * [NEW] ゲームを終了する
+     */
+    exitGame() {
+        const closed = window.close();
+
+        // ブラウザ制限で閉じなかった場合のフォールバック（疑似終了画面）
+        setTimeout(() => {
+            document.body.innerHTML = `
+                <div style="background:#000;color:#00ffff;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Orbitron', 'Audiowide', sans-serif;text-align:center;padding:20px;box-sizing:border-box;">
+                    <div style="padding:40px;border:2px solid #00ffff;border-radius:20px;box-shadow:0 0 50px rgba(0,255,255,0.3);max-width:400px;width:100%">
+                        <h1 style="font-size:1.8rem;margin-bottom:20px;letter-spacing:4px;text-shadow:0 0 20px #00ffff">SYSTEM TERMINATED</h1>
+                        <p style="color:#888;font-size:1rem;margin-bottom:40px;line-height:1.6">ご利用ありがとうございました。<br>ブラウザを閉じて終了してください。</p>
+                        <button onclick="location.reload()" style="background:transparent;border:1px solid #00ffff;color:#00ffff;padding:12px 24px;cursor:pointer;font-family:inherit;font-size:1rem;font-weight:bold;transition:all 0.2s">REBOOT SYSTEM</button>
+                    </div>
+                </div>
+            `;
+        }, 100);
+    }
+
+    resetSettings() {
+        this.settings.seVolume = 1.0;
+        this.settings.bgmVolume = 1.0;
+        this.settings.gameSpeed = 1.0;
+
+        this.applySettings();
+        this.saveSettings();
+    }
+
+    // --- HOW TO PLAY 関連メソッド [NEW] ---
+    switchHowtoTab(tabName) {
+        const controlsTab = document.getElementById('btn-howto-tab-controls');
+        const enemiesTab = document.getElementById('btn-howto-tab-enemies');
+        const controlsPanel = document.getElementById('howto-tab-content-controls');
+        const enemiesPanel = document.getElementById('howto-tab-content-enemies');
+
+        if (!controlsTab || !enemiesTab || !controlsPanel || !enemiesPanel) return;
+
+        if (tabName === 'controls') {
+            controlsTab.classList.add('active');
+            enemiesTab.classList.remove('active');
+            controlsPanel.classList.remove('hidden');
+            enemiesPanel.classList.add('hidden');
+        } else {
+            controlsTab.classList.remove('active');
+            enemiesTab.classList.add('active');
+            controlsPanel.classList.add('hidden');
+            enemiesPanel.classList.remove('hidden');
+            this.renderEnemyIntro();
+        }
+    }
+
+    renderEnemyIntro() {
+        const container = document.getElementById('enemy-intro-list');
+        if (!container) return;
+
+        // 既に生成済みの場合はスキップ（またはクリアして再生成）
+        if (container.children.length > 0) return;
+
+        const descriptions = CONSTANTS.ENEMY_DESCRIPTIONS;
+
+        Object.keys(descriptions).forEach(type => {
+            const data = descriptions[type];
+            const card = document.createElement('div');
+            card.className = 'enemy-card';
+
+            // アセットキーを取得（ENEMY_A, ENEMY_B...）
+            const assetKey = `ENEMY_${type}`;
+            const img = this.assetLoader.get(assetKey);
+
+            let iconHtml = '';
+            if (img && img.complete && img.naturalWidth !== 0) {
+                // 画像アセットが存在する場合
+                iconHtml = `<img src="${img.src}" class="enemy-card-icon-img" alt="${data.name}">`;
+            } else {
+                // 存在しない場合は文字アイコン
+                iconHtml = `<div class="enemy-card-icon">${type}</div>`;
+            }
+
+            // 危険度の★を生成
+            const dangerStars = '★'.repeat(data.danger) + '☆'.repeat(5 - data.danger);
+
+            card.innerHTML = `
+                <div class="enemy-card-header">
+                    ${iconHtml}
+                    <div class="enemy-card-title-group">
+                        <div class="enemy-card-jpname">${data.jpName}</div>
+                        <div class="enemy-card-name">${data.name}</div>
+                    </div>
+                </div>
+                <div class="enemy-card-desc">【特徴】${data.desc}</div>
+                <div class="enemy-card-strategy">【対策】${data.strategy}</div>
+                <div class="enemy-card-danger">危険度: ${dangerStars}</div>
+            `;
+            container.appendChild(card);
+        });
     }
 }
 

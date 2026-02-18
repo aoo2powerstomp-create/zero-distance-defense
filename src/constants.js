@@ -88,11 +88,17 @@ export const CONSTANTS = {
         ENEMY_G: './assets/enemy/icon_enemy_guardian.png',// GUARDIAN
         ENEMY_H: './assets/enemy/icon_enemy_dasher.png',  // DASHER
         ENEMY_I: './assets/enemy/icon_enemy_orbiter.png', // ORBITER
-        ENEMY_J: './assets/enemy/icon_enemy_splitter.png',// SPLITTER
-        ENEMY_K: './assets/enemy/icon_enemy_splitter_child.png', // SPLITTER_CHILD
-        ENEMY_L: './assets/enemy/icon_enemy_observer.png',// OBSERVER
+        ENEMY_J: './assets/enemy/icon_enemy_splitter.png',// FLANKER (Use splitter as base)
+        ENEMY_K: './assets/enemy/icon_enemy_splitter_child.png', // BARRIER_PAIR
+        ENEMY_L: './assets/enemy/icon_enemy_observer.png',// TRICKSTER (Use observer as base)
+        ENEMY_M: './assets/enemy/icon_enemy_guardian.png',// ATTRACTOR (Use guardian as base)
+        ENEMY_N: './assets/enemy/icon_enemy_elite.png',   // REFLECTOR (Use elite as base)
+        ENEMY_O: './assets/enemy/icon_enemy_observer.png',// OBSERVER
+        ENEMY_S1: './assets/enemy/icon_enemy_splitter.png',// SPLITTER
+        ENEMY_S2: './assets/enemy/icon_enemy_splitter_child.png', // CHILD
         ENEMY_BOSS_5: './assets/enemy/icon_enemy_boss_5.png',
         ENEMY_BOSS_10: './assets/enemy/icon_enemy_boss_10.png',
+        ENEMY_PD5: './assets/ui/ui_icon_speed.png', // PLASMA DRONE (Fallback icon)
 
         // アイテム
         ITEM_HEAL: './assets/item/item_heal.png',
@@ -116,7 +122,7 @@ export const CONSTANTS = {
     SOUND_ASSETS: {
         // BGM
         BGM_STAGE_01: { type: "bgm", file: "assets/sound/bgm/bgm_stage_01.mp3", baseVolume: 0.25 },
-        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3", baseVolume: 0.2},
+        BGM_STAGE_03: { type: "bgm", file: "assets/sound/bgm/bgm_stage_03.mp3", baseVolume: 0.10},
         BGM_BOSS_01: { type: "bgm", file: "assets/sound/bgm/bgm_boss_01.mp3", baseVolume: 0.3 },
 
         // SE
@@ -861,6 +867,14 @@ export const CONSTANTS = {
         GAME_OVER: 6,
         COUNTDOWN: 7,
         HOWTO: 8,
+        OPTIONS: 9,
+    },
+
+    // localStorage 用のキー [NEW]
+    STORAGE_KEYS: {
+        SE_VOLUME: 'opt_seVolume',
+        BGM_VOLUME: 'opt_bgmVolume',
+        GAME_SPEED: 'opt_gameSpeed',
     },
 
     // 演出設定
@@ -950,23 +964,23 @@ export const CONSTANTS = {
     },
     DEFAULT_TARGET_TIME_SEC: 90,
     ENEMY_DESCRIPTIONS: {
-        'A': '【NORMAL】標準的なエネミー。まっすぐ自機に向かって進みます。',
-        'B': '【ZIGZAG】蛇行しながら接近するエネミー。狙いを定めるのが少し難しい。',
-        'C': '【EVASIVE】回避型。自機にある程度近づくと、左右に避ける動きを見せます。',
-        'D': '【ELITE】精鋭。高いHPを持ち、周囲を旋回してから強力な突撃を仕掛けます。',
-        'E': '【ASSAULT】突撃型。一定距離まで近づくと、直線的に加速して体当たりを狙います。',
-        'F': '【SHIELDER】盾持ち。周囲の敵を保護するエネルギーバリアを展開します。',
-        'G': '【GUARDIAN】守護者。周囲の敵の攻撃力や速度を強化するバフを付与します。',
-        'H': '【DASHER】高速蛇行型。不規則に素早く揺れながら接近し、幻惑します。',
-        'I': '【ORBITER】軌道周回型。自機の周囲を一定距離で回り続け、隙を伺います。',
-        'J': '【FLANKER】暗殺型。側面や背後に回り込んで潜伏し、一瞬の隙を突いて超高速突撃します。',
-        'K': '【BARRIER_PAIR】連結型。2体1組で現れ、その間に破壊不可能なレーザーバリアを張ります。',
-        'L': '【TRICKSTER】幻惑型。テレポートや急な方向転換でプレイヤーを翻弄します。',
-        'M': '【ATTRACTOR】追加型。周囲の敵を自身に引き寄せ、盾のような役割を果たします。',
-        'N': '【REFLECTOR】反射型。一部の攻撃を弾き返したり、高い防御力を持ちます。',
-        'O': '【OBSERVER】観測者。一定距離で停止し、じっと自機を観察（威圧）します。',
-        'S1': '【SPLITTER】分裂型。倒されると複数の小型エネミー（S2）に分裂します。',
-        'S2': '【CHILD】分裂後の小型個体。非常に弱いが数で攻めてきます。',
-        'PD5': '【PLASMA DRONE】Stage5Bossが放つ追尾ドローン。低速だが高い誘導性能を持ち、接近すると加速・放電します。撃ち落とし可能。'
+        'A': { name: 'NORMAL', jpName: 'ノーマル', desc: '標準的なエネミー。まっすぐ自機に向かって進みます。', strategy: '基本の敵。落ち着いて射線を合わせましょう。', danger: 1 },
+        'B': { name: 'ZIGZAG', jpName: 'ジグザグ', desc: '蛇行しながら接近するエネミー。狙いを定めるのが少し難しい。', strategy: '動きの先を読んで撃つか、引き付けてから倒しましょう。', danger: 2 },
+        'C': { name: 'EVASIVE', jpName: 'エヴァイシブ', desc: '回避型。自機にある程度近づくと、左右に避ける動きを見せます。', strategy: '回避行動の終わり際を狙うのが効果的です。', danger: 2 },
+        'D': { name: 'ELITE', jpName: 'エリート', desc: '精鋭。高いHPを持ち、周囲を旋回してから強力な突撃を仕掛けます。', strategy: '突撃の予備動作中に集中攻撃で仕留めましょう。', danger: 4 },
+        'E': { name: 'ASSAULT', jpName: 'アサルト', desc: '突撃型。一定距離まで近づくと、直線的に加速して体当たりを狙います。', strategy: '加速し始めたら横に避けるか、ノックバックで弾きましょう。', danger: 3 },
+        'F': { name: 'SHIELDER', jpName: 'シールダー', desc: '盾持ち。周囲の敵を保護するエネルギーバリアを展開します。', strategy: '守られている敵を狙う前に、まず本体を排除しましょう。', danger: 3 },
+        'G': { name: 'GUARDIAN', jpName: 'ガーディアン', desc: '守護者。周囲の敵の攻撃力や速度を強化するバフを付与します。', strategy: 'バフの影響範囲は広いため、優先的に倒すべき対象です。', danger: 4 },
+        'H': { name: 'DASHER', jpName: 'ダッシャー', desc: '高速蛇行型。不規則に素早く揺れながら接近し、幻惑します。', strategy: '弾幕の広い武器や、引き付けたパルスが有効です。', danger: 3 },
+        'I': { name: 'ORBITER', jpName: 'オービター', desc: '軌道周回型。自機の周囲を一定距離で回り続け、隙を伺います。', strategy: '旋回速度に合わせて少しずつ狙いを動かして撃破しましょう。', danger: 2 },
+        'J': { name: 'FLANKER', jpName: 'フランカー', desc: '暗殺型。側面や背後に回り込んで潜伏し、一等一瞬の隙を突いて超高速突撃します。', strategy: '常に周囲を見渡し、死角からの接近を許さないように。', danger: 5 },
+        'K': { name: 'BARRIER_PAIR', jpName: 'バリアペア', desc: '連結型。2体1組で現れ、その間に破壊不可能なレーザーバリアを張ります。', strategy: 'どちらか1体を素早く倒せば、バリアを消滅させられます。', danger: 4 },
+        'L': { name: 'TRICKSTER', jpName: 'トリックスター', desc: '幻惑型。テレポートや急な方向転換でプレイヤーを翻弄します。', strategy: '出現した瞬間を狙うか、広範囲の攻撃に巻き込みましょう。', danger: 4 },
+        'M': { name: 'ATTRACTOR', jpName: 'アトラクター', desc: '追加型。周囲の敵を自身に引き寄せ、盾のような役割を果たします。', strategy: '貫通武器を使って、盾となっている敵ごと本体を撃ちましょう。', danger: 3 },
+        'N': { name: 'REFLECTOR', jpName: 'リフレクター', desc: '反射型。正面からの攻撃を弾き返します。', strategy: '背後や側面から攻撃するか、高火力の貫通武器を使いましょう。', danger: 4 },
+        'O': { name: 'OBSERVER', jpName: 'オブザーバー', desc: '観測者。一定距離で停止し、じっと自機を観察（威圧）しながら位置情報を共有します。', strategy: '直接的な攻撃はありませんが、放置すると包囲網が狭まります。', danger: 3 },
+        'S1': { name: 'SPLITTER', jpName: 'スプリッター', desc: '分裂型。倒されると複数の小型エネミー（S2）に分裂します。', strategy: '分裂後の敵は弱いため、連射の効く武器で一掃しましょう。', danger: 2 },
+        'S2': { name: 'CHILD', jpName: 'チャイルド', desc: '分裂後の小型個体。非常に弱いが数で攻めてきます。', strategy: '単体では無害ですが、囲まれる前に処理しましょう。', danger: 1 },
+        'PD5': { name: 'PLASMA DRONE', jpName: 'プラズマドローン', desc: '追尾ドローン。接近すると加速・放電します。', strategy: '耐久力は低いため、近づかれる前に撃ち落としましょう。', danger: 2 }
     }
 };

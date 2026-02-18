@@ -54,10 +54,6 @@
                 <button id="btn-debug-speed" class="debug-btn-small">SPEED: x1</button>
                 <button id="btn-debug-clear" class="debug-btn-small">STAGE CLEAR</button>
             </div>
-            <!-- 操作ヒント [NEW] -->
-            <div id="tip-hud" class="hidden">
-                TIP: ドラッグで回転 / ボタンで武器切替
-            </div>
         </div>
 
         <canvas id="game-canvas"></canvas>
@@ -115,8 +111,10 @@
         <div id="title-logo">零距離防衛</div>
         <div id="title-sub">ZERO DISTANCE DEFENSE</div>
         <div class="title-buttons">
-            <button id="btn-start" class="btn-primary">START MISSION</button>
+            <button id="btn-start" class="btn-primary">START</button>
             <button id="btn-howto" class="btn-secondary">HOW TO PLAY</button>
+            <button id="btn-options" class="btn-secondary">OPTIONS</button>
+            <button id="btn-exit" class="btn-secondary">EXIT</button>
         </div>
         <div id="stage-select-container">
             <button id="btn-toggle-stage-select" class="btn-secondary">STAGE SELECT</button>
@@ -132,70 +130,144 @@
         <div class="howto-content">
             <h1 class="howto-title">HOW TO PLAY</h1>
 
-            <div class="howto-grid">
-                <div class="howto-item">
-                    <div class="howto-item-header">
-                        <img src="assets/ui/ui_icon_speed.png" class="howto-icon" alt="回転">
-                        <h3>方向転換</h3>
+            <div class="howto-tabs">
+                <button id="btn-howto-tab-controls" class="howto-tab active">操作方法</button>
+                <button id="btn-howto-tab-enemies" class="howto-tab">敵紹介</button>
+            </div>
+
+            <div id="howto-tab-content-controls" class="howto-tab-panel">
+                <div class="howto-grid">
+                    <div class="howto-item">
+                        <div class="howto-item-header">
+                            <img src="assets/ui/ui_icon_speed.png" class="howto-icon" alt="回転">
+                            <h3>方向転換</h3>
+                        </div>
+                        <p>画面の好きな場所をタップ/ドラッグすると、その方向へ砲台が回転します。</p>
                     </div>
-                    <p>画面の好きな場所をタップ/ドラッグすると、その方向へ砲台が回転します。</p>
+
+                    <div class="howto-item">
+                        <div class="howto-item-header">
+                            <img src="assets/ui/ui_icon_rifle.png" class="howto-icon" alt="武器">
+                            <h3>武器選択</h3>
+                        </div>
+                        <p>下部UIの武器アイコン(3種)をタップして武器を切り替えます。</p>
+                    </div>
+
+                    <div class="howto-item">
+                        <div class="howto-item-header">
+                            <img src="assets/ui/ui_icon_speed.png" class="howto-icon" alt="レベルUP">
+                            <h3>レベルUP</h3>
+                        </div>
+                        <p>ゴールドを使って武器や発射速度を強化できます。</p>
+                    </div>
+
+                    <div class="howto-item">
+                        <div class="howto-item-header">
+                            <img src="assets/ui/ui_icon_pulse.png" class="howto-icon" alt="パルス">
+                            <h3>パルス</h3>
+                        </div>
+                        <p>パルスで周囲の敵を押し返す。<br>連続使用不可（チャージ制）。</p>
+                    </div>
                 </div>
 
-                <div class="howto-item">
-                    <div class="howto-item-header">
-                        <img src="assets/ui/ui_icon_rifle.png" class="howto-icon" alt="武器">
-                        <h3>武器選択</h3>
+                <h2 class="howto-subtitle">武器紹介</h2>
+                <div class="howto-grid weapons-info">
+                    <div class="howto-item weapon-detail">
+                        <div class="howto-item-header">
+                            <img src="assets/ui/ui_icon_rifle.png" class="howto-icon-small" alt="ライフル">
+                            <h3>ライフル</h3>
+                        </div>
+                        <p>高精度。Lv10で跳弾解放。跳弾で倒すとGボーナス。</p>
                     </div>
-                    <p>下部UIの武器アイコン(3種)をタップして武器を切り替えます。</p>
-                </div>
-
-                <div class="howto-item">
-                    <div class="howto-item-header">
-                        <img src="assets/ui/ui_icon_speed.png" class="howto-icon" alt="レベルUP">
-                        <h3>レベルUP</h3>
+                    <div class="howto-item weapon-detail">
+                        <div class="howto-item-header">
+                            <img src="assets/ui/ui_icon_shotgun.png" class="howto-icon-small" alt="ショットガン">
+                            <h3>ショットガン</h3>
+                        </div>
+                        <p>散弾を発射。広範囲攻撃特化。</p>
                     </div>
-                    <p>ゴールドを使って武器や発射速度を強化できます。</p>
-                </div>
-
-                <div class="howto-item">
-                    <div class="howto-item-header">
-                        <img src="assets/ui/ui_icon_pulse.png" class="howto-icon" alt="パルス">
-                        <h3>パルス</h3>
+                    <div class="howto-item weapon-detail">
+                        <div class="howto-item-header">
+                            <img src="assets/ui/ui_icon_laser.png" class="howto-icon-small" alt="レーザー">
+                            <h3>レーザー</h3>
+                        </div>
+                        <p>貫通型。Lvが上がると誘導と壁反射。</p>
                     </div>
-                    <p>パルスで周囲の敵を押し返す。<br>連続使用不可（チャージ制）。</p>
                 </div>
             </div>
 
-            <h2 class="howto-subtitle">武器紹介</h2>
-            <div class="howto-grid weapons-info">
-                <div class="howto-item weapon-detail">
-                    <div class="howto-item-header">
-                        <img src="assets/ui/ui_icon_rifle.png" class="howto-icon-small" alt="ライフル">
-                        <h3>ライフル</h3>
-                    </div>
-                    <p>高精度。Lv10で跳弾解放。跳弾で倒すとGボーナス。</p>
-                </div>
-                <div class="howto-item weapon-detail">
-                    <div class="howto-item-header">
-                        <img src="assets/ui/ui_icon_shotgun.png" class="howto-icon-small" alt="ショットガン">
-                        <h3>ショットガン</h3>
-                    </div>
-                    <p>散弾を発射。広範囲攻撃特化。</p>
-                </div>
-                <div class="howto-item weapon-detail">
-                    <div class="howto-item-header">
-                        <img src="assets/ui/ui_icon_laser.png" class="howto-icon-small" alt="レーザー">
-                        <h3>レーザー</h3>
-                    </div>
-                    <p>貫通型。Lvが上がると誘導と壁反射。</p>
+            <div id="howto-tab-content-enemies" class="howto-tab-panel hidden">
+                <div id="enemy-intro-list" class="enemy-intro-grid">
+                    <!-- JavaScriptで動的に生成 -->
                 </div>
             </div>
 
-            <button id="btn-howto-back" class="btn-secondary">BACK</button>
+            <div class="howto-footer">
+                <button id="btn-howto-back" class="btn-secondary">BACK</button>
+            </div>
         </div>
     </div>
 
-    <!-- オーバーレイUI（リザルト、ポーズ、メッセージ用） -->
+    <!-- OPTIONS 画面 [NEW] -->
+    <div id="options-screen" class="overlay-base hidden">
+        <div class="options-content">
+            <h1 class="options-title">OPTIONS</h1>
+
+            <div class="options-group">
+                <label>SE VOLUME</label>
+                <div class="slider-container">
+                    <input type="range" id="slider-se-volume" min="0" max="100" value="100">
+                    <span id="label-se-volume">100%</span>
+                </div>
+            </div>
+
+            <div class="options-group">
+                <label>BGM VOLUME</label>
+                <div class="slider-container">
+                    <input type="range" id="slider-bgm-volume" min="0" max="100" value="100">
+                    <span id="label-bgm-volume">100%</span>
+                </div>
+            </div>
+
+            <div class="options-group">
+                <label>GAME SPEED</label>
+                <div class="speed-selector">
+                    <button id="btn-speed-prev" class="btn-mini">&lt;</button>
+                    <span id="label-game-speed">x1.0</span>
+                    <button id="btn-speed-next" class="btn-mini">&gt;</button>
+                </div>
+            </div>
+
+            <div class="options-footer">
+                <button id="btn-options-reset" class="btn-danger-outline">RESET</button>
+                <button id="btn-options-back" class="btn-secondary">BACK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PAUSE 画面 [NEW] -->
+    <div id="pause-screen" class="overlay-base hidden">
+        <h1 id="pause-title">PAUSED</h1>
+        <div class="pause-buttons">
+            <button id="btn-pause-resume" class="btn-primary">RESUME</button>
+            <button id="btn-pause-options" class="btn-secondary">OPTIONS</button>
+            <button id="btn-pause-title" class="btn-secondary">TITLE</button>
+        </div>
+    </div>
+
+    <!-- 確認ダイアログ [NEW] -->
+    <div id="confirm-screen" class="overlay-base hidden">
+        <div class="confirm-content">
+            <h2 id="confirm-title">QUIT TO TITLE?</h2>
+            <p id="confirm-msg">現在の進行状況は失われます。<br>タイトルに戻りますか？</p>
+            <div class="confirm-buttons">
+                <button id="btn-confirm-yes" class="btn-danger">YES</button>
+                <button id="btn-confirm-no" class="btn-secondary">NO</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 蠑輔・繧､繧ｪ繝ｼ繝舌・繝ｬ繧､UI・郁ｪｭ蜃ｺ縲√・繝ｼ繧ｺ縲√Γ繝・そ繝ｼ繧ｸ逕ｨ・ -->
     <div id="overlay" class="overlay-base hidden">
         <div id="overlay-content">
             <h1 id="overlay-title">WAVE CLEAR</h1>
