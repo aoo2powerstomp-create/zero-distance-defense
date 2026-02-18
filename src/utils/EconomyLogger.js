@@ -20,6 +20,11 @@ export class EconomyLogger {
         this.totalRicochetCount = 0; // [NEW] 累積跳弾回数
         this.otherBonusCount = 0; // ライフル以外での誤発動検知用
 
+        // Elite Regulation Stats
+        this.eliteSpawnCount = 0;
+        this.eliteReplacedCount = 0;
+        this.safetyBypassCount = 0; // [NEW] 制限無視放出が発生した回数 (0であるべき)
+
         // Spawn Stats
         this.recentSpawns = []; // Ring buffer max 200
         this.maxSpawns = 200;
@@ -96,6 +101,9 @@ export class EconomyLogger {
         this.ricochetKillCount = 0;
         this.totalRicochetCount = 0;
         this.otherBonusCount = 0;
+        this.eliteSpawnCount = 0;
+        this.eliteReplacedCount = 0;
+        this.safetyBypassCount = 0;
 
         // Clear UI logs immediately to avoid confusion
         // Force update to clear screen
@@ -148,8 +156,18 @@ export class EconomyLogger {
         }
     }
 
-    recordSpawn(type) {
+    recordSpawn(type, decision = null) {
         if (!this.isActive) return;
+
+        if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
+            this.eliteSpawnCount++;
+        }
+
+        // もし置換ルールによって NORMAL になった場合を検知 (簡易)
+        if (decision && decision._replacementDepth > 0 && decision._originalType === CONSTANTS.ENEMY_TYPES.ELITE) {
+            this.eliteReplacedCount++;
+        }
+
         this.recentSpawns.push(type);
         if (this.recentSpawns.length > this.maxSpawns) {
             this.recentSpawns.shift();

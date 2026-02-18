@@ -53,7 +53,10 @@
                 <button id="btn-debug-invincible" class="debug-btn-small">INVINCIBLE: OFF</button>
                 <button id="btn-debug-speed" class="debug-btn-small">SPEED: x1</button>
                 <button id="btn-debug-clear" class="debug-btn-small">STAGE CLEAR</button>
-                <button id="btn-debug-rules" class="debug-btn-small">DUMP RULES</button>
+            </div>
+            <!-- 操作ヒント [NEW] -->
+            <div id="tip-hud" class="hidden">
+                TIP: ドラッグで回転 / ボタンで武器切替
             </div>
         </div>
 
@@ -111,7 +114,10 @@
     <div id="title-screen" class="overlay-base">
         <div id="title-logo">零距離防衛</div>
         <div id="title-sub">ZERO DISTANCE DEFENSE</div>
-        <button id="btn-start" class="btn-primary">START MISSION</button>
+        <div class="title-buttons">
+            <button id="btn-start" class="btn-primary">START MISSION</button>
+            <button id="btn-howto" class="btn-secondary">HOW TO PLAY</button>
+        </div>
         <div id="stage-select-container">
             <button id="btn-toggle-stage-select" class="btn-secondary">STAGE SELECT</button>
             <div id="stage-select-list" class="hidden">
@@ -119,6 +125,74 @@
             </div>
         </div>
         <div id="title-footer">&copy; toxic out brain</div>
+    </div>
+
+    <!-- HOW TO PLAY 画面 [NEW] -->
+    <div id="howto-screen" class="overlay-base hidden">
+        <div class="howto-content">
+            <h1 class="howto-title">HOW TO PLAY</h1>
+
+            <div class="howto-grid">
+                <div class="howto-item">
+                    <div class="howto-item-header">
+                        <img src="assets/ui/ui_icon_speed.png" class="howto-icon" alt="回転">
+                        <h3>方向転換</h3>
+                    </div>
+                    <p>画面の好きな場所をタップ/ドラッグすると、その方向へ砲台が回転します。</p>
+                </div>
+
+                <div class="howto-item">
+                    <div class="howto-item-header">
+                        <img src="assets/ui/ui_icon_rifle.png" class="howto-icon" alt="武器">
+                        <h3>武器選択</h3>
+                    </div>
+                    <p>下部UIの武器アイコン(3種)をタップして武器を切り替えます。</p>
+                </div>
+
+                <div class="howto-item">
+                    <div class="howto-item-header">
+                        <img src="assets/ui/ui_icon_speed.png" class="howto-icon" alt="レベルUP">
+                        <h3>レベルUP</h3>
+                    </div>
+                    <p>ゴールドを使って武器や発射速度を強化できます。</p>
+                </div>
+
+                <div class="howto-item">
+                    <div class="howto-item-header">
+                        <img src="assets/ui/ui_icon_pulse.png" class="howto-icon" alt="パルス">
+                        <h3>パルス</h3>
+                    </div>
+                    <p>パルスで周囲の敵を押し返す。<br>連続使用不可（チャージ制）。</p>
+                </div>
+            </div>
+
+            <h2 class="howto-subtitle">武器紹介</h2>
+            <div class="howto-grid weapons-info">
+                <div class="howto-item weapon-detail">
+                    <div class="howto-item-header">
+                        <img src="assets/ui/ui_icon_rifle.png" class="howto-icon-small" alt="ライフル">
+                        <h3>ライフル</h3>
+                    </div>
+                    <p>高精度。Lv10で跳弾解放。跳弾で倒すとGボーナス。</p>
+                </div>
+                <div class="howto-item weapon-detail">
+                    <div class="howto-item-header">
+                        <img src="assets/ui/ui_icon_shotgun.png" class="howto-icon-small" alt="ショットガン">
+                        <h3>ショットガン</h3>
+                    </div>
+                    <p>散弾を発射。広範囲攻撃特化。</p>
+                </div>
+                <div class="howto-item weapon-detail">
+                    <div class="howto-item-header">
+                        <img src="assets/ui/ui_icon_laser.png" class="howto-icon-small" alt="レーザー">
+                        <h3>レーザー</h3>
+                    </div>
+                    <p>貫通型。Lvが上がると誘導と壁反射。</p>
+                </div>
+            </div>
+
+            <button id="btn-howto-back" class="btn-secondary">BACK</button>
+        </div>
     </div>
 
     <!-- オーバーレイUI（リザルト、ポーズ、メッセージ用） -->

@@ -86,9 +86,11 @@ export class AudioManager {
     }
 
     loadBgm(key, p) {
+        const asset = CONSTANTS.SOUND_ASSETS[key];
         const audio = new Audio(p);
         audio.loop = true;
         audio.volume = 0; // Starts muted for fade-in
+        audio._baseVolume = asset.baseVolume ?? 1.0; // [NEW] 個別音量倍率を保持
         this.bgmElements.set(key, audio);
     }
 
@@ -99,7 +101,8 @@ export class AudioManager {
     setBgmVolume(v) {
         this.bgmVolume = Math.max(0, Math.min(1, v));
         if (this.currentBgm) {
-            this.currentBgm.volume = this.bgmVolume;
+            // マスター音量 × そのBGMの個別倍率 を適用
+            this.currentBgm.volume = this.bgmVolume * (this.currentBgm._baseVolume || 1.0);
         }
     }
 
@@ -185,10 +188,11 @@ export class AudioManager {
         }
 
         // Fade in next
+        const targetVol = this.bgmVolume * (next._baseVolume || 1.0);
         next.currentTime = 0;
         next.volume = 0;
         next.play().catch(e => console.warn("AudioManager: BGM play blocked:", e));
-        this.fadeIn(next, this.bgmVolume, FADE_TIME);
+        this.fadeIn(next, targetVol, FADE_TIME);
 
         this.currentBgm = next;
         this.currentBgmKey = key;
@@ -199,6 +203,18 @@ export class AudioManager {
             this.fadeOut(this.currentBgm, fadeTime);
             this.currentBgm = null;
             this.currentBgmKey = null;
+        }
+    }
+
+    pauseBgm() {
+        if (this.currentBgm) {
+            this.currentBgm.pause();
+        }
+    }
+
+    resumeBgm() {
+        if (this.currentBgm) {
+            this.currentBgm.play().catch(e => console.warn("AudioManager: BGM resume blocked:", e));
         }
     }
 

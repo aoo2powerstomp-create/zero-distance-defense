@@ -1076,3 +1076,200 @@ body {
     color: #fff;
     font-size: 12px;
 }
+
+/* Title Buttons Layer [NEW] */
+.title-buttons {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+/* HOW TO PLAY 画面のデザイン [NEW] */
+.howto-content {
+    text-align: center;
+    padding: 25px 15px;
+    /* モバイル向けに少し縮小 */
+    background: rgba(15, 15, 15, 0.95);
+    border: 2px solid #00ffff;
+    border-radius: 20px;
+    width: 85%;
+    max-width: 440px;
+    max-height: 80vh;
+    /* 少し余裕を持たせる */
+    overflow-y: auto;
+    box-shadow: 0 0 50px rgba(0, 255, 255, 0.15);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    /* [NEW] コンテンツがはみ出た際のスクロール位置を調整 */
+    margin: auto;
+}
+
+.howto-subtitle {
+    font-family: 'Syncopate', sans-serif;
+    color: #00ffff;
+    font-size: 1.2rem;
+    margin: 20px 0 15px 0;
+    letter-spacing: 2px;
+    border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+    padding-bottom: 5px;
+    width: 100%;
+}
+
+.weapons-info {
+    grid-template-columns: 1fr !important;
+    /* 武器紹介は1カラムで読みやすく */
+    gap: 10px !important;
+}
+
+.weapon-detail {
+    padding: 10px 15px !important;
+}
+
+.weapon-detail p {
+    font-size: 0.8rem !important;
+}
+
+.howto-title {
+    font-family: 'Syncopate', sans-serif;
+    color: #00ffff;
+    font-size: 1.8rem;
+    margin-bottom: 25px;
+    letter-spacing: 3px;
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.howto-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.howto-item {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(0, 255, 255, 0.1);
+    text-align: left;
+}
+
+.howto-item-header {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 12px;
+}
+
+.howto-icon {
+    width: 48px;
+    height: 48px;
+    filter: drop-shadow(0 0 8px #00ffff);
+}
+
+.howto-icon-small {
+    width: 32px;
+    height: 32px;
+    filter: drop-shadow(0 0 5px #00ffff);
+}
+
+.howto-item h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #00ffff;
+    letter-spacing: 1px;
+}
+
+.howto-item p {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* HUD TIP [NEW] */
+#tip-hud {
+    margin-top: 10px;
+    padding: 6px 12px;
+    background: rgba(0, 255, 255, 0.1);
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: #00ffff;
+    text-align: center;
+    letter-spacing: 1px;
+    animation: tip-flicker 3s infinite;
+    pointer-events: none;
+}
+
+@keyframes tip-flicker {
+
+    0%,
+    100% {
+        opacity: 0.8;
+    }
+
+    50% {
+        opacity: 1;
+        text-shadow: 0 0 8px rgba(0, 255, 255, 0.5);
+    }
+}
+
+@media (max-width: 480px) {
+    .howto-content {
+        padding: 15px 10px;
+        width: 90%;
+        max-height: 80vh;
+    }
+
+    .howto-title {
+        font-size: 1.3rem;
+        margin-bottom: 15px;
+        letter-spacing: 2px;
+    }
+
+    .howto-subtitle {
+        font-size: 1rem;
+        margin: 15px 0 10px 0;
+    }
+
+    .howto-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-bottom: 15px;
+    }
+
+    .howto-item {
+        padding: 8px;
+    }
+
+    .howto-icon {
+        width: 32px;
+        height: 32px;
+    }
+
+    .howto-icon-small {
+        width: 24px;
+        height: 24px;
+    }
+
+    .howto-item h3 {
+        font-size: 0.8rem;
+    }
+
+    .howto-item p {
+        font-size: 0.7rem;
+    }
+
+    .weapon-detail p {
+        font-size: 0.7rem !important;
+    }
+
+    .btn-secondary {
+        padding: 8px 15px;
+        font-size: 0.8rem;
+    }
+}

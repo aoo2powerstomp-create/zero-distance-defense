@@ -98,7 +98,35 @@ export class SpawnDirector {
             }
         });
 
-        // 6. EXCLUSION formation禁止タイプ
+        // 6. [NEW] EARLY STAGE ELITE CAP (Alive)
+        this.rules.register({
+            type: 'CAP', target: TYPES.ELITE, threshold: 1, scope: 'alive',
+            stageCondition: (ctx) => ctx.stage === 1, severity: 'BLOCK'
+        });
+        this.rules.register({
+            type: 'CAP', target: TYPES.ELITE, threshold: 1, scope: 'alive',
+            stageCondition: (ctx) => ctx.stage === 2, severity: 'BLOCK'
+        });
+        this.rules.register({
+            type: 'CAP', target: TYPES.ELITE, threshold: 2, scope: 'alive',
+            stageCondition: (ctx) => ctx.stage === 3, severity: 'BLOCK'
+        });
+
+        // 7. [NEW] EARLY STAGE ELITE STREAK (Consecutive)
+        this.rules.register({
+            type: 'STREAK', target: TYPES.ELITE, threshold: 1,
+            stageCondition: (ctx) => ctx.stage === 1, severity: 'BLOCK'
+        });
+        this.rules.register({
+            type: 'STREAK', target: TYPES.ELITE, threshold: 2,
+            stageCondition: (ctx) => ctx.stage === 2, severity: 'BLOCK'
+        });
+        this.rules.register({
+            type: 'STREAK', target: TYPES.ELITE, threshold: 2,
+            stageCondition: (ctx) => ctx.stage === 3, severity: 'BLOCK'
+        });
+
+        // 8. EXCLUSION formation禁止タイプ
         this.rules.register({
             type: 'EXCLUSION', target: 'ANY', scope: 'formation', severity: 'BLOCK',
             stageCondition: (ctx) => !this.canFormFormation(ctx.decisionType)
@@ -161,6 +189,7 @@ export class SpawnDirector {
 
         // Reset Attractor Wave Counter
         this.attractorWaveCount = 0;
+        this.spawnHistory = []; // Reset locally for stage
 
         // Reset Spawn Queue
         this.spawnQueue = [];
@@ -365,19 +394,17 @@ export class SpawnDirector {
         // 2. Safety Valve: If queue is huge, force flush oldest to prevent stagnation
         if (this.pendingSpawnQueue.length > 20) {
             const overflowCount = this.pendingSpawnQueue.length - 20;
+            const TYPES = CONSTANTS.ENEMY_TYPES; // [ADD]
             for (let i = 0; i < overflowCount; i++) {
                 const pending = this.pendingSpawnQueue.shift();
                 if (!pending) break;
 
-                // Downgrade Elite to Normal to ensure progress without overwhelming
-                if (pending.type === CONSTANTS.ENEMY_TYPES.ELITE) {
-                    pending.type = CONSTANTS.ENEMY_TYPES.NORMAL;
-                }
+                // [FIX] Never ignore limits. Replace with NORMAL instead.
+                const spawnType = (pending.type === TYPES.ELITE) ? TYPES.NORMAL : pending.type;
 
-                // Force spawn (ignore limits)
-                this.executeSpawn(pending.type, pending.pattern, pending.x, pending.y, {
+                this.executeSpawn(spawnType, pending.pattern, pending.x, pending.y, {
                     ...pending.options,
-                    ignoreLimits: true
+                    ignoreLimits: false // [CHANGED] Safety must respect limits or replace type
                 });
             }
         }
@@ -1915,6 +1942,11 @@ export class SpawnDirector {
      * @param {Object} decision
      */
     spawnEnemy(decision) {
+        // [NEW] Track original type for statistics
+        if (decision._originalType === undefined) {
+            decision._originalType = decision.type;
+        }
+
         // Build Context for Validation
         const ctx = {
             stage: this.game.currentStage + 1,
@@ -1924,6 +1956,7 @@ export class SpawnDirector {
             tickCounts: this.tickCounts,
             eliteSpawnedThisTick: this.eliteSpawnedThisTick,
             recentSpawnPoints: this.recentSpawnPoints,
+            spawnHistory: this.spawnHistory, // [NEW] Added
             decisionType: decision.type,
             aliveCounts: this._getAliveCounts()
         };
@@ -2000,6 +2033,12 @@ export class SpawnDirector {
         if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
             this.eliteSpawnedThisTick++;
             this.lastEliteSpawnTime = this.game.getTime();
+        }
+
+        // Track history for streak rules
+        this.spawnHistory.push(type);
+        if (this.spawnHistory.length > this.maxSpawnHistory) {
+            this.spawnHistory.shift();
         }
         if (decision.x !== null && decision.y !== null) {
             this.recentSpawnPoints.push({ x: decision.x, y: decision.y, time: this.game.getTime() });
@@ -2162,12 +2201,23 @@ export class SpawnDirector {
 
         // NONE (Random/Cluster)
         if (pattern === 'NONE' || pattern === 'RANDOM_BURST') {
+            const TYPES = CONSTANTS.ENEMY_TYPES; // [ADD]
             for (let i = 0; i < count; i++) {
+                // [NEW] Elite Cluster Protection
+                // In formations, only the leader can be an elite in Stage 1-3.
+                let currentType = type;
+                if (type === TYPES.ELITE && i > 0) {
+                    const stage = this.game.currentStage + 1;
+                    if (stage <= 3) {
+                        currentType = TYPES.NORMAL;
+                    }
+                }
+
                 // Apply scattering to anchor
                 const offsetX = (this.random() - 0.5) * 200;
                 const offsetY = (this.random() - 0.5) * 200;
                 this.spawnQueue.push({
-                    type, pattern: pattern,
+                    type: currentType, pattern: pattern,
                     x: anchor.x + offsetX,
                     y: anchor.y + offsetY,
                     side: side,
@@ -2242,8 +2292,19 @@ export class SpawnDirector {
 
         for (let i = 0; i < rotatedOffsets.length; i++) {
             const off = rotatedOffsets[i];
+            const TYPES = CONSTANTS.ENEMY_TYPES; // [ADD]
+
+            // [NEW] Elite Cluster Protection
+            let currentType = type;
+            if (type === TYPES.ELITE && i > 0) {
+                const stage = this.game.currentStage + 1;
+                if (stage <= 3) {
+                    currentType = TYPES.NORMAL;
+                }
+            }
+
             this.spawnQueue.push({
-                type, pattern: pattern,
+                type: currentType, pattern: pattern,
                 x: anchor.x + off.dx,
                 y: anchor.y + off.dy,
                 side: side,
@@ -2512,7 +2573,7 @@ export class SpawnDirector {
 
             if (debugFormation !== 'NONE') {
                 // Spawn as a formation
-                const count = Math.min(6, maxSpawn - totalCount); // Limit squad size in debug
+                const count = Math.min(6, targetCount - totalCount); // Limit squad size in debug
                 const actualCount = count < 3 ? count : count; // logic
                 this.queueFormation(debugFormation, currentType, count);
                 // The queueFormation will fill spawnQueue, next update will process it.
@@ -2761,6 +2822,11 @@ export class SpawnDirector {
     }
 
     applyReplacementRule(decision, ctx) {
+        // Store original type if not already set (first call for this decision)
+        if (decision._originalType === undefined) {
+            decision._originalType = decision.type;
+        }
+
         // Prevent infinite loops
         decision._replacementDepth = (decision._replacementDepth || 0) + 1;
         if (decision._replacementDepth > 5) {
@@ -2791,6 +2857,16 @@ export class SpawnDirector {
                     // 1. 同タイプ単体化 (隊列解除)
                     decision.pattern = 'NONE';
                     if (decision.options) decision.options.formationInfo = null;
+
+                    // [NEW] Early Stage Elite Hard Enforcement
+                    // Stage 1-3 でエリートがブロックされた場合、緩和ではなく即 NORMAL に落とす選択肢を優先
+                    const stage = this.game.currentStage + 1;
+                    if (decision.type === TYPES.ELITE && stage <= 10) { // 全ステージでエリート集中は避けるべきだが特に序盤
+                        if (stage <= 3) {
+                            decision.type = TYPES.NORMAL;
+                            if (!this.game.isSimulation) console.warn(`[SPAWN] Elite violation in Stage ${stage}. Forced replace with NORMAL.`);
+                        }
+                    }
                 } else if (depth === 2) {
                     // 2. 位置制限緩和
                     if (decision.options) decision.options.ignoreLimits = true;

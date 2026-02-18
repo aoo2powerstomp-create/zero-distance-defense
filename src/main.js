@@ -216,6 +216,31 @@ class Game {
             });
         }
 
+        // [NEW] HOW TO PLAY ボタン
+        const btnHowto = document.getElementById('btn-howto');
+        if (btnHowto) {
+            btnHowto.addEventListener('click', () => {
+                this.gameState = CONSTANTS.STATE.HOWTO;
+                const howtoScreen = document.getElementById('howto-screen');
+                const titleScreen = document.getElementById('title-screen');
+                if (howtoScreen) howtoScreen.classList.remove('hidden');
+                if (titleScreen) titleScreen.classList.add('hidden');
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
+        const btnHowtoBack = document.getElementById('btn-howto-back');
+        if (btnHowtoBack) {
+            btnHowtoBack.addEventListener('click', () => {
+                this.gameState = CONSTANTS.STATE.TITLE;
+                const howtoScreen = document.getElementById('howto-screen');
+                const titleScreen = document.getElementById('title-screen');
+                if (howtoScreen) howtoScreen.classList.add('hidden');
+                if (titleScreen) titleScreen.classList.remove('hidden');
+                this.audio.playSe('SE_SELECT');
+            });
+        }
+
         // ステージセレクト表示のトグル
         const btnToggleStage = document.getElementById('btn-toggle-stage-select');
         const stageSelectList = document.getElementById('stage-select-list');
@@ -339,6 +364,11 @@ class Game {
             if (this.gameState === CONSTANTS.STATE.PLAYING) {
                 if (e.code === 'KeyP' || e.code === 'Escape') {
                     this.togglePause();
+                }
+            } else if (this.gameState === CONSTANTS.STATE.HOWTO) {
+                if (e.code === 'Escape') {
+                    // Back to title from HOWTO
+                    document.getElementById('btn-howto-back').click();
                 }
             }
         });
@@ -2260,6 +2290,12 @@ class Game {
             btn.classList.toggle('countdown-locked', this.isCountdownActive());
         });
 
+        // [NEW] プレイ中のみ操作ヒントを表示
+        const tipHud = document.getElementById('tip-hud');
+        if (tipHud) {
+            tipHud.classList.toggle('hidden', this.gameState !== CONSTANTS.STATE.PLAYING);
+        }
+
         this.updateUpgradeUI();
     }
 
@@ -3091,8 +3127,9 @@ class Game {
 
         this.isPaused = !this.isPaused;
         if (this.isPaused) {
-            // Audio check? Maybe pause BGM later. For now requirement says BGM keeps playing.
+            this.audio.pauseBgm();
         } else {
+            this.audio.resumeBgm();
             // Phase 5: dt correction
             // Resume時にlastTimeを現在時刻にリセットして、停止期間中のdt加算を防ぐ
             this.lastTime = performance.now();

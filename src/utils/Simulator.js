@@ -31,10 +31,17 @@ export class Simulator {
                         }
                     }
                 },
-                recordSpawn: (type) => {
+                recordSpawn: (type, decision = null) => {
                     if (this.stats) {
                         this.stats.total++;
                         this.stats.byType[type] = (this.stats.byType[type] || 0) + 1;
+
+                        if (type === CONSTANTS.ENEMY_TYPES.ELITE) {
+                            this.stats.eliteSpawnCount = (this.stats.eliteSpawnCount || 0) + 1;
+                        }
+                        if (decision && decision._replacementDepth > 0 && decision._originalType === CONSTANTS.ENEMY_TYPES.ELITE) {
+                            this.stats.eliteReplacedCount = (this.stats.eliteReplacedCount || 0) + 1;
+                        }
                     }
                     this.activeEnemies.push({
                         type: type,
@@ -289,6 +296,8 @@ export class Simulator {
             bonusCount: 0,
             ricochetKillCount: 0, // [NEW] 跳弾キル回数
             totalRicochetCount: 0, // [NEW] 累積跳弾数
+            eliteSpawnCount: 0,
+            eliteReplacedCount: 0,
             runs: runs
         };
 
@@ -305,6 +314,8 @@ export class Simulator {
             aggregate.bonusCount += (res.bonusCount || 0);
             aggregate.ricochetKillCount += (res.ricochetKillCount || 0);
             aggregate.totalRicochetCount += (res.totalRicochetCount || 0);
+            aggregate.eliteSpawnCount += (res.eliteSpawnCount || 0);
+            aggregate.eliteReplacedCount += (res.eliteReplacedCount || 0);
 
             for (const t in res.byType) {
                 aggregate.byType[t] = (aggregate.byType[t] || 0) + res.byType[t];

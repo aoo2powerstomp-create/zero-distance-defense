@@ -73,6 +73,12 @@ export class SpawnRulesRegistry {
                         isViolated = true;
                     }
                     break;
+                case 'STREAK':
+                    currentValue = this._getStreakCount(rule, ctx);
+                    if (currentValue >= rule.threshold) {
+                        isViolated = true;
+                    }
+                    break;
             }
 
             if (isViolated) {
@@ -86,6 +92,23 @@ export class SpawnRulesRegistry {
             }
         }
         return violations;
+    }
+
+    _getStreakCount(rule, ctx) {
+        const target = rule.target;
+        const history = ctx.spawnHistory || [];
+        if (history.length === 0) return 0;
+
+        let streak = 0;
+        // 末尾から遡って、連続してターゲットが出現している数
+        for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i] === target || target === 'ANY') {
+                streak++;
+            } else {
+                break;
+            }
+        }
+        return streak;
     }
 
     /**
