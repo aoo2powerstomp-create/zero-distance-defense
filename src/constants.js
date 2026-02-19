@@ -148,6 +148,14 @@ export const CONSTANTS = {
         SE_COIN: { type: "se", file: "assets/sound/se/se_coin_01.mp3" },
         SE_SELECT: { type: "se", file: "assets/sound/se/se_select_01.mp3" },
         SE_DASH_IMPACT: { type: "se", file: "assets/sound/se/se_shot_unknown_01.mp3" },
+
+        SE_GAME_START: { type: "se", file: "assets/sound/se/se_gamestart_01.mp3" },
+        SE_GAME_OVER: { type: "se", file: "assets/sound/se/se_gameover_02.mp3" },
+        SE_SHOT_RIFLE_MAX: { type: "se", file: "assets/sound/se/se_shot_rifle_02.mp3" },
+        SE_SHOT_LASER_MAX: { type: "se", file: "assets/sound/se/se_laser_02.mp3" },
+        SE_REFLECT: { type: "se", file: "assets/sound/se/se_refrec_01.mp3" },
+        SE_DASH: { type: "se", file: "assets/sound/se/se_dash_02.mp3" },
+        SE_EXPLOSION: { type: "se", file: "assets/sound/se/se_explosion_01.mp3" },
     },
 
     BGM_MAPPING: {
@@ -174,12 +182,20 @@ export const CONSTANTS = {
         SE_SHOT_SHOTGUN: 1.0, // 少し引き下げ
         SE_COIN: 0.3, // コイン獲得音を引き下げ
         SE_PULSE: 1.8, // パルス衝撃音 (+50%)
+        SE_SHOT_RIFLE_MAX: 0.8,
+        SE_SHOT_LASER_MAX: 0.6,
+        SE_EXPLOSION: 0.7,
+        SE_DASH: 0.6,
+        SE_REFLECT: 0.8,
     },
 
     SE_POLYPHONY_LIMIT: {
         SE_SHOT_LASER: 8,
         SE_SHOT_RIFLE: 8,
         SE_SHOT_SHOTGUN: 6,
+        SE_SHOT_RIFLE_MAX: 8,
+        SE_SHOT_LASER_MAX: 8,
+        SE_EXPLOSION: 10,
         DEFAULT: 3
     },
 
@@ -964,23 +980,23 @@ export const CONSTANTS = {
     },
     DEFAULT_TARGET_TIME_SEC: 90,
     ENEMY_DESCRIPTIONS: {
-        'A': { name: 'NORMAL', jpName: 'ノーマル', desc: '標準的なエネミー。まっすぐ自機に向かって進みます。', strategy: '基本の敵。落ち着いて射線を合わせましょう。', danger: 1 },
+        'A': { name: 'NORMAL', jpName: 'ノーマル', desc: '標準的なエネミー。まっすぐ進みます。', strategy: '基本の敵。落ち着いて射線を合わせましょう。', danger: 1 },
         'B': { name: 'ZIGZAG', jpName: 'ジグザグ', desc: '蛇行しながら接近するエネミー。狙いを定めるのが少し難しい。', strategy: '動きの先を読んで撃つか、引き付けてから倒しましょう。', danger: 2 },
         'C': { name: 'EVASIVE', jpName: 'エヴァイシブ', desc: '回避型。自機にある程度近づくと、左右に避ける動きを見せます。', strategy: '回避行動の終わり際を狙うのが効果的です。', danger: 2 },
         'D': { name: 'ELITE', jpName: 'エリート', desc: '精鋭。高いHPを持ち、周囲を旋回してから強力な突撃を仕掛けます。', strategy: '突撃の予備動作中に集中攻撃で仕留めましょう。', danger: 4 },
-        'E': { name: 'ASSAULT', jpName: 'アサルト', desc: '突撃型。一定距離まで近づくと、直線的に加速して体当たりを狙います。', strategy: '加速し始めたら横に避けるか、ノックバックで弾きましょう。', danger: 3 },
+        'E': { name: 'ASSAULT', jpName: 'アサルト', desc: '突撃型。一定距離まで近づくと、直線的に加速して体当たりを狙います。', strategy: '加速し始めたらノックバックで弾きましょう。', danger: 3 },
         'F': { name: 'SHIELDER', jpName: 'シールダー', desc: '盾持ち。周囲の敵を保護するエネルギーバリアを展開します。', strategy: '守られている敵を狙う前に、まず本体を排除しましょう。', danger: 3 },
         'G': { name: 'GUARDIAN', jpName: 'ガーディアン', desc: '守護者。周囲の敵の攻撃力や速度を強化するバフを付与します。', strategy: 'バフの影響範囲は広いため、優先的に倒すべき対象です。', danger: 4 },
-        'H': { name: 'DASHER', jpName: 'ダッシャー', desc: '高速蛇行型。不規則に素早く揺れながら接近し、幻惑します。', strategy: '弾幕の広い武器や、引き付けたパルスが有効です。', danger: 3 },
+        'H': { name: 'DASHER', jpName: 'ダッシャー', desc: '高速蛇行型。不規則に素早く接近し、幻惑します。', strategy: '弾幕の広い武器や、引き付けたパルスが有効です。', danger: 3 },
         'I': { name: 'ORBITER', jpName: 'オービター', desc: '軌道周回型。自機の周囲を一定距離で回り続け、隙を伺います。', strategy: '旋回速度に合わせて少しずつ狙いを動かして撃破しましょう。', danger: 2 },
         'J': { name: 'FLANKER', jpName: 'フランカー', desc: '暗殺型。側面や背後に回り込んで潜伏し、一等一瞬の隙を突いて超高速突撃します。', strategy: '常に周囲を見渡し、死角からの接近を許さないように。', danger: 5 },
         'K': { name: 'BARRIER_PAIR', jpName: 'バリアペア', desc: '連結型。2体1組で現れ、その間に破壊不可能なレーザーバリアを張ります。', strategy: 'どちらか1体を素早く倒せば、バリアを消滅させられます。', danger: 4 },
         'L': { name: 'TRICKSTER', jpName: 'トリックスター', desc: '幻惑型。テレポートや急な方向転換でプレイヤーを翻弄します。', strategy: '出現した瞬間を狙うか、広範囲の攻撃に巻き込みましょう。', danger: 4 },
-        'M': { name: 'ATTRACTOR', jpName: 'アトラクター', desc: '追加型。周囲の敵を自身に引き寄せ、盾のような役割を果たします。', strategy: '貫通武器を使って、盾となっている敵ごと本体を撃ちましょう。', danger: 3 },
-        'N': { name: 'REFLECTOR', jpName: 'リフレクター', desc: '反射型。正面からの攻撃を弾き返します。', strategy: '背後や側面から攻撃するか、高火力の貫通武器を使いましょう。', danger: 4 },
+        'M': { name: 'ATTRACTOR', jpName: 'アトラクター', desc: '赤と青の2種が存在。赤は攻撃、青は移動速度を向上させます。', strategy: '出現したら最優先で撃墜を。', danger: 4 },
+        'N': { name: 'REFLECTOR', jpName: 'リフレクター', desc: '反射型。正面からの攻撃を弾き返します。', strategy: 'ショットガンを使うか、シールド解除時を狙いましょう。', danger: 5 },
         'O': { name: 'OBSERVER', jpName: 'オブザーバー', desc: '観測者。一定距離で停止し、じっと自機を観察（威圧）しながら位置情報を共有します。', strategy: '直接的な攻撃はありませんが、放置すると包囲網が狭まります。', danger: 3 },
         'S1': { name: 'SPLITTER', jpName: 'スプリッター', desc: '分裂型。倒されると複数の小型エネミー（S2）に分裂します。', strategy: '分裂後の敵は弱いため、連射の効く武器で一掃しましょう。', danger: 2 },
         'S2': { name: 'CHILD', jpName: 'チャイルド', desc: '分裂後の小型個体。非常に弱いが数で攻めてきます。', strategy: '単体では無害ですが、囲まれる前に処理しましょう。', danger: 1 },
-        'PD5': { name: 'PLASMA DRONE', jpName: 'プラズマドローン', desc: '追尾ドローン。接近すると加速・放電します。', strategy: '耐久力は低いため、近づかれる前に撃ち落としましょう。', danger: 2 }
+        'PD5': { name: 'PLASMA DRONE', jpName: 'プラズマドローン', desc: 'ボスから放出される追尾ドローン。', strategy: '耐久力は低いため、近づかれる前に撃ち落としましょう。', danger: 2 }
     }
 };

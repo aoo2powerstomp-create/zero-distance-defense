@@ -974,7 +974,7 @@ class Game {
         this.isTransitioning = true;
 
         await this.audio.init();
-        this.audio.playSe('SE_BARRIER_01', { priority: 'high' });
+        this.audio.playSe('SE_GAME_START', { priority: 'high' });
 
         await this.triggerFade('out', 500);
 
@@ -1070,7 +1070,7 @@ class Game {
         this.enemiesRemaining = Math.round(stageData.enemyCount * stageData.spawnMul);
 
         if (!this.isDebugStage && (this.currentStage + 1) % 5 === 0) {
-            this.enemiesRemaining = 0; // ボスステージは追加スポーンなし、ボス撃破＝クリアとする
+            this.enemiesRemaining = 1; // ボス撃破＝クリア。recordSpawnで-1されるため1開始
             this.spawnBoss();
         }
 
@@ -1295,6 +1295,10 @@ class Game {
         if (this.isClearing) return;
         this.isClearing = true;
 
+        // ボスHPバーを即座に隠す
+        const bossHpContainer = document.getElementById('boss-hp-container');
+        if (bossHpContainer) bossHpContainer.classList.add('hidden');
+
         // Stage Clear Logic
 
         // クリア時にダメージ演出を即解除 (遷移先で点滅し続けないように)
@@ -1365,6 +1369,14 @@ class Game {
         overlay.classList.remove('hidden');
         document.getElementById('overlay-title').textContent = title;
         document.getElementById('overlay-msg').textContent = msg;
+
+        if (this.audio) {
+            if (title === 'GAME OVER') {
+                this.audio.playSe('SE_GAME_OVER', { priority: 'high' });
+            } else if (type === 'wave') {
+                this.audio.playSe('SE_BARRIER_02', { priority: 'high' });
+            }
+        }
 
         if (type === 'result') {
             this.gameState = CONSTANTS.STATE.RESULT;
@@ -1628,8 +1640,13 @@ class Game {
 
         // Determines SE by weapon type
         let seKey = 'SE_SHOT_RIFLE';
-        if (weaponType === CONSTANTS.WEAPON_TYPES.SHOT) seKey = 'SE_SHOT_SHOTGUN';
-        if (weaponType === CONSTANTS.WEAPON_TYPES.PIERCE) seKey = 'SE_SHOT_LASER';
+        if (weaponType === CONSTANTS.WEAPON_TYPES.SHOT) {
+            seKey = 'SE_SHOT_SHOTGUN';
+        } else if (weaponType === CONSTANTS.WEAPON_TYPES.PIERCE) {
+            seKey = (level >= 30) ? 'SE_SHOT_LASER_MAX' : 'SE_SHOT_LASER';
+        } else if (weaponType === CONSTANTS.WEAPON_TYPES.STANDARD) {
+            seKey = (level >= 30) ? 'SE_SHOT_RIFLE_MAX' : 'SE_SHOT_RIFLE';
+        }
 
         this.audio.playSe(seKey, { variation: 0.1, priority: 'low' });
     }
@@ -2142,7 +2159,7 @@ class Game {
                         b.isReflected = true;
                         b.hitEnemies.clear();
 
-                        if (this.audio) this.audio.playSe('SE_GUARD_HIT_01', { variation: 0.1, volume: 0.6 });
+                        if (this.audio) this.audio.playSe('SE_REFLECT', { variation: 0.1, volume: 0.8 });
                         this.spawnDamageText(e.renderX, e.renderY, "REFLECT!", "#ffd700");
                         bulletConsumed = true;
                         break;
@@ -3099,7 +3116,8 @@ class Game {
         // --- Boss HP Bar Update [NEW] ---
         const bossHpContainer = document.getElementById('boss-hp-container');
         if (bossHpContainer) {
-            const activeBoss = this.enemies.find(e => e.active && e.isBoss);
+            // ステージクリア中(isClearing)は表示しない。またHPが0以下の場合も隠す
+            const activeBoss = (!this.isClearing) ? this.enemies.find(e => e.active && e.isBoss && e.hp > 0) : null;
             if (activeBoss) {
                 bossHpContainer.classList.remove('hidden');
                 const fill = document.getElementById('boss-hp-bar-fill');
@@ -3108,7 +3126,8 @@ class Game {
 
                 const percent = Math.max(0, (activeBoss.hp / activeBoss.maxHp) * 100);
                 if (fill) fill.style.width = `${percent}%`;
-                if (percentText) percentText.textContent = `${Math.ceil(percent)}%`;
+                // Math.ceil -> Math.floor に変更。ミリ残りで1%と表示されるのを防ぐ
+                if (percentText) percentText.textContent = `${Math.floor(percent)}%`;
 
                 // Name assignment
                 if (nameText) {
@@ -3190,7 +3209,7 @@ class Game {
             if (this.currentStage === 2) dy += 5;  // Stage 3
             if (this.currentStage === 3) dy += 10; // Stage 4
             if (this.currentStage === 4) dy += 15; // Stage 5
-            if (this.currentStage === 5) dy -= 50; // Stage 6 (追加 10px)
+            if (this.currentStage === 5) dy -= 90; // Stage 6 (追加 50px)
             if (this.currentStage === 6) dy -= 30; // Stage 7 (追加 10px)
             if (this.currentStage === 7) dy -= 20; // Stage 8
             if (this.currentStage === 8) dy -= 70; // Stage 9 (追加 30px)
@@ -3458,6 +3477,7 @@ class Game {
     togglePause() {
         if (this.gameState !== CONSTANTS.STATE.PLAYING) return;
 
+        this.audio.playSe('SE_SELECT');
         this.isPaused = !this.isPaused;
         if (this.isPaused) {
             this.audio.pauseBgm();

@@ -627,7 +627,7 @@ export class Enemy {
         }
 
         // [NEW] ノーマル敵のビジュアル更新
-        if (this.type === CONSTANTS.ENEMY_TYPES.NORMAL) {
+        if (this.type === CONSTANTS.ENEMY_TYPES.NORMAL && !this.isBoss) {
             this.visualAngle += this.rotSpeed * dtMod;
             this.bobPhase += 0.1 * dtMod; // 定速で位相を進める
             this.bobOffsetY = Math.sin(this.bobPhase) * this.bobAmp;
@@ -936,6 +936,7 @@ export class Enemy {
 
                         // Effect trigger
                         Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 2.0);
+                        if (this.game && this.game.audio) this.game.audio.playSe('SE_DASH', { volume: 0.7 });
                     }
 
                 } else if (this.eliteState === 2) {
@@ -984,6 +985,7 @@ export class Enemy {
                     if (dist < (CONSTANTS.ASSAULT_CURVE.triggerDist || 280)) {
                         this.assaultState = 1;
                         this.currentSpeed = this.baseSpeed * (CONSTANTS.ASSAULT_CURVE.chargeSpeedMul || 2.5);
+                        if (this.game && this.game.audio) this.game.audio.playSe('SE_DASH', { volume: 0.6 });
                     }
                 } else {
                     // Phase 2: Rapid Strike (Charge)
@@ -1218,7 +1220,8 @@ export class Enemy {
                         this.vy = Math.sin(this.chargeAngle) * this.currentSpeed;
 
                         Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 4.0);
-                        if (this.game && this.game.audio) this.game.audio.playSe('SE_DASH_IMPACT', { volume: 0.6, pitch: 1.2 });
+                        if (this.game && this.game.audio) this.game.audio.playSe('SE_DASH', { volume: 0.8 });
+                        // if (this.game && this.game.audio) this.game.audio.playSe('SE_DASH_IMPACT', { volume: 0.6, pitch: 1.2 });
                     }
                 } else if (this.flankState === 3) {
                     // PHASE 3: SUPER CHARGE (12x)
@@ -1301,7 +1304,8 @@ export class Enemy {
                         this.chargeAngle = this.angle; // FINAL LOCK
                         Effects.createThruster(this.renderX, this.renderY, this.angle + Math.PI, 3.0);
                         if (this.game && this.game.audio) {
-                            this.game.audio.playSe('SE_DASH_IMPACT', { volume: 0.5 });
+                            this.game.audio.playSe('SE_DASH', { volume: 0.7 });
+                            // this.game.audio.playSe('SE_DASH_IMPACT', { volume: 0.5 });
                         }
                     }
 
@@ -1813,11 +1817,11 @@ export class Enemy {
             // 進行方向への回転適用 (本体のみに適用するため save)
             ctx.save();
             if (this.hasDirection) {
-                if (this.type === CONSTANTS.ENEMY_TYPES.NORMAL) {
+                if (this.type === CONSTANTS.ENEMY_TYPES.NORMAL && !this.isBoss) {
                     // ノーマル敵：定速回転
                     ctx.rotate(this.visualAngle);
-                } else {
-                    // その他：進行方向または盾の向き
+                } else if (!this.isBoss) {
+                    // Others: direction of movement or shield
                     const rot = (this.type === CONSTANTS.ENEMY_TYPES.REFLECTOR) ? this.renderAngle : this.angle;
                     ctx.rotate(rot + Math.PI / 2);
                 }
@@ -1852,7 +1856,13 @@ export class Enemy {
                     break;
                 case CONSTANTS.ENEMY_TYPES.ATTRACTOR:
                     assetKey = 'ENEMY_M';
-                    filter = "hue-rotate(120deg) brightness(1.1)";
+                    if (this.attractorKind === CONSTANTS.ATTRACTOR_KIND.RED) {
+                        filter = "hue-rotate(-20deg) brightness(1.2) contrast(1.2)"; // Reddish
+                    } else if (this.attractorKind === CONSTANTS.ATTRACTOR_KIND.BLUE) {
+                        filter = "hue-rotate(220deg) brightness(1.2) contrast(1.2)"; // Bluish
+                    } else {
+                        filter = "hue-rotate(120deg) brightness(1.1)"; // Default (Green)
+                    }
                     break;
                 case CONSTANTS.ENEMY_TYPES.REFLECTOR:
                     assetKey = 'ENEMY_N';
@@ -2764,8 +2774,7 @@ export class Enemy {
 
         // 破壊音
         if (this.game && this.game.audio) {
-            const deathSound = (this.isBoss || this.type === CONSTANTS.ENEMY_TYPES.ELITE) ? 'SE_BREAK_SPECIAL' : 'SE_BREAK_NORMAL';
-            this.game.audio.playSe(deathSound);
+            this.game.audio.playSe('SE_EXPLOSION', { variation: 0.1 });
         }
 
         // スコア・統計加算 (正当な撃破時のみ)
