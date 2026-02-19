@@ -267,7 +267,8 @@ class Game {
         // [NEW] HOW TO PLAY ボタン
         const btnHowto = document.getElementById('btn-howto');
         if (btnHowto) {
-            btnHowto.addEventListener('click', () => {
+            btnHowto.addEventListener('click', async () => {
+                await this.audio.init();
                 this.gameState = CONSTANTS.STATE.HOWTO;
                 const howtoScreen = document.getElementById('howto-screen');
                 const titleScreen = document.getElementById('title-screen');
@@ -296,7 +297,8 @@ class Game {
         // [NEW] OPTIONS ボタン
         const btnOptions = document.getElementById('btn-options');
         if (btnOptions) {
-            btnOptions.addEventListener('click', () => {
+            btnOptions.addEventListener('click', async () => {
+                await this.audio.init();
                 this.gameState = CONSTANTS.STATE.OPTIONS;
                 const optionsScreen = document.getElementById('options-screen');
                 const titleScreen = document.getElementById('title-screen');
@@ -550,28 +552,6 @@ class Game {
         inputTarget.addEventListener('touchmove', handlePointerWrap, { passive: false });
         inputTarget.addEventListener('touchend', handlePointerWrap, { passive: false });
 
-        window.addEventListener('resize', () => this.resize());
-        this.resize();
-
-        // Phase 3: Input Handling (Keyboard)
-        window.addEventListener('keydown', (e) => {
-            if (this.gameState === CONSTANTS.STATE.PLAYING) {
-                if (e.code === 'KeyP' || e.code === 'Escape') {
-                    this.togglePause();
-                }
-            } else if (this.gameState === CONSTANTS.STATE.HOWTO) {
-                if (e.code === 'Escape') {
-                    // Back to title from HOWTO
-                    document.getElementById('btn-howto-back').click();
-                }
-            } else if (this.gameState === CONSTANTS.STATE.OPTIONS) {
-                if (e.code === 'Escape') {
-                    // Back to title from OPTIONS
-                    document.getElementById('btn-options-back').click();
-                }
-            }
-        });
-
         // リザルト等ボタン
         const btnNext = document.getElementById('btn-next');
         if (btnNext) {
@@ -597,6 +577,55 @@ class Game {
                 this.goToTitle();
             });
         }
+
+        // 全てのボタンへのフォーカス/ホバー音の一括適用
+        const playTick = (e) => {
+            const target = e.target.closest('button, .btn-stage, .weapon-up-btn, #btn-up-speed');
+            if (target && !target.disabled) {
+                if (this._lastTickTarget !== target) {
+                    // SE_UI_TICK を鳴らす。ただし初期化されていない場合は何もしない（ブラウザ制限）
+                    if (this.audio && this.audio.isInitialized) {
+                        this.audio.playSe('SE_UI_TICK', { volume: 0.25 });
+                    }
+                    this._lastTickTarget = target;
+                }
+            } else {
+                this._lastTickTarget = null;
+            }
+        };
+        document.addEventListener('mouseover', playTick);
+        document.addEventListener('focusin', playTick);
+
+        // [Global] 初回のクリック/タップで音源を初期化する（ホバー音のため）
+        const initOnGesture = async () => {
+            await this.audio.init();
+            document.removeEventListener('mousedown', initOnGesture);
+            document.removeEventListener('touchstart', initOnGesture);
+        };
+        document.addEventListener('mousedown', initOnGesture);
+        document.addEventListener('touchstart', initOnGesture);
+
+        window.addEventListener('resize', () => this.resize());
+        this.resize();
+
+        // Phase 3: Input Handling (Keyboard)
+        window.addEventListener('keydown', (e) => {
+            if (this.gameState === CONSTANTS.STATE.PLAYING) {
+                if (e.code === 'KeyP' || e.code === 'Escape') {
+                    this.togglePause();
+                }
+            } else if (this.gameState === CONSTANTS.STATE.HOWTO) {
+                if (e.code === 'Escape') {
+                    // Back to title from HOWTO
+                    document.getElementById('btn-howto-back').click();
+                }
+            } else if (this.gameState === CONSTANTS.STATE.OPTIONS) {
+                if (e.code === 'Escape') {
+                    // Back to title from OPTIONS
+                    document.getElementById('btn-options-back').click();
+                }
+            }
+        });
 
         // PULSEボタン
         const btnPulse = document.getElementById('btn-pulse');

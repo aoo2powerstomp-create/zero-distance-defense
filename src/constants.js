@@ -156,6 +156,7 @@ export const CONSTANTS = {
         SE_REFLECT: { type: "se", file: "assets/sound/se/se_refrec_01.mp3" },
         SE_DASH: { type: "se", file: "assets/sound/se/se_dash_02.mp3" },
         SE_EXPLOSION: { type: "se", file: "assets/sound/se/se_explosion_01.mp3" },
+        SE_UI_TICK: { type: "se", file: "assets/sound/se/se_select_01.mp3" },
     },
 
     BGM_MAPPING: {
