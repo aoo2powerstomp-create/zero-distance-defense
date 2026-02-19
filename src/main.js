@@ -273,7 +273,7 @@ class Game {
                 const titleScreen = document.getElementById('title-screen');
                 if (howtoScreen) howtoScreen.classList.remove('hidden');
                 if (titleScreen) titleScreen.classList.add('hidden');
-                this.switchHowtoTab('controls');
+                this.switchHowtoTab('controls', true); // 初期化時は無音
                 this.audio.playSe('SE_SELECT');
             });
         }
@@ -283,7 +283,6 @@ class Game {
         if (btnHowtoTabControls) {
             btnHowtoTabControls.addEventListener('click', () => {
                 this.switchHowtoTab('controls');
-                this.audio.playSe('SE_SELECT');
             });
         }
 
@@ -291,7 +290,6 @@ class Game {
         if (btnHowtoTabEnemies) {
             btnHowtoTabEnemies.addEventListener('click', () => {
                 this.switchHowtoTab('enemies');
-                this.audio.playSe('SE_SELECT');
             });
         }
 
@@ -3699,7 +3697,8 @@ class Game {
     }
 
     // --- HOW TO PLAY 関連メソッド [NEW] ---
-    switchHowtoTab(tabName) {
+    switchHowtoTab(tabName, silent = false) {
+        if (!silent && this.audio) this.audio.playSe('SE_SELECT');
         const controlsTab = document.getElementById('btn-howto-tab-controls');
         const enemiesTab = document.getElementById('btn-howto-tab-enemies');
         const controlsPanel = document.getElementById('howto-tab-content-controls');
